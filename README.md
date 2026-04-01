@@ -76,3 +76,7 @@ VaultUnlocked is loaded by Paper as plugin `Vault`. SimpleEco depends on that ru
 ```
 
 Output: `build/libs/SimpleEco-<version>.jar`
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE).
