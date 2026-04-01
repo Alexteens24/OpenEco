@@ -1,0 +1,13 @@
+.gradle/
+.noop/
+.vscode/
+.github/java-upgrade/
+build/
+**/build/
+
+stress-addon/
+
+*.db
+*.db-*
+*.mv.db
+*.trace.db

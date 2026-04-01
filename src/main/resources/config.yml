@@ -1,0 +1,91 @@
+currency:
+  # Internal identifier used by VaultUnlocked multi-currency queries
+  id: "simpleeco"
+  name-singular: "Dollar"
+  name-plural: "Dollars"
+  # Number of decimal places (0–8)
+  decimal-digits: 2
+  # Balance given to new accounts
+  starting-balance: 0.00
+  # Maximum balance a player can hold (-1 = unlimited)
+  max-balance: -1
+
+storage:
+  # Backend to use: sqlite or h2
+  # Changing backend or file name does not migrate existing data automatically.
+  type: sqlite
+  sqlite:
+    file: economy.db
+  h2:
+    # File name (without extension); H2 appends .mv.db automatically
+    file: economy
+
+# Seconds between automatic background saves (values <= 0 are clamped to 1)
+# Lower values reduce worst-case data loss after a crash but increase write pressure.
+autosave-interval: 30
+
+pay:
+  # Cooldown between /pay uses in seconds (0 = disabled)
+  cooldown-seconds: 0
+  # Percentage of the sent amount deducted as tax (0.0 = disabled)
+  tax-percent: 0.0
+  # Minimum amount a player can pay in one transaction (0 = no minimum)
+  # Raising this helps suppress spammy micro-transfers on live servers.
+  min-amount: 0.01
+
+baltop:
+  page-size: 10
+  # Seconds to cache the sorted leaderboard (reduces re-sort cost)
+  cache-ttl-seconds: 30
+
+history:
+  # Number of days to keep transaction history (-1 = keep forever, no pruning)
+  # Transactions older than this will be deleted automatically once per day.
+  retention-days: -1
+
+messages:
+  no-permission: "<red>You don't have permission to do that."
+  console-player-only: "<red>Console must specify a player name."
+  account-not-found: "<red>No account found for: <yellow><player>"
+  account-sync-failed: "<red>Your economy account could not be synchronized. Contact an administrator if economy features do not work."
+  account-name-conflict: "<red>Your economy account could not use the name <yellow><player><red> because it is already linked to another account. Contact an administrator."
+  self-pay: "<red>You cannot pay yourself."
+  insufficient-funds: "<red>Insufficient funds."
+  pay-balance-limit: "<red><player> has reached the maximum balance and cannot receive more money."
+  pay-too-low: "<red>Minimum payment amount is <yellow><min><red>."
+  pay-cancelled: "<red>The payment was cancelled by a plugin."
+  invalid-amount: "<red>Invalid amount."
+  negative-amount: "<red>Amount must be greater than zero."
+
+  balance-self: "<green>Your balance: <yellow><balance>"
+  balance-other: "<green><player>'s balance: <yellow><balance>"
+
+  pay-sent: "<green>You paid <yellow><player> <green><amount>."
+  pay-tax: "<gray>(Tax deducted: <yellow><tax><gray>)"
+  pay-received: "<green>You received <yellow><amount> <green>from <yellow><player><green>."
+  pay-cooldown: "<red>Please wait <yellow><seconds>s <red>before paying again."
+
+  eco-give: "<green>Gave <yellow><amount> <green>to <yellow><player><green>. New balance: <yellow><balance>"
+  eco-give-failed: "<red>Failed to give money to <yellow><player><red>."
+  eco-take: "<green>Took <yellow><amount> <green>from <yellow><player><green>. New balance: <yellow><balance>"
+  eco-take-failed: "<red>Failed to take money from <yellow><player><red>. They may not have enough funds."
+  eco-set: "<green>Set <yellow><player><green>'s balance to <yellow><balance><green>."
+  eco-set-failed: "<red>Failed to set balance for <yellow><player><red>."
+  eco-balance-limit: "<red><player> would exceed the maximum balance of <yellow><limit><red>."
+  eco-delete: "<green>Deleted <yellow><player><green>'s account."
+  eco-delete-failed: "<red>Failed to delete <yellow><player><red>'s account."
+  eco-reset: "<green>Reset <yellow><player><green>'s balance to <yellow><balance><green>."
+  eco-reload: "<green>SimpleEco configuration reloaded."
+
+  baltop-header: "<gold><bold>--- Balance Top (page <page>/<total>) ---</bold></gold>"
+  baltop-entry: "<yellow>#<rank> <green><player><gray>: <yellow><balance>"
+
+  history-header: "<gold><bold>--- <player>'s History (page <page>/<total>) ---</bold></gold>"
+  history-empty: "<gray>No transactions found."
+  history-error: "<red>Failed to load history: <message>"
+  history-give: "<dark_gray>[<date>] <green>+<amount> <gray>(given by admin)"
+  history-take: "<dark_gray>[<date>] <red>-<amount> <gray>(taken by admin)"
+  history-set: "<dark_gray>[<date>] <yellow>set <gray>to <yellow><balance> <gray>(admin)"
+  history-reset: "<dark_gray>[<date>] <yellow>reset <gray>to <yellow><balance> <gray>(reset)"
+  history-pay-sent: "<dark_gray>[<date>] <red>-<amount> <gray>(paid to <white><counterpart><gray>)"
+  history-pay-received: "<dark_gray>[<date>] <green>+<amount> <gray>(from <white><counterpart><gray>)"

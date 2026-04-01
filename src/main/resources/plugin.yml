@@ -1,0 +1,92 @@
+name: SimpleEco
+version: "${version}"
+main: dev.alexisbinh.simpleeco.SimpleEcoPlugin
+description: "Just a simple economy plugin"
+api-version: '1.20'
+folia-supported: true
+authors:
+  - alexisbinh
+
+libraries:
+  - org.xerial:sqlite-jdbc:3.51.3.0
+  - com.h2database:h2:2.4.240
+
+depend:
+  - Vault
+
+softdepend:
+  - PlaceholderAPI
+
+load-before:
+  - ShopGUIPlus
+
+commands:
+  balance:
+    description: Check your or another player's balance
+    usage: /balance [player]
+    aliases: [bal, money]
+  baltop:
+    description: View the richest players
+    usage: /baltop [page]
+    aliases: [balancetop, moneytop]
+  pay:
+    description: Pay another player
+    usage: /pay <player> <amount>
+  eco:
+    description: Economy administration
+    usage: /eco <give|take|set|reset|delete|reload> <player> [amount]
+    aliases: [economy]
+  history:
+    description: View transaction history
+    usage: /history [player] [page]
+    aliases: [txhistory, ecohistory]
+
+permissions:
+  simpleeco.admin:
+    description: Wildcard for all admin economy permissions
+    default: op
+    children:
+      simpleeco.command.eco.give: true
+      simpleeco.command.eco.take: true
+      simpleeco.command.eco.set: true
+      simpleeco.command.eco.reset: true
+      simpleeco.command.eco.delete: true
+      simpleeco.command.eco.reload: true
+      simpleeco.command.balance.others: true
+      simpleeco.command.history.others: true
+  simpleeco.command.balance:
+    description: Check own balance
+    default: true
+  simpleeco.command.balance.others:
+    description: Check other players' balance
+    default: op
+  simpleeco.command.baltop:
+    description: View the balance top list
+    default: true
+  simpleeco.command.pay:
+    description: Pay another player
+    default: true
+  simpleeco.command.eco.give:
+    description: Give money to a player
+    default: op
+  simpleeco.command.eco.take:
+    description: Take money from a player
+    default: op
+  simpleeco.command.eco.set:
+    description: Set a player's balance
+    default: op
+  simpleeco.command.eco.reload:
+    description: Reload SimpleEco configuration
+    default: op
+  simpleeco.command.eco.reset:
+    description: Reset a player's balance to starting balance
+    default: op
+  simpleeco.command.eco.delete:
+    description: Delete a player's current economy account and own history
+    default: op
+  simpleeco.command.history:
+    description: View own transaction history
+    default: true
+  simpleeco.command.history.others:
+    description: View other players' transaction history
+    default: op
