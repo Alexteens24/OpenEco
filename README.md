@@ -1,5 +1,7 @@
 # SimpleEco
 
+[![CI](https://github.com/Alexteens24/SimpleEco/actions/workflows/ci.yml/badge.svg)](https://github.com/Alexteens24/SimpleEco/actions/workflows/ci.yml)
+
 SimpleEco is an economy plugin for one Paper or Folia server.
 
 What it does:
