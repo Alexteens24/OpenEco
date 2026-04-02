@@ -8,7 +8,13 @@ import java.math.BigDecimal;
 import java.util.UUID;
 
 /**
- * Fired after a pay transfer has been successfully applied.
+ * Fired after a /pay transfer has been successfully applied.
+ * Not cancellable — both balances have already been updated.
+ *
+ * <p><strong>Threading note:</strong> This event is dispatched <em>outside</em> all account
+ * locks. It is safe to call economy operations on both the sender and recipient from a
+ * listener. Use this event — rather than the pre-event {@link PayEvent} — when you need
+ * to react to a confirmed transfer without risking re-entrant mutations.
  */
 public class PayCompletedEvent extends Event {
 

@@ -10,6 +10,12 @@ import java.util.UUID;
 /**
  * Fired after a new economy account is created for a player.
  * Not cancellable — the account has already been added to the in-memory store.
+ *
+ * <p><strong>Threading note:</strong> This event is dispatched while the internal
+ * persistence lock is held. Listeners must not call account lifecycle methods
+ * ({@code createAccount}, {@code renameAccount}, {@code deleteAccount}) synchronously
+ * from the handler thread — doing so will deadlock. Balance operations on other accounts
+ * are safe.
  */
 public class AccountCreateEvent extends Event {
 

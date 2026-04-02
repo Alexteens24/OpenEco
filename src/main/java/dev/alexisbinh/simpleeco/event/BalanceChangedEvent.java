@@ -8,7 +8,13 @@ import java.math.BigDecimal;
 import java.util.UUID;
 
 /**
- * Fired after a balance mutation has been successfully applied.
+ * Fired after a balance mutation has been successfully applied (give, take, set, reset).
+ * Not cancellable — the balance has already been updated.
+ *
+ * <p><strong>Threading note:</strong> This event is dispatched <em>outside</em> all account
+ * locks. It is safe to call economy operations (including on the same account) from a
+ * listener. Use this event — rather than the pre-event {@link BalanceChangeEvent} — when
+ * you need to react to a confirmed change without risking re-entrant mutations.
  */
 public class BalanceChangedEvent extends Event {
 

@@ -8,6 +8,16 @@ import org.jetbrains.annotations.NotNull;
 import java.math.BigDecimal;
 import java.util.UUID;
 
+/**
+ * Fired before an economy account is removed from the in-memory store.
+ * Cancelling this event aborts the deletion.
+ *
+ * <p><strong>Threading note:</strong> This event is dispatched while both the
+ * persistence lock and the account's own lock are held. Listeners must not call
+ * any account lifecycle methods ({@code createAccount}, {@code renameAccount},
+ * {@code deleteAccount}) or balance operations on the <em>same</em> account
+ * synchronously from the handler thread — doing so will deadlock.
+ */
 public class AccountDeleteEvent extends Event implements Cancellable {
 
     private static final HandlerList HANDLERS = new HandlerList();
