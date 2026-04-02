@@ -29,7 +29,7 @@ public final class Messages {
     }
 
     public Component getOrDefault(String key, String defaultRaw, TagResolver... resolvers) {
-        String raw = config.getString("messages." + key, "<red>(missing message: " + key + ")");
+        String raw = config.getString("messages." + key);
         if (raw == null) {
             raw = defaultRaw;
         }

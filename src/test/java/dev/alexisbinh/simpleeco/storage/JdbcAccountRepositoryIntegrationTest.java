@@ -318,4 +318,55 @@ class JdbcAccountRepositoryIntegrationTest {
             repository.close();
         }
     }
+
+    @Test
+    void existingSqliteTransactionsTableIsUpgradedWithMetadataColumns() throws Exception {
+        String filename = "legacy-sqlite-metadata-schema-test.db";
+        try (Connection connection = DriverManager.getConnection(DatabaseDialect.SQLITE.getJdbcUrl(tempDir.toString(), filename));
+             Statement stmt = connection.createStatement()) {
+            stmt.execute("""
+                CREATE TABLE accounts (
+                    id         VARCHAR(36)   NOT NULL PRIMARY KEY,
+                    name       VARCHAR(16)   NOT NULL,
+                    balance    DECIMAL(30,8) NOT NULL DEFAULT 0,
+                    created_at BIGINT        NOT NULL,
+                    updated_at BIGINT        NOT NULL
+                )
+                """);
+            stmt.execute("""
+                CREATE TABLE transactions (
+                    type           VARCHAR(16)   NOT NULL,
+                    counterpart_id VARCHAR(36),
+                    target_id      VARCHAR(36)   NOT NULL,
+                    amount         DECIMAL(30,8) NOT NULL,
+                    balance_before DECIMAL(30,8) NOT NULL,
+                    balance_after  DECIMAL(30,8) NOT NULL,
+                    ts             BIGINT        NOT NULL
+                )
+                """);
+        }
+
+        JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.SQLITE, tempDir.toString(), filename);
+        try {
+            UUID accountId = UUID.randomUUID();
+            repository.upsertBatch(List.of(new AccountRecord(accountId, "Judy", BigDecimal.ZERO, 1L, 1L)));
+            repository.insertTransaction(new TransactionEntry(
+                    TransactionType.GIVE,
+                    null,
+                    accountId,
+                    BigDecimal.ONE,
+                    BigDecimal.ZERO,
+                    BigDecimal.ONE,
+                    2_500L,
+                    "QuestAddon",
+                    "SQLite schema still stores metadata"));
+
+            TransactionEntry stored = repository.getTransactions(accountId, 10, 0).getFirst();
+
+            assertEquals("QuestAddon", stored.getSource());
+            assertEquals("SQLite schema still stores metadata", stored.getNote());
+        } finally {
+            repository.close();
+        }
+    }
 }

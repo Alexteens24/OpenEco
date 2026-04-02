@@ -47,6 +47,7 @@ dependencies {
     testImplementation("io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT")
     testImplementation("net.cfh.vault:VaultUnlocked:2.19.0")
     testRuntimeOnly("com.h2database:h2:2.4.240")
+    testRuntimeOnly("org.xerial:sqlite-jdbc:3.51.3.0")
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 

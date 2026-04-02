@@ -602,7 +602,7 @@ public final class ShopBridge extends JavaPlugin {
         api = registration.getProvider();
     }
 
-    public boolean charge(Player player, BigDecimal price) {
+    public boolean charge(Player player, UUID bankId, BigDecimal price) {
         TransferPreviewResult preview = api.previewTransfer(player.getUniqueId(), bankId, price);
         if (!preview.isAllowed()) {
             return false;
@@ -612,12 +612,6 @@ public final class ShopBridge extends JavaPlugin {
         if (!result.isSuccess()) {
             return false;
         }
-
-        api.logCustomTransaction(
-                player.getUniqueId(),
-                price,
-                TransactionKind.TAKE,
-                new TransactionMetadata("ShopBridge", "Purchased item from server shop"));
         return true;
     }
 }

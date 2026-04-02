@@ -105,6 +105,7 @@ final class EconomyOperations {
         }
 
         BigDecimal scaled = scale(amount, currentConfig);
+        BalanceChangedEvent completedEvent;
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) {
                 return failure(scaled, BigDecimal.ZERO, "Account not found");
@@ -126,9 +127,10 @@ final class EconomyOperations {
             leaderboardInvalidator.run();
             transactionLogger.accept(new TransactionEntry(TransactionType.GIVE, null, id, scaled, before, newBalance,
                     System.currentTimeMillis()));
-            eventDispatcher.dispatch(new BalanceChangedEvent(id, before, newBalance, BalanceChangeEvent.Reason.GIVE));
-            return success(scaled, newBalance);
+            completedEvent = new BalanceChangedEvent(id, before, newBalance, BalanceChangeEvent.Reason.GIVE);
         }
+        eventDispatcher.dispatch(completedEvent);
+        return success(scaled, completedEvent.getNewBalance());
     }
 
     EconomyResponse withdraw(UUID id, BigDecimal amount) {
@@ -143,6 +145,7 @@ final class EconomyOperations {
         }
 
         BigDecimal scaled = scale(amount, currentConfig);
+        BalanceChangedEvent completedEvent;
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) {
                 return failure(scaled, BigDecimal.ZERO, "Account not found");
@@ -163,9 +166,10 @@ final class EconomyOperations {
             leaderboardInvalidator.run();
             transactionLogger.accept(new TransactionEntry(TransactionType.TAKE, null, id, scaled, before, newBalance,
                     System.currentTimeMillis()));
-            eventDispatcher.dispatch(new BalanceChangedEvent(id, before, newBalance, BalanceChangeEvent.Reason.TAKE));
-            return success(scaled, newBalance);
+            completedEvent = new BalanceChangedEvent(id, before, newBalance, BalanceChangeEvent.Reason.TAKE);
         }
+        eventDispatcher.dispatch(completedEvent);
+        return success(scaled, completedEvent.getNewBalance());
     }
 
     EconomyResponse set(UUID id, BigDecimal amount) {
@@ -180,6 +184,7 @@ final class EconomyOperations {
         }
 
         BigDecimal scaled = scale(amount, currentConfig);
+        BalanceChangedEvent completedEvent;
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) {
                 return failure(scaled, BigDecimal.ZERO, "Account not found");
@@ -200,9 +205,10 @@ final class EconomyOperations {
             leaderboardInvalidator.run();
             transactionLogger.accept(new TransactionEntry(TransactionType.SET, null, id, scaled, before, scaled,
                     System.currentTimeMillis()));
-            eventDispatcher.dispatch(new BalanceChangedEvent(id, before, scaled, BalanceChangeEvent.Reason.SET));
-            return success(scaled, scaled);
+            completedEvent = new BalanceChangedEvent(id, before, scaled, BalanceChangeEvent.Reason.SET);
         }
+        eventDispatcher.dispatch(completedEvent);
+        return success(scaled, completedEvent.getNewBalance());
     }
 
     EconomyResponse reset(UUID id) {
@@ -212,13 +218,14 @@ final class EconomyOperations {
             return failure(BigDecimal.ZERO, BigDecimal.ZERO, "Account not found");
         }
 
+        BigDecimal startingBalance = currentConfig.startingBalance();
+        BalanceChangedEvent completedEvent;
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) {
                 return failure(BigDecimal.ZERO, BigDecimal.ZERO, "Account not found");
             }
 
             BigDecimal before = record.getBalance();
-            BigDecimal startingBalance = currentConfig.startingBalance();
             BalanceChangeEvent event = new BalanceChangeEvent(id, before, startingBalance, BalanceChangeEvent.Reason.RESET);
             eventDispatcher.dispatch(event);
             if (event.isCancelled()) {
@@ -229,9 +236,10 @@ final class EconomyOperations {
             leaderboardInvalidator.run();
             transactionLogger.accept(new TransactionEntry(TransactionType.RESET, null, id, startingBalance, before,
                     startingBalance, System.currentTimeMillis()));
-            eventDispatcher.dispatch(new BalanceChangedEvent(id, before, startingBalance, BalanceChangeEvent.Reason.RESET));
-            return success(startingBalance, startingBalance);
+            completedEvent = new BalanceChangedEvent(id, before, startingBalance, BalanceChangeEvent.Reason.RESET);
         }
+        eventDispatcher.dispatch(completedEvent);
+        return success(startingBalance, completedEvent.getNewBalance());
     }
 
     TransferCheckResult canTransfer(UUID fromId, UUID toId, BigDecimal rawAmount) {
@@ -426,6 +434,7 @@ final class EconomyOperations {
         boolean fromFirst = fromId.compareTo(toId) < 0;
         AccountRecord first = fromFirst ? fromRecord : toRecord;
         AccountRecord second = fromFirst ? toRecord : fromRecord;
+        PayCompletedEvent completedEvent;
 
         synchronized (first) {
             synchronized (second) {
@@ -460,7 +469,7 @@ final class EconomyOperations {
                 long now = System.currentTimeMillis();
                 transactionLogger.accept(new TransactionEntry(TransactionType.PAY_SENT, toId, fromId, scaled, fromBefore, fromAfter, now));
                 transactionLogger.accept(new TransactionEntry(TransactionType.PAY_RECEIVED, fromId, toId, received, toBefore, toAfter, now));
-                eventDispatcher.dispatch(new PayCompletedEvent(
+        completedEvent = new PayCompletedEvent(
                         fromId,
                         toId,
                         scaled,
@@ -469,10 +478,11 @@ final class EconomyOperations {
                         fromBefore,
                         fromAfter,
                         toBefore,
-                        toAfter));
-                return PayResult.success(scaled, received, tax);
+                        toAfter);
             }
         }
+        eventDispatcher.dispatch(completedEvent);
+        return PayResult.success(scaled, received, tax);
     }
 
     private static BigDecimal scale(BigDecimal amount, EconomyConfigSnapshot config) {
