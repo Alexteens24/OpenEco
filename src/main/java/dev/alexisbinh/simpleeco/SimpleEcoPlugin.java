@@ -107,7 +107,7 @@ public class SimpleEcoPlugin extends JavaPlugin {
 
         // ── PlaceholderAPI ────────────────────────────────────────────────────
         if (getServer().getPluginManager().getPlugin("PlaceholderAPI") != null) {
-            new SimpleEcoPlaceholderExpansion(service).register();
+            new SimpleEcoPlaceholderExpansion(service, getPluginMeta().getVersion()).register();
             getLogger().info("PlaceholderAPI expansion registered.");
         }
 

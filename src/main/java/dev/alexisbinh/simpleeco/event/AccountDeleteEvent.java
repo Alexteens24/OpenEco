@@ -12,11 +12,10 @@ import java.util.UUID;
  * Fired before an economy account is removed from the in-memory store.
  * Cancelling this event aborts the deletion.
  *
- * <p><strong>Threading note:</strong> This event is dispatched while both the
- * persistence lock and the account's own lock are held. Listeners must not call
- * any account lifecycle methods ({@code createAccount}, {@code renameAccount},
- * {@code deleteAccount}) or balance operations on the <em>same</em> account
- * synchronously from the handler thread — doing so will deadlock.
+ * <p><strong>Threading note:</strong> This event is dispatched outside SimpleEco's
+ * internal locks. The name and balance fields are a snapshot of the delete attempt at
+ * dispatch time. If another operation changes the account before deletion is committed,
+ * the final stored state may differ.
  */
 public class AccountDeleteEvent extends Event implements Cancellable {
 

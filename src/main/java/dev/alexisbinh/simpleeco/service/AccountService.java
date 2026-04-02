@@ -130,6 +130,8 @@ public class AccountService {
             return CreateAccountStatus.INVALID_NAME;
         }
 
+        AccountCreateEvent createdEvent;
+
         synchronized (persistenceLock) {
             if (accountRegistry.hasAccount(id)) return CreateAccountStatus.ALREADY_EXISTS;
             if (accountRegistry.isNameClaimedByAnother(id, validatedName)) {
@@ -143,9 +145,11 @@ public class AccountService {
                 return CreateAccountStatus.NAME_IN_USE;
             }
             invalidateBalTopCache();
-            eventDispatcher.dispatch(new AccountCreateEvent(id, validatedName, currentConfig.startingBalance()));
-            return CreateAccountStatus.CREATED;
+            createdEvent = new AccountCreateEvent(id, validatedName, currentConfig.startingBalance());
         }
+
+        eventDispatcher.dispatch(createdEvent);
+        return CreateAccountStatus.CREATED;
     }
 
     /** Updates name in memory; marks dirty so the new name is flushed to DB. */
@@ -159,6 +163,8 @@ public class AccountService {
         if (validatedName == null) {
             return RenameAccountStatus.INVALID_NAME;
         }
+
+        AccountRenameEvent event;
 
         synchronized (persistenceLock) {
             AccountRecord record = accountRegistry.getLiveRecord(id);
@@ -178,15 +184,37 @@ public class AccountService {
                     return RenameAccountStatus.NAME_IN_USE;
                 }
 
-                AccountRenameEvent event = new AccountRenameEvent(id, oldName, validatedName);
-                eventDispatcher.dispatch(event);
-                if (event.isCancelled()) {
-                    return RenameAccountStatus.CANCELLED;
+                event = new AccountRenameEvent(id, oldName, validatedName);
+            }
+        }
+
+        eventDispatcher.dispatch(event);
+        if (event.isCancelled()) {
+            return RenameAccountStatus.CANCELLED;
+        }
+
+        synchronized (persistenceLock) {
+            AccountRecord record = accountRegistry.getLiveRecord(id);
+            if (record == null) return RenameAccountStatus.NOT_FOUND;
+
+            synchronized (record) {
+                if (!hasLiveRecord(id, record)) {
+                    return RenameAccountStatus.NOT_FOUND;
+                }
+
+                String currentName = record.getLastKnownName();
+                if (currentName.equals(validatedName)) {
+                    return RenameAccountStatus.UNCHANGED;
+                }
+
+                if (accountRegistry.isNameClaimedByAnother(id, validatedName)) {
+                    return RenameAccountStatus.NAME_IN_USE;
                 }
 
                 if (!accountRegistry.rename(record, validatedName)) {
                     return RenameAccountStatus.NAME_IN_USE;
                 }
+                invalidateBalTopCache();
                 return RenameAccountStatus.RENAMED;
             }
         }
@@ -197,16 +225,33 @@ public class AccountService {
     }
 
     public DeleteAccountStatus deleteAccountDetailed(UUID id) {
+        AccountDeleteEvent event;
+
+        synchronized (persistenceLock) {
+            AccountRecord record = accountRegistry.getLiveRecord(id);
+            if (record == null) return DeleteAccountStatus.NOT_FOUND;
+
+            synchronized (record) {
+                if (!hasLiveRecord(id, record)) {
+                    return DeleteAccountStatus.NOT_FOUND;
+                }
+                event = new AccountDeleteEvent(id, record.getLastKnownName(), record.getBalance());
+            }
+        }
+
+        eventDispatcher.dispatch(event);
+        if (event.isCancelled()) {
+            return DeleteAccountStatus.FAILED;
+        }
+
         synchronized (persistenceLock) {
             AccountRecord record = accountRegistry.getLiveRecord(id);
             if (record == null) return DeleteAccountStatus.NOT_FOUND;
             Long previousPayTime;
 
             synchronized (record) {
-                AccountDeleteEvent event = new AccountDeleteEvent(id, record.getLastKnownName(), record.getBalance());
-                eventDispatcher.dispatch(event);
-                if (event.isCancelled()) {
-                    return DeleteAccountStatus.FAILED;
+                if (!hasLiveRecord(id, record)) {
+                    return DeleteAccountStatus.NOT_FOUND;
                 }
                 if (!accountRegistry.remove(id, record)) {
                     return DeleteAccountStatus.FAILED;

@@ -12,12 +12,9 @@ import java.util.UUID;
  * Fired before a /pay transaction is processed.
  * Cancelling this event aborts the transfer entirely.
  *
- * <p><strong>Threading note:</strong> This event is dispatched while both the sender's and
- * recipient's account locks are held (acquired in UUID order to prevent deadlock). Listeners
- * must not call synchronous economy operations that could try to acquire either of these
- * accounts' locks on the same thread — this will cause re-entrant mutations. If you need to
- * perform economy operations in response to this event, do so in the corresponding
- * post-event {@link PayCompletedEvent} instead, which is dispatched outside all locks.
+ * <p><strong>Threading note:</strong> This event is dispatched outside SimpleEco's internal
+ * locks. The transfer is revalidated when it is committed, so other concurrent operations can
+ * still make the pay fail after this event if balances, cooldown, or limits change first.
  */
 public class PayEvent extends Event implements Cancellable {
 

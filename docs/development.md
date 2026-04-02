@@ -153,6 +153,7 @@ These rules are relied on across commands, Vault bridges, and the public API.
 ### Money rules
 
 - deposit, withdraw, and pay amounts must be positive
+- deposit, withdraw, and pay amounts that round to `0` at the configured decimal scale are invalid
 - set accepts zero and positive amounts, but not negative amounts
 - `has(...)` rejects negative probe amounts
 - self-transfer is invalid
@@ -204,6 +205,7 @@ Main events:
 - `PayCompletedEvent`
 
 Use pre-events when you need veto points, and post-events when you need audit, webhook, or analytics hooks after a successful mutation.
+Pre-events are now dispatched outside the plugin's internal locks. Their payloads describe the attempted mutation at dispatch time; if another operation races before commit, the post-events and final snapshots are authoritative.
 
 ## Build And Test Workflow
 

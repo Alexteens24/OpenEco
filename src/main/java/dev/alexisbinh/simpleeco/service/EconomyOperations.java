@@ -43,17 +43,17 @@ final class EconomyOperations {
     }
 
     EconomyResponse canDeposit(UUID id, BigDecimal amount) {
-        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
-            return failure(amount, BigDecimal.ZERO, "Amount must be positive");
+        EconomyConfigSnapshot currentConfig = configSupplier.get();
+        BigDecimal scaled = scale(amount, currentConfig);
+        if (scaled.compareTo(BigDecimal.ZERO) <= 0) {
+            return failure(scaled, BigDecimal.ZERO, "Amount must be positive");
         }
 
-        EconomyConfigSnapshot currentConfig = configSupplier.get();
         AccountRecord record = accountRegistry.getLiveRecord(id);
         if (record == null) {
-            return failure(amount, BigDecimal.ZERO, "Account not found");
+            return failure(scaled, BigDecimal.ZERO, "Account not found");
         }
 
-        BigDecimal scaled = scale(amount, currentConfig);
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) {
                 return failure(scaled, BigDecimal.ZERO, "Account not found");
@@ -69,17 +69,17 @@ final class EconomyOperations {
     }
 
     EconomyResponse canWithdraw(UUID id, BigDecimal amount) {
-        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
-            return failure(amount, BigDecimal.ZERO, "Amount must be positive");
+        EconomyConfigSnapshot currentConfig = configSupplier.get();
+        BigDecimal scaled = scale(amount, currentConfig);
+        if (scaled.compareTo(BigDecimal.ZERO) <= 0) {
+            return failure(scaled, BigDecimal.ZERO, "Amount must be positive");
         }
 
-        EconomyConfigSnapshot currentConfig = configSupplier.get();
         AccountRecord record = accountRegistry.getLiveRecord(id);
         if (record == null) {
-            return failure(amount, BigDecimal.ZERO, "Account not found");
+            return failure(scaled, BigDecimal.ZERO, "Account not found");
         }
 
-        BigDecimal scaled = scale(amount, currentConfig);
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) {
                 return failure(scaled, BigDecimal.ZERO, "Account not found");
@@ -94,17 +94,40 @@ final class EconomyOperations {
     }
 
     EconomyResponse deposit(UUID id, BigDecimal amount) {
-        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
-            return failure(amount, BigDecimal.ZERO, "Amount must be positive");
+        EconomyConfigSnapshot currentConfig = configSupplier.get();
+        BigDecimal scaled = scale(amount, currentConfig);
+        if (scaled.compareTo(BigDecimal.ZERO) <= 0) {
+            return failure(scaled, BigDecimal.ZERO, "Amount must be positive");
         }
 
-        EconomyConfigSnapshot currentConfig = configSupplier.get();
         AccountRecord record = accountRegistry.getLiveRecord(id);
         if (record == null) {
-            return failure(amount, BigDecimal.ZERO, "Account not found");
+            return failure(scaled, BigDecimal.ZERO, "Account not found");
         }
 
-        BigDecimal scaled = scale(amount, currentConfig);
+        BalanceChangeEvent event;
+        BigDecimal previewBalance;
+
+        synchronized (record) {
+            if (!accountRegistry.isLive(id, record)) {
+                return failure(scaled, BigDecimal.ZERO, "Account not found");
+            }
+
+            BigDecimal before = record.getBalance();
+            previewBalance = before;
+            BigDecimal newBalance = before.add(scaled);
+            if (currentConfig.maxBalance() != null && newBalance.compareTo(currentConfig.maxBalance()) > 0) {
+                return failure(scaled, before, "Balance limit reached");
+            }
+
+            event = new BalanceChangeEvent(id, before, newBalance, BalanceChangeEvent.Reason.GIVE);
+        }
+
+        eventDispatcher.dispatch(event);
+        if (event.isCancelled()) {
+            return failure(scaled, previewBalance, "Cancelled by plugin");
+        }
+
         BalanceChangedEvent completedEvent;
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) {
@@ -115,12 +138,6 @@ final class EconomyOperations {
             BigDecimal newBalance = before.add(scaled);
             if (currentConfig.maxBalance() != null && newBalance.compareTo(currentConfig.maxBalance()) > 0) {
                 return failure(scaled, before, "Balance limit reached");
-            }
-
-            BalanceChangeEvent event = new BalanceChangeEvent(id, before, newBalance, BalanceChangeEvent.Reason.GIVE);
-            eventDispatcher.dispatch(event);
-            if (event.isCancelled()) {
-                return failure(scaled, before, "Cancelled by plugin");
             }
 
             record.setBalance(newBalance);
@@ -134,17 +151,39 @@ final class EconomyOperations {
     }
 
     EconomyResponse withdraw(UUID id, BigDecimal amount) {
-        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
-            return failure(amount, BigDecimal.ZERO, "Amount must be positive");
+        EconomyConfigSnapshot currentConfig = configSupplier.get();
+        BigDecimal scaled = scale(amount, currentConfig);
+        if (scaled.compareTo(BigDecimal.ZERO) <= 0) {
+            return failure(scaled, BigDecimal.ZERO, "Amount must be positive");
         }
 
-        EconomyConfigSnapshot currentConfig = configSupplier.get();
         AccountRecord record = accountRegistry.getLiveRecord(id);
         if (record == null) {
-            return failure(amount, BigDecimal.ZERO, "Account not found");
+            return failure(scaled, BigDecimal.ZERO, "Account not found");
         }
 
-        BigDecimal scaled = scale(amount, currentConfig);
+        BalanceChangeEvent event;
+        BigDecimal previewBalance;
+
+        synchronized (record) {
+            if (!accountRegistry.isLive(id, record)) {
+                return failure(scaled, BigDecimal.ZERO, "Account not found");
+            }
+            BigDecimal before = record.getBalance();
+            previewBalance = before;
+            if (before.compareTo(scaled) < 0) {
+                return failure(scaled, before, "Insufficient funds");
+            }
+
+            BigDecimal newBalance = before.subtract(scaled);
+            event = new BalanceChangeEvent(id, before, newBalance, BalanceChangeEvent.Reason.TAKE);
+        }
+
+        eventDispatcher.dispatch(event);
+        if (event.isCancelled()) {
+            return failure(scaled, previewBalance, "Cancelled by plugin");
+        }
+
         BalanceChangedEvent completedEvent;
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) {
@@ -156,11 +195,6 @@ final class EconomyOperations {
 
             BigDecimal before = record.getBalance();
             BigDecimal newBalance = before.subtract(scaled);
-            BalanceChangeEvent event = new BalanceChangeEvent(id, before, newBalance, BalanceChangeEvent.Reason.TAKE);
-            eventDispatcher.dispatch(event);
-            if (event.isCancelled()) {
-                return failure(scaled, before, "Cancelled by plugin");
-            }
 
             record.setBalance(newBalance);
             leaderboardInvalidator.run();
@@ -184,6 +218,28 @@ final class EconomyOperations {
         }
 
         BigDecimal scaled = scale(amount, currentConfig);
+        BalanceChangeEvent event;
+        BigDecimal previewBalance;
+
+        synchronized (record) {
+            if (!accountRegistry.isLive(id, record)) {
+                return failure(scaled, BigDecimal.ZERO, "Account not found");
+            }
+
+            BigDecimal before = record.getBalance();
+            previewBalance = before;
+            if (currentConfig.maxBalance() != null && scaled.compareTo(currentConfig.maxBalance()) > 0) {
+                return failure(scaled, before, "Balance limit reached");
+            }
+
+            event = new BalanceChangeEvent(id, before, scaled, BalanceChangeEvent.Reason.SET);
+        }
+
+        eventDispatcher.dispatch(event);
+        if (event.isCancelled()) {
+            return failure(scaled, previewBalance, "Cancelled by plugin");
+        }
+
         BalanceChangedEvent completedEvent;
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) {
@@ -193,12 +249,6 @@ final class EconomyOperations {
             BigDecimal before = record.getBalance();
             if (currentConfig.maxBalance() != null && scaled.compareTo(currentConfig.maxBalance()) > 0) {
                 return failure(scaled, before, "Balance limit reached");
-            }
-
-            BalanceChangeEvent event = new BalanceChangeEvent(id, before, scaled, BalanceChangeEvent.Reason.SET);
-            eventDispatcher.dispatch(event);
-            if (event.isCancelled()) {
-                return failure(scaled, before, "Cancelled by plugin");
             }
 
             record.setBalance(scaled);
@@ -219,6 +269,24 @@ final class EconomyOperations {
         }
 
         BigDecimal startingBalance = currentConfig.startingBalance();
+        BalanceChangeEvent event;
+        BigDecimal previewBalance;
+
+        synchronized (record) {
+            if (!accountRegistry.isLive(id, record)) {
+                return failure(BigDecimal.ZERO, BigDecimal.ZERO, "Account not found");
+            }
+
+            BigDecimal before = record.getBalance();
+            previewBalance = before;
+            event = new BalanceChangeEvent(id, before, startingBalance, BalanceChangeEvent.Reason.RESET);
+        }
+
+        eventDispatcher.dispatch(event);
+        if (event.isCancelled()) {
+            return failure(BigDecimal.ZERO, previewBalance, "Cancelled by plugin");
+        }
+
         BalanceChangedEvent completedEvent;
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) {
@@ -226,12 +294,6 @@ final class EconomyOperations {
             }
 
             BigDecimal before = record.getBalance();
-            BalanceChangeEvent event = new BalanceChangeEvent(id, before, startingBalance, BalanceChangeEvent.Reason.RESET);
-            eventDispatcher.dispatch(event);
-            if (event.isCancelled()) {
-                return failure(BigDecimal.ZERO, before, "Cancelled by plugin");
-            }
-
             record.setBalance(startingBalance);
             leaderboardInvalidator.run();
             transactionLogger.accept(new TransactionEntry(TransactionType.RESET, null, id, startingBalance, before,
@@ -243,15 +305,14 @@ final class EconomyOperations {
     }
 
     TransferCheckResult canTransfer(UUID fromId, UUID toId, BigDecimal rawAmount) {
-        if (rawAmount.compareTo(BigDecimal.ZERO) <= 0) {
-            return new TransferCheckResult(TransferCheckResult.Status.INVALID_AMOUNT, rawAmount);
-        }
-        if (fromId.equals(toId)) {
-            return new TransferCheckResult(TransferCheckResult.Status.SELF_TRANSFER, rawAmount);
-        }
-
         EconomyConfigSnapshot currentConfig = configSupplier.get();
         BigDecimal scaled = scale(rawAmount, currentConfig);
+        if (scaled.compareTo(BigDecimal.ZERO) <= 0) {
+            return new TransferCheckResult(TransferCheckResult.Status.INVALID_AMOUNT, scaled);
+        }
+        if (fromId.equals(toId)) {
+            return new TransferCheckResult(TransferCheckResult.Status.SELF_TRANSFER, scaled);
+        }
 
         AccountRecord fromRecord = accountRegistry.getLiveRecord(fromId);
         AccountRecord toRecord = accountRegistry.getLiveRecord(toId);
@@ -287,17 +348,17 @@ final class EconomyOperations {
 
     TransferPreviewResult previewTransfer(UUID fromId, UUID toId, BigDecimal rawAmount) {
         EconomyConfigSnapshot currentConfig = configSupplier.get();
-        if (rawAmount.compareTo(BigDecimal.ZERO) <= 0) {
+        BigDecimal scaled = scale(rawAmount, currentConfig);
+        if (scaled.compareTo(BigDecimal.ZERO) <= 0) {
             return new TransferPreviewResult(
                     TransferPreviewResult.Status.INVALID_AMOUNT,
-                    rawAmount,
+                    scaled,
                     BigDecimal.ZERO,
                     BigDecimal.ZERO,
                     0,
                     null);
         }
 
-        BigDecimal scaled = scale(rawAmount, currentConfig);
         if (fromId.equals(toId)) {
             return new TransferPreviewResult(
                     TransferPreviewResult.Status.SELF_TRANSFER,
@@ -398,7 +459,9 @@ final class EconomyOperations {
     }
 
     PayResult pay(UUID fromId, UUID toId, BigDecimal rawAmount) {
-        if (rawAmount.compareTo(BigDecimal.ZERO) <= 0) {
+        EconomyConfigSnapshot currentConfig = configSupplier.get();
+        BigDecimal scaled = scale(rawAmount, currentConfig);
+        if (scaled.compareTo(BigDecimal.ZERO) <= 0) {
             return PayResult.invalidAmount();
         }
 
@@ -406,7 +469,6 @@ final class EconomyOperations {
             return PayResult.selfTransfer();
         }
 
-        EconomyConfigSnapshot currentConfig = configSupplier.get();
         if (currentConfig.payCooldownMs() > 0) {
             long last = lastPayTime.getOrDefault(fromId, 0L);
             long remaining = currentConfig.payCooldownMs() - (System.currentTimeMillis() - last);
@@ -419,7 +481,6 @@ final class EconomyOperations {
             }
         }
 
-        BigDecimal scaled = scale(rawAmount, currentConfig);
         if (currentConfig.payMinAmount() != null && scaled.compareTo(currentConfig.payMinAmount()) < 0) {
             return PayResult.tooLow(currentConfig.payMinAmount());
         }
@@ -435,6 +496,12 @@ final class EconomyOperations {
                 .divide(BigDecimal.valueOf(100), currentConfig.fractionalDigits(), RoundingMode.HALF_UP);
         BigDecimal received = scaled.subtract(tax);
 
+        PayEvent event = new PayEvent(fromId, toId, scaled, tax, received);
+        eventDispatcher.dispatch(event);
+        if (event.isCancelled()) {
+            return PayResult.cancelled();
+        }
+
         boolean fromFirst = fromId.compareTo(toId) < 0;
         AccountRecord first = fromFirst ? fromRecord : toRecord;
         AccountRecord second = fromFirst ? toRecord : fromRecord;
@@ -444,6 +511,17 @@ final class EconomyOperations {
             synchronized (second) {
                 if (!accountRegistry.isLive(fromId, fromRecord) || !accountRegistry.isLive(toId, toRecord)) {
                     return PayResult.accountNotFound();
+                }
+
+                if (currentConfig.payCooldownMs() > 0) {
+                    long last = lastPayTime.getOrDefault(fromId, 0L);
+                    long remaining = currentConfig.payCooldownMs() - (System.currentTimeMillis() - last);
+                    if (remaining > 0) {
+                        return PayResult.onCooldown(remaining);
+                    }
+                    if (last != 0L) {
+                        lastPayTime.remove(fromId, last);
+                    }
                 }
 
                 BigDecimal fromBefore = fromRecord.getBalance();
@@ -457,12 +535,6 @@ final class EconomyOperations {
 
                 if (currentConfig.maxBalance() != null && toAfter.compareTo(currentConfig.maxBalance()) > 0) {
                     return PayResult.balanceLimit();
-                }
-
-                PayEvent event = new PayEvent(fromId, toId, scaled, tax, received);
-                eventDispatcher.dispatch(event);
-                if (event.isCancelled()) {
-                    return PayResult.cancelled();
                 }
 
                 fromRecord.setBalance(fromAfter);

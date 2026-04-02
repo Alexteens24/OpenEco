@@ -12,9 +12,11 @@ import java.util.List;
 public class SimpleEcoPlaceholderExpansion extends PlaceholderExpansion {
 
     private final AccountService service;
+    private final String version;
 
-    public SimpleEcoPlaceholderExpansion(AccountService service) {
+    public SimpleEcoPlaceholderExpansion(AccountService service, String version) {
         this.service = service;
+        this.version = version;
     }
 
     @Override
@@ -24,7 +26,7 @@ public class SimpleEcoPlaceholderExpansion extends PlaceholderExpansion {
     public @NotNull String getAuthor() { return "alexisbinh"; }
 
     @Override
-    public @NotNull String getVersion() { return "1.0.0"; }
+    public @NotNull String getVersion() { return version; }
 
     @Override
     public boolean persist() { return true; }

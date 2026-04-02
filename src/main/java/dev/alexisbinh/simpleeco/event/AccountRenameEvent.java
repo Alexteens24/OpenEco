@@ -11,11 +11,10 @@ import java.util.UUID;
  * Fired before an account name change is committed to the in-memory store.
  * Cancelling this event aborts the rename.
  *
- * <p><strong>Threading note:</strong> This event is dispatched while both the
- * persistence lock and the account's own lock are held. Listeners must not call
- * any account lifecycle methods ({@code createAccount}, {@code renameAccount},
- * {@code deleteAccount}) or balance operations on the <em>same</em> account
- * synchronously from the handler thread — doing so will deadlock.
+ * <p><strong>Threading note:</strong> This event is dispatched outside SimpleEco's
+ * internal locks. The name fields describe the rename attempt that was evaluated at
+ * dispatch time. If another operation races before the rename is committed, the final
+ * stored name may differ; the post-mutation account snapshot is authoritative.
  */
 public class AccountRenameEvent extends Event implements Cancellable {
 

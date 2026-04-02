@@ -37,7 +37,7 @@ class SimpleEcoLegacyEconomyProviderTest {
 
     @BeforeEach
     void setUp() {
-        provider = new SimpleEcoLegacyEconomyProvider(service);
+        provider = new SimpleEcoLegacyEconomyProvider(service, name -> Optional.empty());
     }
 
     @Test
@@ -88,6 +88,41 @@ class SimpleEcoLegacyEconomyProviderTest {
 
         assertEquals(EconomyResponse.ResponseType.FAILURE, result.type);
         assertEquals("Account not found", result.errorMessage);
+    }
+
+    @Test
+    void createPlayerAccountByNameUsesKnownPlayerWhenAvailable() {
+        UUID playerId = UUID.randomUUID();
+
+        provider = new SimpleEcoLegacyEconomyProvider(service, name -> Optional.of(player));
+
+        when(player.getUniqueId()).thenReturn(playerId);
+        when(player.getName()).thenReturn("Alice");
+        when(service.findByName("Alice")).thenReturn(Optional.empty());
+        when(service.createAccount(playerId, "Alice")).thenReturn(true);
+
+        assertTrue(provider.createPlayerAccount("Alice"));
+        verify(service).createAccount(playerId, "Alice");
+    }
+
+    @Test
+    void createPlayerAccountByNameReturnsTrueForExistingStoredAccount() {
+        UUID playerId = UUID.randomUUID();
+        when(service.findByName("Alice")).thenReturn(Optional.of(
+                new AccountRecord(playerId, "Alice", new BigDecimal("12.50"), 1L, 1L)));
+
+        assertTrue(provider.createPlayerAccount("Alice"));
+
+        verify(service, never()).createAccount(any(UUID.class), anyString());
+    }
+
+    @Test
+    void createPlayerAccountByNameRejectsUnknownPlayersWithoutInventingUuid() {
+        when(service.findByName("Alice")).thenReturn(Optional.empty());
+
+        assertFalse(provider.createPlayerAccount("Alice"));
+
+        verify(service, never()).createAccount(any(UUID.class), anyString());
     }
 
     @Test

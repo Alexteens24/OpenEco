@@ -1,5 +1,6 @@
 package dev.alexisbinh.simpleeco.service;
 
+import dev.alexisbinh.simpleeco.model.AccountRecord;
 import dev.alexisbinh.simpleeco.model.PayResult;
 import dev.alexisbinh.simpleeco.model.TransactionEntry;
 import dev.alexisbinh.simpleeco.model.TransactionType;
@@ -227,6 +228,55 @@ class AccountServicePersistenceIntegrationTest {
             reader.loadAll();
             assertEquals(0, new BigDecimal("5.00").compareTo(reader.getBalance(id)));
             reader.shutdown();
+        } finally {
+            repository.close();
+        }
+    }
+
+    @Test
+    void balanceMutationRefreshesBalTopImmediately() throws Exception {
+        JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "baltop-refresh-test");
+        try {
+            AccountService service = newService(repository);
+            UUID aliceId = UUID.randomUUID();
+            UUID bobId = UUID.randomUUID();
+
+            service.createAccount(aliceId, "Alice");
+            service.createAccount(bobId, "Bob");
+            service.deposit(aliceId, new BigDecimal("45.00"));
+
+            List<AccountRecord> first = service.getBalTopSnapshot();
+            assertEquals("Alice", first.getFirst().getLastKnownName());
+
+            service.deposit(bobId, new BigDecimal("100.00"));
+
+            List<AccountRecord> refreshed = service.getBalTopSnapshot();
+            assertEquals("Bob", refreshed.getFirst().getLastKnownName());
+
+            service.shutdown();
+        } finally {
+            repository.close();
+        }
+    }
+
+    @Test
+    void renameRefreshesBalTopSnapshotImmediately() throws Exception {
+        JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "baltop-rename-test");
+        try {
+            AccountService service = newService(repository);
+            UUID aliceId = UUID.randomUUID();
+
+            service.createAccount(aliceId, "Alice");
+            List<AccountRecord> first = service.getBalTopSnapshot();
+            assertEquals("Alice", first.getFirst().getLastKnownName());
+
+            assertTrue(service.renameAccount(aliceId, "Alicia"));
+
+            List<AccountRecord> refreshed = service.getBalTopSnapshot();
+            assertEquals("Alicia", refreshed.getFirst().getLastKnownName());
+            assertTrue(refreshed.stream().noneMatch(record -> record.getLastKnownName().equals("Alice")));
+
+            service.shutdown();
         } finally {
             repository.close();
         }

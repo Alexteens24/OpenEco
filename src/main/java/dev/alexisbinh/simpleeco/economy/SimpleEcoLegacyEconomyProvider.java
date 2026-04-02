@@ -12,6 +12,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Function;
 
 /**
  * Legacy Vault v1 Economy adapter.
@@ -22,9 +23,16 @@ import java.util.UUID;
 public class SimpleEcoLegacyEconomyProvider implements Economy {
 
     private final AccountService service;
+    private final Function<String, Optional<OfflinePlayer>> knownPlayerLookup;
 
     public SimpleEcoLegacyEconomyProvider(AccountService service) {
+        this(service, SimpleEcoLegacyEconomyProvider::lookupKnownPlayer);
+    }
+
+    SimpleEcoLegacyEconomyProvider(AccountService service,
+                                   Function<String, Optional<OfflinePlayer>> knownPlayerLookup) {
         this.service = service;
+        this.knownPlayerLookup = knownPlayerLookup;
     }
 
     // ── Basic info ────────────────────────────────────────────────────────────
@@ -46,12 +54,12 @@ public class SimpleEcoLegacyEconomyProvider implements Economy {
             return resolvedByName;
         }
 
-        return knownPlayer(playerName)
+        return knownPlayerLookup.apply(playerName)
                 .map(OfflinePlayer::getUniqueId)
                 .filter(service::hasAccount);
     }
 
-    private Optional<OfflinePlayer> knownPlayer(String playerName) {
+    private static Optional<OfflinePlayer> lookupKnownPlayer(String playerName) {
         if (Bukkit.getServer() == null) {
             return Optional.empty();
         }
@@ -60,17 +68,6 @@ public class SimpleEcoLegacyEconomyProvider implements Economy {
             return Optional.of(online);
         }
         return Optional.ofNullable(Bukkit.getOfflinePlayerIfCached(playerName));
-    }
-
-    private Optional<OfflinePlayer> resolvePlayer(String playerName) {
-        Optional<OfflinePlayer> known = knownPlayer(playerName);
-        if (known.isPresent()) {
-            return known;
-        }
-        if (Bukkit.getServer() == null) {
-            return Optional.empty();
-        }
-        return Optional.ofNullable(Bukkit.getOfflinePlayer(playerName));
     }
 
     private static EconomyResponse accountNotFound() {
@@ -130,7 +127,11 @@ public class SimpleEcoLegacyEconomyProvider implements Economy {
 
     @Override
     public boolean createPlayerAccount(String playerName) {
-        Optional<OfflinePlayer> player = resolvePlayer(playerName);
+        if (service.findByName(playerName).isPresent()) {
+            return true;
+        }
+
+        Optional<OfflinePlayer> player = knownPlayerLookup.apply(playerName);
         if (player.isEmpty()) {
             return false;
         }

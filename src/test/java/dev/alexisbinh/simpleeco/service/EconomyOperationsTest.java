@@ -1,6 +1,7 @@
 package dev.alexisbinh.simpleeco.service;
 
 import dev.alexisbinh.simpleeco.api.TransferPreviewResult;
+import dev.alexisbinh.simpleeco.api.TransferCheckResult;
 import dev.alexisbinh.simpleeco.event.BalanceChangeEvent;
 import dev.alexisbinh.simpleeco.event.BalanceChangedEvent;
 import dev.alexisbinh.simpleeco.event.PayEvent;
@@ -19,6 +20,7 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
@@ -110,6 +112,24 @@ class EconomyOperationsTest {
 
         assertFalse(resp.transactionSuccess());
         assertTrue(logged.isEmpty());
+    }
+
+    @Test
+    void deposit_listenerMayMutateSameAccountBeforeApply() {
+        AtomicBoolean nested = new AtomicBoolean();
+        ops = buildOps(event -> {
+            if (event instanceof BalanceChangeEvent balanceEvent
+                    && balanceEvent.getReason() == BalanceChangeEvent.Reason.GIVE
+                    && nested.compareAndSet(false, true)) {
+                EconomyResponse nestedResp = ops.withdraw(aliceId, new BigDecimal("1.00"));
+                assertTrue(nestedResp.transactionSuccess());
+            }
+        });
+
+        EconomyResponse resp = ops.deposit(aliceId, new BigDecimal("3.00"));
+
+        assertTrue(resp.transactionSuccess());
+        assertEquals(0, new BigDecimal("12.00").compareTo(registry.getLiveRecord(aliceId).getBalance()));
     }
 
     // ── withdraw ─────────────────────────────────────────────────────────────
@@ -276,6 +296,23 @@ class EconomyOperationsTest {
     }
 
     @Test
+    void pay_listenerMayMutateSenderBeforeApply() {
+        AtomicBoolean nested = new AtomicBoolean();
+        ops = buildOps(event -> {
+            if (event instanceof PayEvent && nested.compareAndSet(false, true)) {
+                EconomyResponse nestedResp = ops.deposit(aliceId, new BigDecimal("2.00"));
+                assertTrue(nestedResp.transactionSuccess());
+            }
+        });
+
+        PayResult result = ops.pay(aliceId, bobId, new BigDecimal("4.00"));
+
+        assertTrue(result.isSuccess());
+        assertEquals(0, new BigDecimal("8.00").compareTo(registry.getLiveRecord(aliceId).getBalance()));
+        assertEquals(0, new BigDecimal("9.00").compareTo(registry.getLiveRecord(bobId).getBalance()));
+    }
+
+    @Test
     void pay_balanceLimitPreventsRecipientFromExceeding() {
         config = configWith(0.0, 0, new BigDecimal("6.00"), 2);
         ops = buildOps(event -> { });
@@ -306,13 +343,23 @@ class EconomyOperationsTest {
 
     @Test
     void pay_tooLowAmountIsRejected() {
-        config = configWith(0.0, 0, null, 2);
-        // Default min-amount is 0.01; paying 0.001 (scales to 0.00) should be rejected
+        config = configWith(0.0, 0, null, 2, 0.10);
+        ops = buildOps(event -> { });
+
+        PayResult result = ops.pay(aliceId, bobId, new BigDecimal("0.05"));
+
+        assertEquals(PayResult.Status.TOO_LOW, result.getStatus());
+        assertTrue(logged.isEmpty());
+    }
+
+    @Test
+    void pay_amountRoundedToZeroIsInvalidWhenMinimumDisabled() {
+        config = configWith(0.0, 0, null, 2, 0.0);
         ops = buildOps(event -> { });
 
         PayResult result = ops.pay(aliceId, bobId, new BigDecimal("0.001"));
 
-        assertEquals(PayResult.Status.TOO_LOW, result.getStatus());
+        assertEquals(PayResult.Status.INVALID_AMOUNT, result.getStatus());
         assertTrue(logged.isEmpty());
     }
 
@@ -388,11 +435,25 @@ class EconomyOperationsTest {
 
     @Test
     void previewTransfer_reportsMinimumAmountWhenTooLow() {
-        TransferPreviewResult result = ops.previewTransfer(aliceId, bobId, new BigDecimal("0.001"));
+        config = configWith(0.0, 0, null, 2, 0.10);
+        ops = buildOps(event -> { });
+
+        TransferPreviewResult result = ops.previewTransfer(aliceId, bobId, new BigDecimal("0.05"));
 
         assertEquals(TransferPreviewResult.Status.TOO_LOW, result.status());
         assertTrue(result.hasMinimumAmount());
-        assertEquals(0, new BigDecimal("0.01").compareTo(result.minimumAmount()));
+        assertEquals(0, new BigDecimal("0.10").compareTo(result.minimumAmount()));
+        assertTrue(logged.isEmpty());
+    }
+
+    @Test
+    void previewTransfer_amountRoundedToZeroIsInvalidWhenMinimumDisabled() {
+        config = configWith(0.0, 0, null, 2, 0.0);
+        ops = buildOps(event -> { });
+
+        TransferPreviewResult result = ops.previewTransfer(aliceId, bobId, new BigDecimal("0.001"));
+
+        assertEquals(TransferPreviewResult.Status.INVALID_AMOUNT, result.status());
         assertTrue(logged.isEmpty());
     }
 
@@ -421,6 +482,14 @@ class EconomyOperationsTest {
     }
 
     @Test
+    void canDeposit_amountRoundedToZeroFails() {
+        EconomyResponse resp = ops.canDeposit(aliceId, new BigDecimal("0.001"));
+
+        assertFalse(resp.transactionSuccess());
+        assertEquals("Amount must be positive", resp.errorMessage);
+    }
+
+    @Test
     void canWithdraw_sufficientFundsSucceeds() {
         EconomyResponse resp = ops.canWithdraw(aliceId, new BigDecimal("8.00"));
 
@@ -435,6 +504,42 @@ class EconomyOperationsTest {
         assertFalse(resp.transactionSuccess());
     }
 
+    @Test
+    void canWithdraw_amountRoundedToZeroFails() {
+        EconomyResponse resp = ops.canWithdraw(aliceId, new BigDecimal("0.001"));
+
+        assertFalse(resp.transactionSuccess());
+        assertEquals("Amount must be positive", resp.errorMessage);
+    }
+
+    @Test
+    void deposit_amountRoundedToZeroFailsWithoutMutation() {
+        EconomyResponse resp = ops.deposit(aliceId, new BigDecimal("0.001"));
+
+        assertFalse(resp.transactionSuccess());
+        assertEquals(0, new BigDecimal("10.00").compareTo(registry.getLiveRecord(aliceId).getBalance()));
+        assertTrue(logged.isEmpty());
+    }
+
+    @Test
+    void withdraw_amountRoundedToZeroFailsWithoutMutation() {
+        EconomyResponse resp = ops.withdraw(aliceId, new BigDecimal("0.001"));
+
+        assertFalse(resp.transactionSuccess());
+        assertEquals(0, new BigDecimal("10.00").compareTo(registry.getLiveRecord(aliceId).getBalance()));
+        assertTrue(logged.isEmpty());
+    }
+
+    @Test
+    void canTransfer_amountRoundedToZeroIsInvalidWhenMinimumDisabled() {
+        config = configWith(0.0, 0, null, 2, 0.0);
+        ops = buildOps(event -> { });
+
+        TransferCheckResult result = ops.canTransfer(aliceId, bobId, new BigDecimal("0.001"));
+
+        assertEquals(TransferCheckResult.Status.INVALID_AMOUNT, result.status());
+    }
+
     // ── helpers ───────────────────────────────────────────────────────────────
 
     private EconomyOperations buildOps(Consumer<Event> listener) {
@@ -447,6 +552,12 @@ class EconomyOperationsTest {
 
     private static EconomyConfigSnapshot configWith(double taxPercent, long cooldownSec,
                                                      BigDecimal maxBalance, int decimals) {
+        return configWith(taxPercent, cooldownSec, maxBalance, decimals, 0.01);
+    }
+
+    private static EconomyConfigSnapshot configWith(double taxPercent, long cooldownSec,
+                                                     BigDecimal maxBalance, int decimals,
+                                                     double minAmount) {
         YamlConfiguration cfg = new YamlConfiguration();
         cfg.set("currency.id", "test");
         cfg.set("currency.name-singular", "Dollar");
@@ -456,7 +567,7 @@ class EconomyOperationsTest {
         cfg.set("currency.max-balance", maxBalance != null ? maxBalance.doubleValue() : -1);
         cfg.set("pay.cooldown-seconds", cooldownSec);
         cfg.set("pay.tax-percent", taxPercent);
-        cfg.set("pay.min-amount", 0.01);
+        cfg.set("pay.min-amount", minAmount);
         cfg.set("baltop.cache-ttl-seconds", 30);
         cfg.set("history.retention-days", -1);
         return EconomyConfigSnapshot.from(cfg);

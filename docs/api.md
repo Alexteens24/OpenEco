@@ -67,6 +67,7 @@ These validations are enforced before business-rule evaluation:
 - `TransactionMetadata.note` must be 255 characters or fewer when provided
 - `has(UUID, BigDecimal)` requires `amount >= 0`
 - `logCustomTransaction(...)` requires `amount > 0`
+- deposit, withdraw, pay, and related prechecks reject amounts that round to `0` at the configured currency precision
 - history `page` and `pageSize` must be greater than 0
 - `HistoryFilter` requires `fromMs >= 0`, `toMs >= 0`, and `fromMs <= toMs`
 
