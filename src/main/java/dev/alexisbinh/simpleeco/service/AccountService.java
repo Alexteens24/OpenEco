@@ -79,7 +79,7 @@ public class AccountService {
                 () -> this.config,
                 lastPayTime,
                 this::logTransaction,
-                this::invalidateBalTopCache,
+                this::markDirtyBalTopCache,
                 eventDispatcher);
         readConfig(config);
     }
@@ -427,6 +427,10 @@ public class AccountService {
         } else {
             lastPayTime.remove(id);
         }
+    }
+
+    private void markDirtyBalTopCache() {
+        leaderboardCache.markDirty();
     }
 
     private void invalidateBalTopCache() {
