@@ -413,6 +413,10 @@ final class EconomyOperations {
             if (remaining > 0) {
                 return PayResult.onCooldown(remaining);
             }
+            // Cooldown has passed — remove stale entry now. A fresh one is written on success.
+            if (last != 0L) {
+                lastPayTime.remove(fromId, last);
+            }
         }
 
         BigDecimal scaled = scale(rawAmount, currentConfig);

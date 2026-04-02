@@ -21,7 +21,7 @@ record EconomyConfigSnapshot(
 
     static EconomyConfigSnapshot from(FileConfiguration config) {
         int fractionalDigits = Math.max(0, Math.min(8, config.getInt("currency.decimal-digits", 2)));
-        BigDecimal startingBalance = BigDecimal.valueOf(config.getDouble("currency.starting-balance", 0.0))
+        BigDecimal startingBalance = BigDecimal.valueOf(Math.max(0.0, config.getDouble("currency.starting-balance", 0.0)))
                 .setScale(fractionalDigits, RoundingMode.HALF_UP);
         BigDecimal payTaxRate = BigDecimal.valueOf(
                 Math.max(0.0, Math.min(100.0, config.getDouble("pay.tax-percent", 0.0))));

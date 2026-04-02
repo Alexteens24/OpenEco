@@ -12,6 +12,12 @@ import java.util.UUID;
  * Fired before a balance change is applied (give, take, set, reset).
  * Cancelling this event prevents the change from taking effect.
  * Not fired for /pay — use {@link PayEvent} for that.
+ *
+ * <p><strong>Threading note:</strong> This event is dispatched while the target account's
+ * internal lock is held. Listeners must not call synchronous economy operations on the
+ * <em>same</em> account from the handler thread — doing so will cause re-entrant mutations
+ * with unpredictable ordering. Operations on <em>other</em> accounts are safe as long as
+ * they do not transitively acquire the same account's lock.
  */
 public class BalanceChangeEvent extends Event implements Cancellable {
 

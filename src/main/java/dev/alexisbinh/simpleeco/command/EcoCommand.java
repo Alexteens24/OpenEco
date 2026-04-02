@@ -213,7 +213,7 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
             String sub = args[0].toLowerCase();
             if (sub.equals("give") || sub.equals("take") || sub.equals("set") || sub.equals("reset") || sub.equals("delete")) {
                 String prefix = args[1].toLowerCase();
-                return service.getUUIDNameMap().values().stream()
+                return service.getAccountNames().stream()
                         .filter(n -> n.toLowerCase().startsWith(prefix))
                         .sorted()
                         .toList();

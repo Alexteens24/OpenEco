@@ -235,6 +235,10 @@ public class AccountService {
         return accountRegistry.getUUIDNameMap();
     }
 
+    public List<String> getAccountNames() {
+        return accountRegistry.getAccountNames();
+    }
+
     // ── Balance operations ───────────────────────────────────────────────────
 
     public BigDecimal getBalance(UUID id) {

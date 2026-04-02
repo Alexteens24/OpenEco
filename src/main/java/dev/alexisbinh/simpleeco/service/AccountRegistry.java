@@ -2,6 +2,7 @@ package dev.alexisbinh.simpleeco.service;
 
 import dev.alexisbinh.simpleeco.model.AccountRecord;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -115,6 +116,14 @@ final class AccountRegistry {
             map.put(record.getId(), record.getLastKnownName());
         }
         return Collections.unmodifiableMap(map);
+    }
+
+    List<String> getAccountNames() {
+        List<String> names = new ArrayList<>(accounts.size());
+        for (AccountRecord record : accounts.values()) {
+            names.add(record.getLastKnownName());
+        }
+        return names;
     }
 
     Collection<AccountRecord> liveRecords() {

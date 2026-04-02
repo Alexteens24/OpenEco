@@ -64,7 +64,7 @@ public class BalanceCommand implements CommandExecutor, TabCompleter {
                                       @NotNull String alias, @NotNull String[] args) {
         if (args.length == 1 && sender.hasPermission("simpleeco.command.balance.others")) {
             String prefix = args[0].toLowerCase();
-            return service.getUUIDNameMap().values().stream()
+            return service.getAccountNames().stream()
                     .filter(n -> n.toLowerCase().startsWith(prefix))
                     .sorted()
                     .toList();
