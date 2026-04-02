@@ -42,6 +42,11 @@ public class SimpleEcoPlaceholderExpansion extends PlaceholderExpansion {
             if (player == null) return "";
             return service.format(service.getBalance(player.getUniqueId()));
         }
+        if (params.equals("rank")) {
+            if (player == null) return "";
+            int rank = service.getRankOf(player.getUniqueId());
+            return rank == -1 ? "" : String.valueOf(rank);
+        }
         if (params.equals("currency_singular")) {
             return service.getCurrencySingular();
         }

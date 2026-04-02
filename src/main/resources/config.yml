@@ -82,7 +82,7 @@ messages:
 
   history-header: "<gold><bold>--- <player>'s History (page <page>/<total>) ---</bold></gold>"
   history-empty: "<gray>No transactions found."
-  history-error: "<red>Failed to load history: <message>"
+  history-error: "<red>Failed to load transaction history. Please try again later."
   history-give: "<dark_gray>[<date>] <green>+<amount> <gray>(given by admin)"
   history-take: "<dark_gray>[<date>] <red>-<amount> <gray>(taken by admin)"
   history-set: "<dark_gray>[<date>] <yellow>set <gray>to <yellow><balance> <gray>(admin)"
