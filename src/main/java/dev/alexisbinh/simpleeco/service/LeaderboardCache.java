@@ -11,9 +11,6 @@ final class LeaderboardCache {
     private volatile List<AccountRecord> cachedBalTop;
     private volatile long cacheExpiry;
     private volatile long cacheTtlMs = 30_000L;
-    // Set to true by balance mutations so the next expired-cache request rebuilds with
-    // fresh data, but the current snapshot keeps being served until TTL runs out.
-    private volatile boolean dirty = false;
 
     void setCacheTtlMs(long cacheTtlMs) {
         this.cacheTtlMs = Math.max(1L, cacheTtlMs);
@@ -27,7 +24,6 @@ final class LeaderboardCache {
             return cached;  // serve existing snapshot; balance changes wait for TTL expiry
         }
 
-        dirty = false;
         List<AccountRecord> sorted = new ArrayList<>(liveRecords.size());
         for (AccountRecord record : liveRecords) {
             synchronized (record) {
@@ -47,7 +43,9 @@ final class LeaderboardCache {
      * next request rebuilds. Use this for balance mutations (high-frequency hot path).
      */
     void markDirty() {
-        dirty = true;
+        // No-op: balance mutations don't drop the cached snapshot.
+        // The existing snapshot keeps being served until TTL expires, at which point
+        // the next request rebuilds with fresh data.
     }
 
     /**
@@ -56,7 +54,6 @@ final class LeaderboardCache {
      * where serving a stale list would show wrong entries.
      */
     void invalidate() {
-        dirty = false;
         cachedBalTop = null;
         cacheExpiry = 0L;
     }
