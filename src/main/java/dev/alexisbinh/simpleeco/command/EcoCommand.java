@@ -133,6 +133,10 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
         BigDecimal amount;
         try {
             amount = new BigDecimal(args[2]);
+            if (amount.precision() > 30 || Math.abs(amount.scale()) > 18) {
+                messages.send(sender, "invalid-amount");
+                return true;
+            }
         } catch (NumberFormatException e) {
             messages.send(sender, "invalid-amount");
             return true;

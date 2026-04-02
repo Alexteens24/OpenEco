@@ -101,9 +101,8 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
                     }
                 });
             } catch (SQLException ex) {
-                dispatchReply(sender, () ->
-                    messages.send(sender, "history-error",
-                            Placeholder.unparsed("message", ex.getMessage())));
+                plugin.getLogger().warning("Failed to load transaction history for " + fTargetId + ": " + ex.getMessage());
+                dispatchReply(sender, () -> messages.send(sender, "history-error"));
             }
         });
         return true;

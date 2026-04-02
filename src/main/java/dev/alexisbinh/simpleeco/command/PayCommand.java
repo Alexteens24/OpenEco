@@ -56,6 +56,10 @@ public class PayCommand implements CommandExecutor, TabCompleter {
         BigDecimal amount;
         try {
             amount = new BigDecimal(args[1]);
+            if (amount.precision() > 30 || Math.abs(amount.scale()) > 18) {
+                messages.send(payer, "invalid-amount");
+                return true;
+            }
         } catch (NumberFormatException e) {
             messages.send(payer, "invalid-amount");
             return true;

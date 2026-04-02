@@ -367,6 +367,10 @@ public class AccountService {
     }
 
     public void logCustomTransaction(UUID accountId, TransactionEntry entry) {
+        if (!accountId.equals(entry.getTargetId())) {
+            throw new IllegalArgumentException(
+                "entry.targetId must match accountId (got targetId=" + entry.getTargetId() + ")");
+        }
         transactionHistoryService.log(entry);
     }
 
