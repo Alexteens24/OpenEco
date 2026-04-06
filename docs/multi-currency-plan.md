@@ -1,6 +1,8 @@
 # Multi-Currency Support Plan
 
-## Goal
+> **Note:** This document is a historical planning artifact. Multi-currency support has been fully implemented. Refer to [configuration.md](configuration.md), [api.md](api.md), and [development.md](development.md) for current documentation.
+
+
 
 Add true per-player multi-currency balances to SimpleEco without breaking the current default-currency behavior for existing servers, legacy Vault v1 integrations, and addons that only know about one balance.
 

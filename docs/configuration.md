@@ -116,31 +116,58 @@ Keep these warnings present unless you replace them with equivalent text:
 - `account-sync-failed`
 - `account-name-conflict`
 
-Common placeholders:
+All message keys and their placeholders:
 
 | Key | Placeholders |
 |---|---|
+| `no-permission` | *(none)* |
+| `console-player-only` | *(none)* |
+| `account-not-found` | `<player>` |
+| `account-sync-failed` | *(none)* |
+| `account-name-conflict` | `<player>` |
+| `account-frozen` | *(none)* |
+| `self-pay` | *(none)* |
+| `insufficient-funds` | *(none)* |
+| `unknown-currency` | *(none)* |
+| `invalid-amount` | *(none)* |
+| `negative-amount` | *(none)* |
 | `balance-self` | `<balance>` |
 | `balance-other` | `<player>`, `<balance>` |
 | `pay-sent` | `<player>`, `<amount>` |
 | `pay-received` | `<player>`, `<amount>` |
 | `pay-tax` | `<tax>` |
 | `pay-cooldown` | `<seconds>` |
-| `account-not-found` | `<player>` |
+| `pay-balance-limit` | `<player>` |
+| `pay-too-low` | `<min>` |
+| `pay-cancelled` | *(none)* |
 | `eco-give` | `<player>`, `<amount>`, `<balance>` |
+| `eco-give-failed` | `<player>` |
 | `eco-take` | `<player>`, `<amount>`, `<balance>` |
+| `eco-take-failed` | `<player>` |
 | `eco-set` | `<player>`, `<balance>` |
+| `eco-set-failed` | `<player>` |
 | `eco-reset` | `<player>`, `<balance>` |
 | `eco-delete` | `<player>` |
+| `eco-delete-failed` | `<player>` |
 | `eco-freeze` | `<player>` |
-| `eco-unfreeze` | `<player>` |
 | `eco-freeze-failed` | `<player>` |
+| `eco-unfreeze` | `<player>` |
 | `eco-unfreeze-failed` | `<player>` |
-| `account-frozen` | *(none)* |
 | `eco-balance-limit` | `<player>`, `<limit>` |
+| `eco-rename` | `<old_name>`, `<new_name>` |
+| `eco-rename-name-in-use` | `<new_name>` |
+| `eco-rename-invalid` | `<new_name>` |
+| `eco-rename-failed` | `<player>` |
+| `eco-reload` | *(none)* |
 | `baltop-header` | `<page>`, `<total>` |
 | `baltop-entry` | `<rank>`, `<player>`, `<balance>` |
 | `history-header` | `<player>`, `<page>`, `<total>` |
+| `history-empty` | *(none)* |
+| `history-error` | *(none)* |
+| `history-give` | `<date>`, `<amount>` |
+| `history-take` | `<date>`, `<amount>` |
+| `history-set` | `<date>`, `<balance>` |
+| `history-reset` | `<date>`, `<balance>` |
 | `history-pay-sent` | `<date>`, `<amount>`, `<counterpart>` |
 | `history-pay-received` | `<date>`, `<amount>`, `<counterpart>` |
 | `history-custom` | `<date>`, `<kind>`, `<amount>`, `<details>`, `<source>`, `<note>`, `<balance>` |

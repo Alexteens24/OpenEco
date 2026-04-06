@@ -163,7 +163,8 @@ These rules are relied on across commands, Vault bridges, and the public API.
 
 ### Cache and persistence rules
 
-- any create, delete, or balance mutation must invalidate the baltop cache
+- any account create, rename, or delete must invalidate the baltop cache immediately
+- balance mutations do not eagerly invalidate the baltop cache; the cache expires naturally on its configured TTL
 - cached leaderboard entries must be immutable snapshots, not live records
 - deleting an account must not race pending history writes; the service waits for the history queue to drain before deleting persisted rows
 

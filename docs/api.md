@@ -597,7 +597,9 @@ Available events:
 
 - `AccountCreateEvent`
 - `AccountRenameEvent`
+- `AccountRenamedEvent`
 - `AccountDeleteEvent`
+- `AccountDeletedEvent`
 - `BalanceChangeEvent`
 - `BalanceChangedEvent`
 - `PayEvent`
@@ -615,6 +617,8 @@ These are cancellable.
 Post-success events:
 
 - `AccountCreateEvent`
+- `AccountRenamedEvent`
+- `AccountDeletedEvent`
 - `BalanceChangedEvent`
 - `PayCompletedEvent`
 
