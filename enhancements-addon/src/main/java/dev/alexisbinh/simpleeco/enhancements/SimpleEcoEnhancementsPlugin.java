@@ -2,6 +2,7 @@ package dev.alexisbinh.simpleeco.enhancements;
 
 import dev.alexisbinh.simpleeco.api.CurrencyInfo;
 import dev.alexisbinh.simpleeco.api.SimpleEcoApi;
+import dev.alexisbinh.simpleeco.enhancements.exchange.ExchangeCommand;
 import dev.alexisbinh.simpleeco.enhancements.interest.InterestTask;
 import dev.alexisbinh.simpleeco.enhancements.paylimit.PayLimitListener;
 import dev.alexisbinh.simpleeco.enhancements.permcap.PermCapListener;
@@ -50,6 +51,17 @@ public class SimpleEcoEnhancementsPlugin extends JavaPlugin {
         // ── Interest ─────────────────────────────────────────────────────────
         if (getConfig().getBoolean("interest.enabled", false)) {
             startInterestTask();
+        }
+
+        // ── Currency Exchange ─────────────────────────────────────────────────
+        if (getConfig().getBoolean("exchange.enabled", false)) {
+            ExchangeCommand exchangeCommand = new ExchangeCommand(api, this);
+            var cmd = getCommand("exchange");
+            if (cmd != null) {
+                cmd.setExecutor(exchangeCommand);
+                cmd.setTabCompleter(exchangeCommand);
+            }
+            getLogger().info("Currency exchange enabled.");
         }
 
         getLogger().info("SimpleEcoEnhancements enabled.");

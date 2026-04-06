@@ -57,3 +57,35 @@ perm-cap:
       cap: 500000
     - permission: simpleeco.cap.mvp
       cap: 2000000
+
+# ── Currency Exchange ─────────────────────────────────────────────────────────
+exchange:
+  # Set to true to enable the /exchange command.
+  enabled: false
+
+  # Optional flat fee percentage deducted from the received amount (0 = no fee).
+  # Example: fee-percent: 2.5 means the player receives 2.5% less than the raw rate gives.
+  fee-percent: 0.0
+
+  # List of directional exchange rates.
+  # Each entry defines how much of the 'to' currency is given per 1 unit of 'from'.
+  # Rates are NOT automatically reversible — add both directions explicitly if needed.
+  rates:
+    - from: simpleeco
+      to: gems
+      rate: 10.0
+    # - from: gems
+    #   to: simpleeco
+    #   rate: 0.09
+
+  messages:
+    usage: "<red>Usage: /exchange <amount> <from> <to>"
+    success: "<green>Exchanged <yellow><from_amount></yellow> for <yellow><to_amount></yellow>."
+    no-rate: "<red>No exchange rate configured for that currency pair."
+    unknown-currency: "<red>Unknown currency: <yellow><currency>"
+    same-currency: "<red>Cannot exchange a currency for itself."
+    insufficient-funds: "<red>Insufficient funds."
+    balance-limit: "<red>Exchange would exceed your balance limit."
+    frozen: "<red>Your account is frozen."
+    invalid-amount: "<red>Invalid amount."
+    failed: "<red>Exchange failed."
