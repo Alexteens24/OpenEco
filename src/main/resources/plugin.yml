@@ -53,6 +53,7 @@ permissions:
       simpleeco.command.eco.delete: true
       simpleeco.command.eco.freeze: true
       simpleeco.command.eco.unfreeze: true
+      simpleeco.command.eco.rename: true
       simpleeco.command.eco.reload: true
       simpleeco.command.balance.others: true
       simpleeco.command.history.others: true
@@ -91,6 +92,9 @@ permissions:
     default: op
   simpleeco.command.eco.unfreeze:
     description: Unfreeze a player's economy account
+    default: op
+  simpleeco.command.eco.rename:
+    description: Rename a player's economy account display name
     default: op
   simpleeco.command.history:
     description: View own transaction history

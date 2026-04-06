@@ -574,6 +574,10 @@ final class EconomyOperations {
             }
         }
         eventDispatcher.dispatch(completedEvent);
+        eventDispatcher.dispatch(new BalanceChangedEvent(fromId, completedEvent.getFromBalanceBefore(),
+                completedEvent.getFromBalanceAfter(), BalanceChangeEvent.Reason.PAY_SENT));
+        eventDispatcher.dispatch(new BalanceChangedEvent(toId, completedEvent.getToBalanceBefore(),
+                completedEvent.getToBalanceAfter(), BalanceChangeEvent.Reason.PAY_RECEIVED));
         return PayResult.success(scaled, received, tax);
     }
 

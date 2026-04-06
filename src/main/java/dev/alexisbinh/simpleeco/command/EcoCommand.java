@@ -16,7 +16,7 @@ import java.util.List;
 
 public class EcoCommand implements CommandExecutor, TabCompleter {
 
-    private static final List<String> SUBCOMMANDS = Arrays.asList("give", "take", "set", "reset", "delete", "freeze", "unfreeze", "reload");
+    private static final List<String> SUBCOMMANDS = Arrays.asList("give", "take", "set", "reset", "delete", "freeze", "unfreeze", "rename", "reload");
 
     private final AccountService service;
     private final SimpleEcoPlugin plugin;
@@ -32,7 +32,7 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command,
                              @NotNull String label, @NotNull String[] args) {
         if (args.length == 0) {
-            sender.sendMessage("§cUsage: /eco <give|take|set|reset|delete|freeze|unfreeze|reload> <player> [amount]");
+            sender.sendMessage("§cUsage: /eco <give|take|set|reset|delete|freeze|unfreeze|rename|reload> <player> [amount]");
             return true;
         }
 
@@ -125,6 +125,37 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
+        // rename needs <player> <newname>
+        if (sub.equals("rename")) {
+            if (!sender.hasPermission("simpleeco.command.eco.rename")) {
+                messages.send(sender, "no-permission");
+                return true;
+            }
+            if (args.length < 3) {
+                sender.sendMessage("§cUsage: /eco rename <player> <newname>");
+                return true;
+            }
+            var optTarget = service.findByName(args[1]);
+            if (optTarget.isEmpty()) {
+                messages.send(sender, "account-not-found", Placeholder.unparsed("player", args[1]));
+                return true;
+            }
+            var target = optTarget.get();
+            var status = service.renameAccountDetailed(target.getId(), args[2]);
+            switch (status) {
+                case RENAMED, UNCHANGED -> messages.send(sender, "eco-rename",
+                        Placeholder.unparsed("old_name", target.getLastKnownName()),
+                        Placeholder.unparsed("new_name", args[2]));
+                case NAME_IN_USE -> messages.send(sender, "eco-rename-name-in-use",
+                        Placeholder.unparsed("new_name", args[2]));
+                case INVALID_NAME -> messages.send(sender, "eco-rename-invalid",
+                        Placeholder.unparsed("new_name", args[2]));
+                default -> messages.send(sender, "eco-rename-failed",
+                        Placeholder.unparsed("player", target.getLastKnownName()));
+            }
+            return true;
+        }
+
         // reset only needs <player>
         if (sub.equals("reset")) {
             if (!sender.hasPermission("simpleeco.command.eco.reset")) {
@@ -165,7 +196,7 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
             default     -> null;
         };
         if (perm == null) {
-            sender.sendMessage("§cUnknown subcommand. Use: give, take, set, reset, delete, freeze, unfreeze, reload.");
+            sender.sendMessage("§cUnknown subcommand. Use: give, take, set, reset, delete, freeze, unfreeze, rename, reload.");
             return true;
         }
         if (!sender.hasPermission(perm)) {
@@ -266,7 +297,7 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
         }
         if (args.length == 2) {
             String sub = args[0].toLowerCase();
-            if (sub.equals("give") || sub.equals("take") || sub.equals("set") || sub.equals("reset") || sub.equals("delete") || sub.equals("freeze") || sub.equals("unfreeze")) {
+            if (sub.equals("give") || sub.equals("take") || sub.equals("set") || sub.equals("reset") || sub.equals("delete") || sub.equals("freeze") || sub.equals("unfreeze") || sub.equals("rename")) {
                 String prefix = args[1].toLowerCase();
                 return service.getAccountNames().stream()
                         .filter(n -> n.toLowerCase().startsWith(prefix))

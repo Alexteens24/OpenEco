@@ -15,5 +15,6 @@
 | `simpleeco.command.eco.delete` | op | Delete an account and that account's history |
 | `simpleeco.command.eco.freeze` | op | Freeze an account |
 | `simpleeco.command.eco.unfreeze` | op | Unfreeze an account |
+| `simpleeco.command.eco.rename` | op | Rename an account's display name |
 | `simpleeco.command.eco.reload` | op | Reload config and messages |
 | `simpleeco.admin` | op | Grants all admin permissions above |

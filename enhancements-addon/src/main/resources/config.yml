@@ -1,0 +1,57 @@
+# SimpleEcoEnhancements — default config
+
+# ── Interest ─────────────────────────────────────────────────────────────────
+interest:
+  # Set to true to enable automatic interest payments.
+  enabled: false
+
+  # Annual interest rate in percent (e.g. 5.0 = 5% per year).
+  # The amount credited each interval is: balance * rate / 100 / (seconds-per-year / interval-seconds)
+  rate: 5.0
+
+  # How often interest is credited, in seconds.
+  # Default: 3600 (every hour).
+  interval-seconds: 3600
+
+  # Minimum balance required to receive interest.
+  # Accounts below this threshold are skipped.
+  min-balance: 0
+
+  # Maximum interest credited per interval (0 = unlimited).
+  max-per-interval: 0
+
+  # Transaction source tag written to history entries.
+  source: "interest"
+
+# ── Pay Limit ────────────────────────────────────────────────────────────────
+pay-limit:
+  # Set to true to enforce a rolling-window pay limit per player.
+  enabled: false
+
+  # Maximum total amount a single player may send via /pay within the window.
+  max-amount: 10000
+
+  # Length of the rolling window in seconds.
+  # Default: 86400 (24 hours / 1 day).
+  window-seconds: 86400
+
+  # Message sent when the limit is exceeded.
+  # Supports MiniMessage tags.
+  message: "<red>You have reached your daily pay limit of <yellow><limit><red>. Resets in <yellow><remaining><red>."
+
+# ── Permission Balance Cap ────────────────────────────────────────────────────
+perm-cap:
+  # Set to true to allow permission nodes to grant higher balance caps.
+  # This only affects operations that reach the addon listeners.
+  # If SimpleEco's own global max-balance is lower, the core plugin will still reject first.
+  # A startup warning is logged for any tier that exceeds the core global max-balance.
+  enabled: false
+
+  # List of permission → cap pairs.
+  # All matching permissions are considered and the highest matching cap is used.
+  # Players without any matching permission fall back to SimpleEco's global max-balance.
+  tiers:
+    - permission: simpleeco.cap.vip
+      cap: 500000
+    - permission: simpleeco.cap.mvp
+      cap: 2000000

@@ -20,7 +20,7 @@ import java.util.UUID;
  */
 public class BalanceChangeEvent extends Event implements Cancellable {
 
-    public enum Reason { GIVE, TAKE, SET, RESET }
+    public enum Reason { GIVE, TAKE, SET, RESET, PAY_SENT, PAY_RECEIVED }
 
     private static final HandlerList HANDLERS = new HandlerList();
 

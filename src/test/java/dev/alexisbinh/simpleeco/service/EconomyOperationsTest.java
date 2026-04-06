@@ -262,7 +262,7 @@ class EconomyOperationsTest {
         assertEquals(2, logged.size());
         assertTrue(logged.stream().anyMatch(e -> e.getType() == TransactionType.PAY_SENT));
         assertTrue(logged.stream().anyMatch(e -> e.getType() == TransactionType.PAY_RECEIVED));
-        assertEquals(List.of(PayEvent.class, PayCompletedEvent.class),
+        assertEquals(List.of(PayEvent.class, PayCompletedEvent.class, BalanceChangedEvent.class, BalanceChangedEvent.class),
             dispatchedEvents.stream().map(Event::getClass).toList());
     }
 

@@ -81,6 +81,10 @@ messages:
   account-frozen: "<red>This account is frozen and cannot perform transactions."
   eco-reset: "<green>Reset <yellow><player><green>'s balance to <yellow><balance><green>."
   eco-reload: "<green>SimpleEco configuration reloaded."
+  eco-rename: "<green>Renamed <yellow><old_name><green>'s account to <yellow><new_name><green>."
+  eco-rename-name-in-use: "<red>The name <yellow><new_name><red> is already taken."
+  eco-rename-invalid: "<red>Invalid name: <yellow><new_name><red>."
+  eco-rename-failed: "<red>Failed to rename <yellow><player><red>'s account."
 
   baltop-header: "<gold><bold>--- Balance Top (page <page>/<total>) ---</bold></gold>"
   baltop-entry: "<yellow>#<rank> <green><player><gray>: <yellow><balance>"
