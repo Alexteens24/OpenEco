@@ -3,6 +3,7 @@ package dev.alexisbinh.simpleeco.event;
 import org.bukkit.event.Event;
 import org.bukkit.event.HandlerList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.math.BigDecimal;
 import java.util.UUID;
@@ -22,6 +23,7 @@ public class PayCompletedEvent extends Event {
 
     private final UUID fromId;
     private final UUID toId;
+    private final String currencyId;
     private final BigDecimal sent;
     private final BigDecimal received;
     private final BigDecimal tax;
@@ -33,8 +35,16 @@ public class PayCompletedEvent extends Event {
     public PayCompletedEvent(UUID fromId, UUID toId, BigDecimal sent, BigDecimal received, BigDecimal tax,
                              BigDecimal fromBalanceBefore, BigDecimal fromBalanceAfter,
                              BigDecimal toBalanceBefore, BigDecimal toBalanceAfter) {
+        this(fromId, toId, sent, received, tax, fromBalanceBefore, fromBalanceAfter, toBalanceBefore, toBalanceAfter, null);
+    }
+
+    public PayCompletedEvent(UUID fromId, UUID toId, BigDecimal sent, BigDecimal received, BigDecimal tax,
+                             BigDecimal fromBalanceBefore, BigDecimal fromBalanceAfter,
+                             BigDecimal toBalanceBefore, BigDecimal toBalanceAfter,
+                             @Nullable String currencyId) {
         this.fromId = fromId;
         this.toId = toId;
+        this.currencyId = currencyId;
         this.sent = sent;
         this.received = received;
         this.tax = tax;
@@ -47,6 +57,10 @@ public class PayCompletedEvent extends Event {
     public UUID getFromId() { return fromId; }
 
     public UUID getToId() { return toId; }
+
+    public @Nullable String getCurrencyId() { return currencyId; }
+
+    public boolean hasCurrencyId() { return currencyId != null; }
 
     public BigDecimal getSent() { return sent; }
 

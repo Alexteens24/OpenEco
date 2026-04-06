@@ -4,6 +4,7 @@ import org.bukkit.event.Cancellable;
 import org.bukkit.event.Event;
 import org.bukkit.event.HandlerList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.math.BigDecimal;
 import java.util.UUID;
@@ -27,14 +28,21 @@ public class BalanceChangeEvent extends Event implements Cancellable {
     private final UUID playerId;
     private final BigDecimal oldBalance;
     private final BigDecimal newBalance;
+    private final String currencyId;
     private final Reason reason;
     private boolean cancelled = false;
 
     public BalanceChangeEvent(UUID playerId, BigDecimal oldBalance, BigDecimal newBalance, Reason reason) {
+        this(playerId, oldBalance, newBalance, reason, null);
+    }
+
+    public BalanceChangeEvent(UUID playerId, BigDecimal oldBalance, BigDecimal newBalance, Reason reason,
+                              @Nullable String currencyId) {
         this.playerId = playerId;
         this.oldBalance = oldBalance;
         this.newBalance = newBalance;
         this.reason = reason;
+        this.currencyId = currencyId;
     }
 
     /** The player whose balance is changing. */
@@ -48,6 +56,11 @@ public class BalanceChangeEvent extends Event implements Cancellable {
 
     /** What caused this change. */
     public Reason getReason() { return reason; }
+
+    /** Currency affected by the change, or null for legacy callers that did not supply one. */
+    public @Nullable String getCurrencyId() { return currencyId; }
+
+    public boolean hasCurrencyId() { return currencyId != null; }
 
     @Override
     public boolean isCancelled() { return cancelled; }

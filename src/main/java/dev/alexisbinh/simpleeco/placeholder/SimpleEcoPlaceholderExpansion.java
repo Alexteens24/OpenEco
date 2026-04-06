@@ -7,6 +7,7 @@ import org.bukkit.OfflinePlayer;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 public class SimpleEcoPlaceholderExpansion extends PlaceholderExpansion {
@@ -42,16 +43,43 @@ public class SimpleEcoPlaceholderExpansion extends PlaceholderExpansion {
             if (player == null) return "";
             return service.format(service.getBalance(player.getUniqueId()));
         }
+        if (params.startsWith("balance_formatted_")) {
+            if (player == null) return "";
+            String currencyId = params.substring("balance_formatted_".length());
+            if (!service.hasCurrency(currencyId)) return "";
+            return service.format(service.getBalance(player.getUniqueId(), currencyId), currencyId);
+        }
+        if (params.startsWith("balance_")) {
+            if (player == null) return "";
+            String currencyId = params.substring("balance_".length());
+            if (!service.hasCurrency(currencyId)) return "";
+            return service.getBalance(player.getUniqueId(), currencyId).toPlainString();
+        }
         if (params.equals("rank")) {
             if (player == null) return "";
             int rank = service.getRankOf(player.getUniqueId());
             return rank == -1 ? "" : String.valueOf(rank);
         }
+        if (params.startsWith("rank_")) {
+            if (player == null) return "";
+            String currencyId = params.substring("rank_".length());
+            if (!service.hasCurrency(currencyId)) return "";
+            int rank = service.getRankOf(player.getUniqueId(), currencyId);
+            return rank == -1 ? "" : String.valueOf(rank);
+        }
         if (params.equals("currency_singular")) {
             return service.getCurrencySingular();
         }
+        if (params.startsWith("currency_singular_")) {
+            String currencyId = params.substring("currency_singular_".length());
+            return service.hasCurrency(currencyId) ? service.getCurrencySingular(currencyId) : "";
+        }
         if (params.equals("currency_plural")) {
             return service.getCurrencyPlural();
+        }
+        if (params.startsWith("currency_plural_")) {
+            String currencyId = params.substring("currency_plural_".length());
+            return service.hasCurrency(currencyId) ? service.getCurrencyPlural(currencyId) : "";
         }
         if (params.equals("frozen")) {
             if (player == null) return "";
@@ -71,19 +99,45 @@ public class SimpleEcoPlaceholderExpansion extends PlaceholderExpansion {
                 return "";
             }
             if (rank < 1) return "";
-            String field = rest.substring(underscore + 1);
+            String descriptor = rest.substring(underscore + 1);
+            ParsedTopField parsed = parseTopField(descriptor);
+            if (parsed == null) return "";
 
-            List<AccountRecord> top = service.getBalTopSnapshot();
-            if (rank > top.size()) return field.equals("name") ? "---" : "0";
+            List<AccountRecord> top = service.getBalTopSnapshot(parsed.currencyId());
+            if (rank > top.size()) {
+                return switch (parsed.field()) {
+                    case "name" -> "---";
+                    case "balance" -> "0";
+                    case "balance_formatted" -> service.format(BigDecimal.ZERO, parsed.currencyId());
+                    default -> "";
+                };
+            }
             AccountRecord entry = top.get(rank - 1);
-            return switch (field) {
+            return switch (parsed.field()) {
                 case "name" -> entry.getLastKnownName();
-                case "balance" -> entry.getBalance().toPlainString();
-                case "balance_formatted" -> service.format(entry.getBalance());
+                case "balance" -> entry.getBalance(parsed.currencyId()).toPlainString();
+                case "balance_formatted" -> service.format(entry.getBalance(parsed.currencyId()), parsed.currencyId());
                 default -> "";
             };
         }
 
         return null; // unknown placeholder
     }
+
+    private @Nullable ParsedTopField parseTopField(String descriptor) {
+        for (String field : List.of("balance_formatted", "balance", "name")) {
+            if (descriptor.equals(field)) {
+                return new ParsedTopField(field, service.getCurrencyId());
+            }
+            if (descriptor.startsWith(field + "_")) {
+                String currencyId = descriptor.substring(field.length() + 1);
+                if (service.hasCurrency(currencyId)) {
+                    return new ParsedTopField(field, currencyId);
+                }
+            }
+        }
+        return null;
+    }
+
+    private record ParsedTopField(String field, String currencyId) {}
 }

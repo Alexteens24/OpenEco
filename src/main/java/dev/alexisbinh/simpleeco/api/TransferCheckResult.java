@@ -13,6 +13,7 @@ public record TransferCheckResult(Status status, BigDecimal amount) {
 
     public enum Status {
         ALLOWED,
+        UNKNOWN_CURRENCY,
         ACCOUNT_NOT_FOUND,
         INVALID_AMOUNT,
         INSUFFICIENT_FUNDS,

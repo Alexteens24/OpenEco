@@ -34,21 +34,39 @@ public class BalTopCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
+        if (args.length > 2) {
+            sender.sendMessage("§cUsage: /baltop [page] [currency]");
+            return true;
+        }
+
         int pageSize = plugin.getConfig().getInt("baltop.page-size", 10);
         if (pageSize < 1) pageSize = 10;
 
         int page = 1;
+        String currencyId = service.getCurrencyId();
+
         if (args.length > 0) {
-            try {
-                page = Integer.parseInt(args[0]);
-                if (page < 1) page = 1;
-            } catch (NumberFormatException e) {
-                sender.sendMessage("§cInvalid page number.");
-                return true;
+            if (isPageNumber(args[0])) {
+                page = parsePage(args[0]);
+                if (args.length == 2) {
+                    currencyId = args[1];
+                }
+            } else {
+                currencyId = args[0];
             }
         }
 
-        List<AccountRecord> snapshot = service.getBalTopSnapshot();
+        if (args.length == 2 && !isPageNumber(args[0])) {
+            sender.sendMessage("§cUsage: /baltop [page] [currency]");
+            return true;
+        }
+
+        if (!service.hasCurrency(currencyId)) {
+            messages.send(sender, "unknown-currency");
+            return true;
+        }
+
+        List<AccountRecord> snapshot = service.getBalTopSnapshot(currencyId);
         int totalPages = (int) Math.ceil((double) snapshot.size() / pageSize);
         if (totalPages == 0) totalPages = 1;
         if (page > totalPages) page = totalPages;
@@ -64,7 +82,7 @@ public class BalTopCommand implements CommandExecutor, TabCompleter {
             messages.send(sender, "baltop-entry",
                     Placeholder.unparsed("rank", String.valueOf(i + 1)),
                     Placeholder.unparsed("player", r.getLastKnownName()),
-                    Placeholder.unparsed("balance", service.format(r.getBalance())));
+                    Placeholder.unparsed("balance", service.format(r.getBalance(currencyId), currencyId)));
         }
         return true;
     }
@@ -72,7 +90,39 @@ public class BalTopCommand implements CommandExecutor, TabCompleter {
     @Override
     public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command,
                                       @NotNull String alias, @NotNull String[] args) {
+        if (args.length == 1) {
+            String prefix = args[0].toLowerCase();
+            return service.getCurrencyIds().stream()
+                    .filter(id -> id.toLowerCase().startsWith(prefix))
+                    .sorted()
+                    .toList();
+        }
+        if (args.length == 2 && isPageNumber(args[0])) {
+            String prefix = args[1].toLowerCase();
+            return service.getCurrencyIds().stream()
+                    .filter(id -> id.toLowerCase().startsWith(prefix))
+                    .sorted()
+                    .toList();
+        }
         return Collections.emptyList();
+    }
+
+    private static boolean isPageNumber(String value) {
+        try {
+            Integer.parseInt(value);
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    private static int parsePage(String value) {
+        try {
+            int page = Integer.parseInt(value);
+            return Math.max(page, 1);
+        } catch (NumberFormatException e) {
+            return 1;
+        }
     }
 }
 

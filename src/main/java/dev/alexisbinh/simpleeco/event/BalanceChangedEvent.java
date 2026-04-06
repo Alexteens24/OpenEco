@@ -3,6 +3,7 @@ package dev.alexisbinh.simpleeco.event;
 import org.bukkit.event.Event;
 import org.bukkit.event.HandlerList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.math.BigDecimal;
 import java.util.UUID;
@@ -23,14 +24,21 @@ public class BalanceChangedEvent extends Event {
     private final UUID playerId;
     private final BigDecimal oldBalance;
     private final BigDecimal newBalance;
+    private final String currencyId;
     private final BalanceChangeEvent.Reason reason;
 
     public BalanceChangedEvent(UUID playerId, BigDecimal oldBalance, BigDecimal newBalance,
                                BalanceChangeEvent.Reason reason) {
+        this(playerId, oldBalance, newBalance, reason, null);
+    }
+
+    public BalanceChangedEvent(UUID playerId, BigDecimal oldBalance, BigDecimal newBalance,
+                               BalanceChangeEvent.Reason reason, @Nullable String currencyId) {
         this.playerId = playerId;
         this.oldBalance = oldBalance;
         this.newBalance = newBalance;
         this.reason = reason;
+        this.currencyId = currencyId;
     }
 
     public UUID getPlayerId() { return playerId; }
@@ -38,6 +46,10 @@ public class BalanceChangedEvent extends Event {
     public BigDecimal getOldBalance() { return oldBalance; }
 
     public BigDecimal getNewBalance() { return newBalance; }
+
+    public @Nullable String getCurrencyId() { return currencyId; }
+
+    public boolean hasCurrencyId() { return currencyId != null; }
 
     public BalanceChangeEvent.Reason getReason() { return reason; }
 

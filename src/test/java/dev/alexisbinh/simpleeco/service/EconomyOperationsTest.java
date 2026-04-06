@@ -20,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.ConcurrentHashMap;
@@ -49,10 +50,11 @@ class EconomyOperationsTest {
         aliceId = UUID.randomUUID();
         bobId = UUID.randomUUID();
 
-        registry.create(new AccountRecord(aliceId, "Alice", new BigDecimal("10.00"), 1L, 1L));
-        registry.create(new AccountRecord(bobId, "Bob", new BigDecimal("5.00"), 1L, 1L));
-
         config = configWith(0.0, 0, null, 2);
+
+        registry.create(account(aliceId, "Alice", new BigDecimal("10.00")));
+        registry.create(account(bobId, "Bob", new BigDecimal("5.00")));
+
         ops = buildOps(event -> { });
     }
 
@@ -551,6 +553,10 @@ class EconomyOperationsTest {
                     dispatchedEvents.add(event);
                     listener.accept(event);
                 });
+    }
+
+    private AccountRecord account(UUID id, String name, BigDecimal balance) {
+        return new AccountRecord(id, name, config.currencyId(), Map.of(config.currencyId(), balance), 1L, 1L);
     }
 
     private static EconomyConfigSnapshot configWith(double taxPercent, long cooldownSec,

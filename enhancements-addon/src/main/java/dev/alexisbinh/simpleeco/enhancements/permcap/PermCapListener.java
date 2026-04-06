@@ -1,6 +1,6 @@
 package dev.alexisbinh.simpleeco.enhancements.permcap;
 
-import dev.alexisbinh.simpleeco.api.EconomyRulesSnapshot;
+import dev.alexisbinh.simpleeco.api.CurrencyInfo;
 import dev.alexisbinh.simpleeco.api.SimpleEcoApi;
 import dev.alexisbinh.simpleeco.event.BalanceChangeEvent;
 import dev.alexisbinh.simpleeco.event.PayEvent;
@@ -37,11 +37,12 @@ public class PermCapListener implements Listener {
         if (!config.getBoolean("perm-cap.enabled", false)) return;
 
         UUID playerId = event.getPlayerId();
+        String currencyId = resolveCurrencyId(event.hasCurrencyId() ? event.getCurrencyId() : null);
         Player player = plugin.getServer().getPlayer(playerId);
         if (player == null) return; // offline — skip
         if (player.hasPermission("simpleeco.enhancements.bypass.permcap")) return;
 
-        if (wouldExceedCap(player, event.getNewBalance(), config)) {
+        if (wouldExceedCap(player, event.getNewBalance(), config, currencyId)) {
             event.setCancelled(true);
         }
     }
@@ -52,18 +53,23 @@ public class PermCapListener implements Listener {
         if (!config.getBoolean("perm-cap.enabled", false)) return;
 
         UUID recipientId = event.getToId();
+        boolean explicitCurrency = event.hasCurrencyId() && api.hasCurrency(event.getCurrencyId());
+        String currencyId = resolveCurrencyId(explicitCurrency ? event.getCurrencyId() : null);
         Player recipient = plugin.getServer().getPlayer(recipientId);
         if (recipient == null) return; // offline — skip
         if (recipient.hasPermission("simpleeco.enhancements.bypass.permcap")) return;
 
-        BigDecimal projectedBalance = api.getBalance(recipientId).add(event.getReceived());
-        if (wouldExceedCap(recipient, projectedBalance, config)) {
+        BigDecimal currentBalance = explicitCurrency
+                ? api.getBalance(recipientId, currencyId)
+                : api.getBalance(recipientId);
+        BigDecimal projectedBalance = currentBalance.add(event.getReceived());
+        if (wouldExceedCap(recipient, projectedBalance, config, currencyId)) {
             event.setCancelled(true);
         }
     }
 
-    private boolean wouldExceedCap(Player player, BigDecimal newBalance, FileConfiguration config) {
-        BigDecimal cap = resolveCapForPlayer(player, config);
+    private boolean wouldExceedCap(Player player, BigDecimal newBalance, FileConfiguration config, String currencyId) {
+        BigDecimal cap = resolveCapForPlayer(player, config, currencyId);
         if (cap == null) return false;
         return newBalance.compareTo(cap) > 0;
     }
@@ -73,7 +79,7 @@ public class PermCapListener implements Listener {
      * the highest cap from all matching permission tiers, floored at the SimpleEco global cap.
      * Returns null if neither tiers nor global cap are set.
      */
-    private BigDecimal resolveCapForPlayer(Player player, FileConfiguration config) {
+    private BigDecimal resolveCapForPlayer(Player player, FileConfiguration config, String currencyId) {
         List<Map<?, ?>> tiers = config.getMapList("perm-cap.tiers");
         BigDecimal bestTierCap = null;
 
@@ -92,8 +98,10 @@ public class PermCapListener implements Listener {
         }
 
         // Global cap from SimpleEco (may be null = unlimited)
-        EconomyRulesSnapshot rules = api.getRules();
-        BigDecimal globalCap = rules.currency().maxBalance();
+        CurrencyInfo currencyInfo = api.getCurrencyInfo(currencyId);
+        BigDecimal globalCap = currencyInfo != null
+            ? currencyInfo.maxBalance()
+            : api.getRules().currency().maxBalance();
 
         if (bestTierCap != null) {
             // Use whichever is higher: tier cap or global cap
@@ -101,5 +109,12 @@ public class PermCapListener implements Listener {
             return bestTierCap.compareTo(globalCap) > 0 ? bestTierCap : globalCap;
         }
         return globalCap; // may be null
+    }
+
+    private String resolveCurrencyId(String currencyId) {
+        if (currencyId != null && api.hasCurrency(currencyId)) {
+            return currencyId;
+        }
+        return api.getRules().currency().id();
     }
 }

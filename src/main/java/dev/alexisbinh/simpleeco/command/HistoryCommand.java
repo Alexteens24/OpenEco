@@ -43,11 +43,20 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
     @Override
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command,
                              @NotNull String label, @NotNull String[] args) {
+        if (args.length > 3) {
+            sender.sendMessage("§cUsage: /history [player] [page] [currency]");
+            return true;
+        }
+
         UUID targetId;
         String targetName;
         int page = 1;
+        String currencyId = service.getCurrencyId();
 
-        if (args.length == 0 || (args.length == 1 && isPageNumber(args[0]))) {
+        boolean selfRequest = args.length == 0
+                || (sender instanceof Player && (isPageNumber(args[0]) || service.hasCurrency(args[0])));
+
+        if (selfRequest) {
             if (!(sender instanceof Player player)) {
                 messages.send(sender, "console-player-only");
                 return true;
@@ -58,7 +67,19 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
             }
             targetId = player.getUniqueId();
             targetName = player.getName();
-            if (args.length == 1) page = parsePageSafe(args[0]);
+            if (args.length >= 1) {
+                if (isPageNumber(args[0])) {
+                    page = parsePageSafe(args[0]);
+                    if (args.length == 2) {
+                        currencyId = args[1];
+                    }
+                } else {
+                    currencyId = args[0];
+                    if (args.length == 2) {
+                        page = parsePageSafe(args[1]);
+                    }
+                }
+            }
         } else {
             if (!sender.hasPermission("simpleeco.command.history.others")) {
                 messages.send(sender, "no-permission");
@@ -71,20 +92,38 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
             }
             targetId = opt.get().getId();
             targetName = opt.get().getLastKnownName();
-            if (args.length >= 2) page = parsePageSafe(args[1]);
+            if (args.length >= 2) {
+                if (isPageNumber(args[1])) {
+                    page = parsePageSafe(args[1]);
+                    if (args.length == 3) {
+                        currencyId = args[2];
+                    }
+                } else {
+                    currencyId = args[1];
+                    if (args.length == 3) {
+                        page = parsePageSafe(args[2]);
+                    }
+                }
+            }
+        }
+
+        if (!service.hasCurrency(currencyId)) {
+            messages.send(sender, "unknown-currency");
+            return true;
         }
 
         final UUID fTargetId = targetId;
         final String fTargetName = targetName;
         final int fPage = page;
         final int fPageSize = PAGE_SIZE;
+        final String fCurrencyId = currencyId;
 
         plugin.getServer().getAsyncScheduler().runNow(plugin, task -> {
             try {
-                int total = service.countTransactions(fTargetId);
+                int total = service.countTransactions(fTargetId, fCurrencyId);
                 int totalPages = Math.max(1, (int) Math.ceil((double) total / fPageSize));
                 int clampedPage = Math.min(fPage, totalPages);
-                List<TransactionEntry> entries = service.getTransactions(fTargetId, clampedPage, fPageSize);
+                List<TransactionEntry> entries = service.getTransactions(fTargetId, fCurrencyId, clampedPage, fPageSize);
                 Map<UUID, String> nameMap = service.getUUIDNameMap();
 
                 dispatchReply(sender, () -> {
@@ -97,7 +136,7 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
                         return;
                     }
                     for (TransactionEntry e : entries) {
-                        sender.sendMessage(formatEntry(e, nameMap));
+                        sender.sendMessage(formatEntry(e, nameMap, fCurrencyId));
                     }
                 });
             } catch (SQLException ex) {
@@ -116,10 +155,11 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
         plugin.getServer().getGlobalRegionScheduler().run(plugin, task -> reply.run());
     }
 
-    private Component formatEntry(TransactionEntry e, Map<UUID, String> nameMap) {
+    private Component formatEntry(TransactionEntry e, Map<UUID, String> nameMap, String fallbackCurrencyId) {
         String date = DATE_FORMAT.format(Instant.ofEpochMilli(e.getTimestamp()));
-        String amount = service.format(e.getAmount());
-        String balance = service.format(e.getBalanceAfter());
+        String currencyId = e.hasCurrencyId() ? e.getCurrencyId() : fallbackCurrencyId;
+        String amount = service.format(e.getAmount(), currencyId);
+        String balance = service.format(e.getBalanceAfter(), currencyId);
 
         if (e.hasMetadata()) {
             return messages.getOrDefault("history-custom",
@@ -183,10 +223,38 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
                                       @NotNull String alias, @NotNull String[] args) {
         if (args.length == 1 && sender.hasPermission("simpleeco.command.history.others")) {
             String prefix = args[0].toLowerCase();
-            return service.getAccountNames().stream()
-                    .filter(n -> n.toLowerCase().startsWith(prefix))
-                    .sorted()
-                    .toList();
+            List<String> suggestions = new java.util.ArrayList<>(service.getAccountNames().stream()
+                .filter(n -> n.toLowerCase().startsWith(prefix))
+                .sorted()
+                .toList());
+            suggestions.addAll(service.getCurrencyIds().stream()
+                .filter(id -> id.toLowerCase().startsWith(prefix))
+                .sorted()
+                .filter(id -> !suggestions.contains(id))
+                .toList());
+            return suggestions;
+        }
+        if (args.length == 1) {
+            String prefix = args[0].toLowerCase();
+            return service.getCurrencyIds().stream()
+                .filter(id -> id.toLowerCase().startsWith(prefix))
+                .sorted()
+                .toList();
+        }
+        if (args.length == 2 && (!sender.hasPermission("simpleeco.command.history.others")
+            || service.findByName(args[0]).isPresent() || isPageNumber(args[0]))) {
+            String prefix = args[1].toLowerCase();
+            return service.getCurrencyIds().stream()
+                .filter(id -> id.toLowerCase().startsWith(prefix))
+                .sorted()
+                .toList();
+        }
+        if (args.length == 3 && isPageNumber(args[1])) {
+            String prefix = args[2].toLowerCase();
+            return service.getCurrencyIds().stream()
+                .filter(id -> id.toLowerCase().startsWith(prefix))
+                .sorted()
+                .toList();
         }
         return Collections.emptyList();
     }

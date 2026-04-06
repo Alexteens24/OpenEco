@@ -50,7 +50,11 @@ public class SimpleEcoPlugin extends JavaPlugin {
         }
 
         try {
-            repository = new JdbcAccountRepository(dialect, dataDir.getAbsolutePath(), filename);
+            repository = new JdbcAccountRepository(
+                    dialect,
+                    dataDir.getAbsolutePath(),
+                    filename,
+                    resolveDefaultCurrencyId());
         } catch (SQLException e) {
             getLogger().severe("Failed to open database: " + e.getMessage());
             getServer().getPluginManager().disablePlugin(this);
@@ -135,6 +139,14 @@ public class SimpleEcoPlugin extends JavaPlugin {
         }
         restartAutoSaveTask();
         restartPruneTask();
+    }
+
+    private String resolveDefaultCurrencyId() {
+        String configured = getConfig().getString("currencies.default");
+        if (configured == null || configured.isBlank()) {
+            configured = getConfig().getString("currency.id", "simpleeco");
+        }
+        return configured == null || configured.isBlank() ? "simpleeco" : configured.trim();
     }
 
     private void restartAutoSaveTask() {

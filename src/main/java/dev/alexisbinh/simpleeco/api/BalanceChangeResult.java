@@ -6,6 +6,7 @@ public record BalanceChangeResult(Status status, BigDecimal amount, BigDecimal p
 
     public enum Status {
         SUCCESS,
+        UNKNOWN_CURRENCY,
         ACCOUNT_NOT_FOUND,
         INVALID_AMOUNT,
         INSUFFICIENT_FUNDS,

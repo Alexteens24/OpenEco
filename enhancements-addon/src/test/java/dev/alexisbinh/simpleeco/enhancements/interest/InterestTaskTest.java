@@ -4,6 +4,8 @@ import dev.alexisbinh.simpleeco.api.BalanceChangeResult;
 import dev.alexisbinh.simpleeco.api.CurrencyInfo;
 import dev.alexisbinh.simpleeco.api.EconomyRulesSnapshot;
 import dev.alexisbinh.simpleeco.api.SimpleEcoApi;
+import dev.alexisbinh.simpleeco.api.TransactionKind;
+import dev.alexisbinh.simpleeco.api.TransactionMetadata;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.junit.jupiter.api.BeforeEach;
@@ -72,6 +74,10 @@ class InterestTaskTest {
         task.run();
 
         verify(api).deposit(accountId, new BigDecimal("5.00"));
-        verify(api, never()).logCustomTransaction(eq(accountId), any(), any(), any());
+        verify(api, never()).logCustomTransaction(
+            eq(accountId),
+            any(BigDecimal.class),
+            any(TransactionKind.class),
+            any(TransactionMetadata.class));
     }
 }

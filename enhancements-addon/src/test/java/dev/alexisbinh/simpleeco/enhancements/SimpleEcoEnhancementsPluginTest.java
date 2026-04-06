@@ -1,7 +1,6 @@
 package dev.alexisbinh.simpleeco.enhancements;
 
 import dev.alexisbinh.simpleeco.api.CurrencyInfo;
-import dev.alexisbinh.simpleeco.api.EconomyRulesSnapshot;
 import dev.alexisbinh.simpleeco.api.SimpleEcoApi;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -28,31 +27,21 @@ class SimpleEcoEnhancementsPluginTest {
 
     @Test
     void warnsWhenPermCapTierExceedsGlobalLimit() {
-        when(api.getRules()).thenReturn(new EconomyRulesSnapshot(
-                new CurrencyInfo("coins", "coin", "coins", 2, BigDecimal.ZERO, new BigDecimal("100.00")),
-                0,
-                BigDecimal.ZERO,
-                null,
-                0,
-                0));
+        when(api.getCurrencies()).thenReturn(List.of(
+                new CurrencyInfo("coins", "coin", "coins", 2, BigDecimal.ZERO, new BigDecimal("100.00"))));
 
         SimpleEcoEnhancementsPlugin.warnIfPermCapExceedsGlobalLimit(
                 List.of(Map.of("permission", "simpleeco.cap.mvp", "cap", 250.0)),
                 api,
                 logger);
 
-        verify(logger).warning("perm-cap tier 'simpleeco.cap.mvp' configures 250.00 above SimpleEco global max-balance 100.00; core will still enforce the global limit.");
+        verify(logger).warning("perm-cap tier 'simpleeco.cap.mvp' configures 250.00 above SimpleEco max-balance 100.00 for currency 'coins'; core will still enforce the currency limit.");
     }
 
     @Test
     void doesNotWarnWhenGlobalLimitIsUnlimited() {
-        when(api.getRules()).thenReturn(new EconomyRulesSnapshot(
-                new CurrencyInfo("coins", "coin", "coins", 2, BigDecimal.ZERO, null),
-                0,
-                BigDecimal.ZERO,
-                null,
-                0,
-                0));
+        when(api.getCurrencies()).thenReturn(List.of(
+                new CurrencyInfo("coins", "coin", "coins", 2, BigDecimal.ZERO, null)));
 
         SimpleEcoEnhancementsPlugin.warnIfPermCapExceedsGlobalLimit(
                 List.of(Map.of("permission", "simpleeco.cap.mvp", "cap", 250.0)),
@@ -60,5 +49,20 @@ class SimpleEcoEnhancementsPluginTest {
                 logger);
 
         verify(logger, never()).warning(org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void warnsPerCurrencyWhenTierExceedsOnlySpecificCurrencyLimit() {
+        when(api.getCurrencies()).thenReturn(List.of(
+                new CurrencyInfo("coins", "coin", "coins", 2, BigDecimal.ZERO, new BigDecimal("500.00")),
+                new CurrencyInfo("gems", "gem", "gems", 0, BigDecimal.ZERO, new BigDecimal("50"))));
+
+        SimpleEcoEnhancementsPlugin.warnIfPermCapExceedsGlobalLimit(
+                List.of(Map.of("permission", "simpleeco.cap.vip", "cap", 60.0)),
+                api,
+                logger);
+
+        verify(logger).warning("perm-cap tier 'simpleeco.cap.vip' configures 60 above SimpleEco max-balance 50 for currency 'gems'; core will still enforce the currency limit.");
+        verify(logger, never()).warning("perm-cap tier 'simpleeco.cap.vip' configures 60.00 above SimpleEco max-balance 500.00 for currency 'coins'; core will still enforce the currency limit.");
     }
 }

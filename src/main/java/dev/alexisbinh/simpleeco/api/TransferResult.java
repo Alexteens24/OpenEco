@@ -6,6 +6,7 @@ public record TransferResult(Status status, BigDecimal sent, BigDecimal received
 
     public enum Status {
         SUCCESS,
+        UNKNOWN_CURRENCY,
         COOLDOWN,
         INSUFFICIENT_FUNDS,
         ACCOUNT_NOT_FOUND,

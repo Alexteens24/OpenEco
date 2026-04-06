@@ -10,6 +10,8 @@ import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.List;
 import java.util.UUID;
@@ -365,6 +367,136 @@ class JdbcAccountRepositoryIntegrationTest {
 
             assertEquals("QuestAddon", stored.getSource());
             assertEquals("SQLite schema still stores metadata", stored.getNote());
+        } finally {
+            repository.close();
+        }
+    }
+
+    @Test
+    void legacyH2SchemaBackfillsDefaultCurrencyBalancesAndHistory() throws Exception {
+        String filename = "legacy-h2-currency-backfill-test";
+        UUID accountId = UUID.randomUUID();
+        try (Connection connection = DriverManager.getConnection(DatabaseDialect.H2.getJdbcUrl(tempDir.toString(), filename));
+             Statement stmt = connection.createStatement()) {
+            stmt.execute("""
+                CREATE TABLE accounts (
+                    id         VARCHAR(36)   NOT NULL PRIMARY KEY,
+                    name       VARCHAR(16)   NOT NULL,
+                    balance    DECIMAL(30,8) NOT NULL DEFAULT 0,
+                    created_at BIGINT        NOT NULL,
+                    updated_at BIGINT        NOT NULL
+                )
+                """);
+            stmt.execute("""
+                CREATE TABLE transactions (
+                    type           VARCHAR(16)   NOT NULL,
+                    counterpart_id VARCHAR(36),
+                    target_id      VARCHAR(36)   NOT NULL,
+                    amount         DECIMAL(30,8) NOT NULL,
+                    balance_before DECIMAL(30,8) NOT NULL,
+                    balance_after  DECIMAL(30,8) NOT NULL,
+                    ts             BIGINT        NOT NULL
+                )
+                """);
+            stmt.execute("""
+                INSERT INTO accounts(id,name,balance,created_at,updated_at)
+                VALUES('%s','Alice',42.50,100,200)
+                """.formatted(accountId));
+            stmt.execute("""
+                INSERT INTO transactions(type,counterpart_id,target_id,amount,balance_before,balance_after,ts)
+                VALUES('GIVE',NULL,'%s',2.50,40.00,42.50,300)
+                """.formatted(accountId));
+        }
+
+        JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), filename, "gems");
+        try {
+            List<AccountRecord> loadedAccounts = repository.loadAll();
+            assertEquals(1, loadedAccounts.size());
+            assertEquals(0, new BigDecimal("42.50").compareTo(loadedAccounts.getFirst().getBalance()));
+
+            try (Connection connection = DriverManager.getConnection(DatabaseDialect.H2.getJdbcUrl(tempDir.toString(), filename));
+                 PreparedStatement balancePs = connection.prepareStatement(
+                         "SELECT balance FROM account_balances WHERE account_id=? AND currency_id=?");
+                 PreparedStatement currencyPs = connection.prepareStatement(
+                         "SELECT currency_id FROM transactions WHERE target_id=?")) {
+                balancePs.setString(1, accountId.toString());
+                balancePs.setString(2, "gems");
+                try (ResultSet balanceRs = balancePs.executeQuery()) {
+                    assertTrue(balanceRs.next());
+                    assertEquals(0, new BigDecimal("42.50").compareTo(balanceRs.getBigDecimal(1)));
+                }
+
+                currencyPs.setString(1, accountId.toString());
+                try (ResultSet currencyRs = currencyPs.executeQuery()) {
+                    assertTrue(currencyRs.next());
+                    assertEquals("gems", currencyRs.getString(1));
+                }
+            }
+        } finally {
+            repository.close();
+        }
+    }
+
+    @Test
+    void legacySqliteSchemaBackfillsDefaultCurrencyBalancesAndHistory() throws Exception {
+        String filename = "legacy-sqlite-currency-backfill-test.db";
+        UUID accountId = UUID.randomUUID();
+        try (Connection connection = DriverManager.getConnection(DatabaseDialect.SQLITE.getJdbcUrl(tempDir.toString(), filename));
+             Statement stmt = connection.createStatement()) {
+            stmt.execute("""
+                CREATE TABLE accounts (
+                    id         VARCHAR(36)   NOT NULL PRIMARY KEY,
+                    name       VARCHAR(16)   NOT NULL,
+                    balance    DECIMAL(30,8) NOT NULL DEFAULT 0,
+                    created_at BIGINT        NOT NULL,
+                    updated_at BIGINT        NOT NULL
+                )
+                """);
+            stmt.execute("""
+                CREATE TABLE transactions (
+                    type           VARCHAR(16)   NOT NULL,
+                    counterpart_id VARCHAR(36),
+                    target_id      VARCHAR(36)   NOT NULL,
+                    amount         DECIMAL(30,8) NOT NULL,
+                    balance_before DECIMAL(30,8) NOT NULL,
+                    balance_after  DECIMAL(30,8) NOT NULL,
+                    ts             BIGINT        NOT NULL
+                )
+                """);
+            stmt.execute("""
+                INSERT INTO accounts(id,name,balance,created_at,updated_at)
+                VALUES('%s','Alice',42.50,100,200)
+                """.formatted(accountId));
+            stmt.execute("""
+                INSERT INTO transactions(type,counterpart_id,target_id,amount,balance_before,balance_after,ts)
+                VALUES('GIVE',NULL,'%s',2.50,40.00,42.50,300)
+                """.formatted(accountId));
+        }
+
+        JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.SQLITE, tempDir.toString(), filename, "gems");
+        try {
+            List<AccountRecord> loadedAccounts = repository.loadAll();
+            assertEquals(1, loadedAccounts.size());
+            assertEquals(0, new BigDecimal("42.50").compareTo(loadedAccounts.getFirst().getBalance()));
+
+            try (Connection connection = DriverManager.getConnection(DatabaseDialect.SQLITE.getJdbcUrl(tempDir.toString(), filename));
+                 PreparedStatement balancePs = connection.prepareStatement(
+                         "SELECT balance FROM account_balances WHERE account_id=? AND currency_id=?");
+                 PreparedStatement currencyPs = connection.prepareStatement(
+                         "SELECT currency_id FROM transactions WHERE target_id=?")) {
+                balancePs.setString(1, accountId.toString());
+                balancePs.setString(2, "gems");
+                try (ResultSet balanceRs = balancePs.executeQuery()) {
+                    assertTrue(balanceRs.next());
+                    assertEquals(0, new BigDecimal("42.50").compareTo(balanceRs.getBigDecimal(1)));
+                }
+
+                currencyPs.setString(1, accountId.toString());
+                try (ResultSet currencyRs = currencyPs.executeQuery()) {
+                    assertTrue(currencyRs.next());
+                    assertEquals("gems", currencyRs.getString(1));
+                }
+            }
         } finally {
             repository.close();
         }

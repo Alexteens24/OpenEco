@@ -4,7 +4,7 @@ import java.math.BigDecimal;
 
 public final class PayResult {
 
-    public enum Status { SUCCESS, COOLDOWN, INSUFFICIENT_FUNDS, ACCOUNT_NOT_FOUND, BALANCE_LIMIT, CANCELLED, TOO_LOW, INVALID_AMOUNT, SELF_TRANSFER, FROZEN }
+    public enum Status { SUCCESS, UNKNOWN_CURRENCY, COOLDOWN, INSUFFICIENT_FUNDS, ACCOUNT_NOT_FOUND, BALANCE_LIMIT, CANCELLED, TOO_LOW, INVALID_AMOUNT, SELF_TRANSFER, FROZEN }
 
     private final Status status;
     private final BigDecimal sent;
@@ -25,6 +25,10 @@ public final class PayResult {
 
     public static PayResult success(BigDecimal sent, BigDecimal received, BigDecimal tax) {
         return new PayResult(Status.SUCCESS, sent, received, tax, null, 0);
+    }
+
+    public static PayResult unknownCurrency() {
+        return new PayResult(Status.UNKNOWN_CURRENCY, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, null, 0);
     }
 
     public static PayResult onCooldown(long remainingMs) {

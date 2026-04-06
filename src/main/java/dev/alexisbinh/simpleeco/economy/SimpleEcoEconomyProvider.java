@@ -21,11 +21,16 @@ public class SimpleEcoEconomyProvider implements Economy {
     @Override public boolean isEnabled() { return true; }
     @Override public String getName() { return "SimpleEco"; }
     @Override public boolean hasSharedAccountSupport() { return false; }
-    @Override public boolean hasMultiCurrencySupport() { return false; }
+    @Override public boolean hasMultiCurrencySupport() { return true; }
 
     @Override
     public int fractionalDigits(String pluginName) {
         return service.getFractionalDigits();
+    }
+
+    @Override
+    public int fractionalDigits(String pluginName, String currency) {
+        return service.hasCurrency(currency) ? service.getFractionalDigits(currency) : service.getFractionalDigits();
     }
 
     // ── Format ────────────────────────────────────────────────────────────────
@@ -42,21 +47,19 @@ public class SimpleEcoEconomyProvider implements Economy {
 
     @Override
     public String format(BigDecimal amount, String currency) {
-        return service.format(amount);
+        return service.format(amount, currency);
     }
 
     @Override
     public String format(String pluginName, BigDecimal amount, String currency) {
-        return service.format(amount);
+        return service.format(amount, currency);
     }
 
     // ── Currency ──────────────────────────────────────────────────────────────
 
     @Override
     public boolean hasCurrency(String currency) {
-        return service.getCurrencyId().equalsIgnoreCase(currency)
-            || service.getCurrencySingular().equalsIgnoreCase(currency)
-            || service.getCurrencyPlural().equalsIgnoreCase(currency);
+        return service.hasCurrency(currency);
     }
 
     @Override
@@ -76,7 +79,7 @@ public class SimpleEcoEconomyProvider implements Economy {
 
     @Override
     public Collection<String> currencies() {
-        return Collections.singletonList(service.getCurrencyId());
+        return service.getCurrencyIds();
     }
 
     // ── Account management ────────────────────────────────────────────────────
@@ -138,12 +141,12 @@ public class SimpleEcoEconomyProvider implements Economy {
 
     @Override
     public boolean accountSupportsCurrency(String pluginName, UUID accountID, String currency) {
-        return service.hasAccount(accountID) && hasCurrency(currency);
+        return service.hasAccount(accountID) && service.hasCurrency(currency);
     }
 
     @Override
     public boolean accountSupportsCurrency(String pluginName, UUID accountID, String currency, String world) {
-        return service.hasAccount(accountID) && hasCurrency(currency);
+        return service.hasAccount(accountID) && service.hasCurrency(currency);
     }
 
     // ── Balance ───────────────────────────────────────────────────────────────
@@ -160,7 +163,7 @@ public class SimpleEcoEconomyProvider implements Economy {
 
     @Override
     public BigDecimal getBalance(String pluginName, UUID accountID, String world, String currency) {
-        return service.getBalance(accountID);
+        return service.hasCurrency(currency) ? service.getBalance(accountID, currency) : BigDecimal.ZERO;
     }
 
     @Override
@@ -175,7 +178,7 @@ public class SimpleEcoEconomyProvider implements Economy {
 
     @Override
     public boolean has(String pluginName, UUID accountID, String worldName, String currency, BigDecimal amount) {
-        return service.has(accountID, amount);
+        return service.has(accountID, currency, amount);
     }
 
     // ── Transactions ──────────────────────────────────────────────────────────
@@ -192,7 +195,7 @@ public class SimpleEcoEconomyProvider implements Economy {
 
     @Override
     public EconomyResponse withdraw(String pluginName, UUID accountID, String worldName, String currency, BigDecimal amount) {
-        return service.withdraw(accountID, amount);
+        return service.withdraw(accountID, currency, amount);
     }
 
     @Override
@@ -207,7 +210,7 @@ public class SimpleEcoEconomyProvider implements Economy {
 
     @Override
     public EconomyResponse deposit(String pluginName, UUID accountID, String worldName, String currency, BigDecimal amount) {
-        return service.deposit(accountID, amount);
+        return service.deposit(accountID, currency, amount);
     }
 
     @Override
@@ -222,7 +225,7 @@ public class SimpleEcoEconomyProvider implements Economy {
 
     @Override
     public EconomyResponse set(String pluginName, UUID accountID, String worldName, String currency, BigDecimal amount) {
-        return service.set(accountID, amount);
+        return service.set(accountID, currency, amount);
     }
 
     // ── canWithdraw / canDeposit ──────────────────────────────────────────────
@@ -239,7 +242,7 @@ public class SimpleEcoEconomyProvider implements Economy {
 
     @Override
     public EconomyResponse canWithdraw(String pluginName, UUID accountID, String worldName, String currency, BigDecimal amount) {
-        return canWithdraw(pluginName, accountID, amount);
+        return toVaultResponse(service.canWithdraw(accountID, currency, amount));
     }
 
     @Override
@@ -254,16 +257,17 @@ public class SimpleEcoEconomyProvider implements Economy {
 
     @Override
     public EconomyResponse canDeposit(String pluginName, UUID accountID, String worldName, String currency, BigDecimal amount) {
-        return canDeposit(pluginName, accountID, amount);
+        return toVaultResponse(service.canDeposit(accountID, currency, amount));
     }
 
     // ── Shared accounts (not supported) ──────────────────────────────────────
 
     private static EconomyResponse toVaultResponse(BalanceCheckResult result) {
         if (result.isAllowed()) {
-            return new EconomyResponse(result.amount(), result.resultingBalance(), EconomyResponse.ResponseType.SUCCESS, "");
+            return new EconomyResponse(result.amount(), result.currentBalance(), EconomyResponse.ResponseType.SUCCESS, "");
         }
         String message = switch (result.status()) {
+            case UNKNOWN_CURRENCY -> "Unknown currency";
             case ACCOUNT_NOT_FOUND -> "Account not found";
             case INVALID_AMOUNT -> "Amount must be positive";
             case INSUFFICIENT_FUNDS -> "Insufficient funds";

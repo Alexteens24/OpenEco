@@ -1,5 +1,6 @@
 package dev.alexisbinh.simpleeco.enhancements;
 
+import dev.alexisbinh.simpleeco.api.CurrencyInfo;
 import dev.alexisbinh.simpleeco.api.SimpleEcoApi;
 import dev.alexisbinh.simpleeco.enhancements.interest.InterestTask;
 import dev.alexisbinh.simpleeco.enhancements.paylimit.PayLimitListener;
@@ -68,6 +69,11 @@ public class SimpleEcoEnhancementsPlugin extends JavaPlugin {
             getLogger().warning("Interest task disabled because interest.interval-seconds must be > 0.");
             return;
         }
+        String configuredCurrencyId = getConfig().getString("interest.currency");
+        if (configuredCurrencyId != null && !configuredCurrencyId.isBlank() && !api.hasCurrency(configuredCurrencyId)) {
+            getLogger().warning("Interest task disabled because interest.currency '" + configuredCurrencyId + "' is unknown.");
+            return;
+        }
         long intervalMs = intervalSeconds * 1000L;
         InterestTask task = new InterestTask(api, this);
         interestTask = getServer().getAsyncScheduler().runAtFixedRate(
@@ -76,28 +82,31 @@ public class SimpleEcoEnhancementsPlugin extends JavaPlugin {
     }
 
     static void warnIfPermCapExceedsGlobalLimit(List<Map<?, ?>> tiers, SimpleEcoApi api, Logger logger) {
-        BigDecimal globalCap = api.getRules().currency().maxBalance();
-        if (globalCap == null) {
-            return;
+        List<CurrencyInfo> currencies = api.getCurrencies();
+        if (currencies == null || currencies.isEmpty()) {
+            currencies = List.of(api.getRules().currency());
         }
 
-        int fractionalDigits = api.getRules().currency().fractionalDigits();
         for (Map<?, ?> entry : tiers) {
             String permission = entry.get("permission") instanceof String value ? value : null;
             if (!(entry.get("cap") instanceof Number capNumber)) {
                 continue;
             }
-
-            BigDecimal tierCap = BigDecimal.valueOf(capNumber.doubleValue())
-                    .setScale(fractionalDigits, RoundingMode.HALF_UP);
-            if (tierCap.compareTo(globalCap) <= 0) {
-                continue;
-            }
-
             String label = permission != null && !permission.isBlank() ? permission : "<unknown permission>";
-            logger.warning("perm-cap tier '" + label + "' configures " + tierCap.toPlainString()
-                    + " above SimpleEco global max-balance " + globalCap.toPlainString()
-                    + "; core will still enforce the global limit.");
+            for (CurrencyInfo currency : currencies) {
+                if (currency == null || currency.maxBalance() == null) {
+                    continue;
+                }
+                BigDecimal tierCap = BigDecimal.valueOf(capNumber.doubleValue())
+                        .setScale(currency.fractionalDigits(), RoundingMode.HALF_UP);
+                if (tierCap.compareTo(currency.maxBalance()) <= 0) {
+                    continue;
+                }
+
+                logger.warning("perm-cap tier '" + label + "' configures " + tierCap.toPlainString()
+                        + " above SimpleEco max-balance " + currency.maxBalance().toPlainString()
+                        + " for currency '" + currency.id() + "'; core will still enforce the currency limit.");
+            }
         }
     }
 }

@@ -4,6 +4,7 @@ import org.bukkit.event.Cancellable;
 import org.bukkit.event.Event;
 import org.bukkit.event.HandlerList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.math.BigDecimal;
 import java.util.UUID;
@@ -22,14 +23,21 @@ public class PayEvent extends Event implements Cancellable {
 
     private final UUID fromId;
     private final UUID toId;
+    private final String currencyId;
     private final BigDecimal amount;
     private final BigDecimal tax;
     private final BigDecimal received;
     private boolean cancelled = false;
 
     public PayEvent(UUID fromId, UUID toId, BigDecimal amount, BigDecimal tax, BigDecimal received) {
+        this(fromId, toId, amount, tax, received, null);
+    }
+
+    public PayEvent(UUID fromId, UUID toId, BigDecimal amount, BigDecimal tax, BigDecimal received,
+                    @Nullable String currencyId) {
         this.fromId = fromId;
         this.toId = toId;
+        this.currencyId = currencyId;
         this.amount = amount;
         this.tax = tax;
         this.received = received;
@@ -40,6 +48,11 @@ public class PayEvent extends Event implements Cancellable {
 
     /** The player receiving money. */
     public UUID getToId() { return toId; }
+
+    /** Currency being transferred, or null for legacy callers that did not supply one. */
+    public @Nullable String getCurrencyId() { return currencyId; }
+
+    public boolean hasCurrencyId() { return currencyId != null; }
 
     /** Total amount deducted from sender. */
     public BigDecimal getAmount() { return amount; }

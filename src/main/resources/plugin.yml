@@ -23,22 +23,22 @@ load-before:
 commands:
   balance:
     description: Check your or another player's balance
-    usage: /balance [player]
+    usage: /balance [player] [currency]
     aliases: [bal, money]
   baltop:
     description: View the richest players
-    usage: /baltop [page]
+    usage: /baltop [page] [currency]
     aliases: [balancetop, moneytop]
   pay:
     description: Pay another player
-    usage: /pay <player> <amount>
+    usage: /pay <player> <amount> [currency]
   eco:
     description: Economy administration
-    usage: /eco <give|take|set|reset|delete|freeze|unfreeze|reload> <player> [amount]
+    usage: /eco <give|take|set|reset|delete|freeze|unfreeze|reload> <player> [amount] [currency]
     aliases: [economy]
   history:
     description: View transaction history
-    usage: /history [player] [page]
+    usage: /history [player] [page] [currency]
     aliases: [txhistory, ecohistory]
 
 permissions:

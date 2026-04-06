@@ -1,5 +1,6 @@
 package dev.alexisbinh.simpleeco.enhancements.paylimit;
 
+import dev.alexisbinh.simpleeco.api.CurrencyInfo;
 import dev.alexisbinh.simpleeco.api.SimpleEcoApi;
 import dev.alexisbinh.simpleeco.event.PayEvent;
 import dev.alexisbinh.simpleeco.event.PayCompletedEvent;
@@ -26,7 +27,9 @@ public class PayLimitListener implements Listener {
 
     private record UsageWindow(long startedAtMs, BigDecimal totalSent) {}
 
-    private final Map<UUID, UsageWindow> tracker = new ConcurrentHashMap<>();
+    private record UsageKey(UUID senderId, String currencyId) {}
+
+    private final Map<UsageKey, UsageWindow> tracker = new ConcurrentHashMap<>();
 
     private final SimpleEcoApi api;
     private final JavaPlugin plugin;
@@ -43,6 +46,8 @@ public class PayLimitListener implements Listener {
         if (!config.getBoolean("pay-limit.enabled", false)) return;
 
         UUID sender = event.getFromId();
+        CurrencyInfo currency = resolveCurrency(event.hasCurrencyId() ? event.getCurrencyId() : null);
+        String currencyId = currency.id();
         Player senderPlayer = plugin.getServer().getPlayer(sender);
         if (senderPlayer != null && senderPlayer.hasPermission("simpleeco.enhancements.bypass.paylimit")) {
             return;
@@ -53,13 +58,14 @@ public class PayLimitListener implements Listener {
             return;
         }
 
-        int fractionalDigits = api.getRules().currency().fractionalDigits();
+        int fractionalDigits = currency.fractionalDigits();
         BigDecimal maxAmount = scale(config.getDouble("pay-limit.max-amount", 10000), fractionalDigits);
         String message = config.getString("pay-limit.message",
                 "<red>You have reached your daily pay limit of <yellow><limit><red>.");
 
         long now = System.currentTimeMillis();
-        UsageWindow window = tracker.compute(sender,
+        UsageKey usageKey = new UsageKey(sender, currencyId);
+        UsageWindow window = tracker.compute(usageKey,
                 (id, existing) -> activeWindow(existing, now, windowMs, fractionalDigits));
         BigDecimal newTotal = window.totalSent().add(event.getAmount());
 
@@ -67,7 +73,10 @@ public class PayLimitListener implements Listener {
             event.setCancelled(true);
             long remainingMs = windowMs - (now - window.startedAtMs());
             String remainingStr = formatDuration(remainingMs);
-            String limitStr = maxAmount.toPlainString();
+            String limitStr = api.format(maxAmount, currencyId);
+            if (limitStr == null || limitStr.isBlank()) {
+                limitStr = maxAmount.toPlainString();
+            }
             var player = plugin.getServer().getPlayer(sender);
             if (player != null) {
                 player.sendMessage(mm.deserialize(message,
@@ -87,12 +96,24 @@ public class PayLimitListener implements Listener {
             return;
         }
 
-        int fractionalDigits = api.getRules().currency().fractionalDigits();
+        CurrencyInfo currency = resolveCurrency(event.hasCurrencyId() ? event.getCurrencyId() : null);
+        String currencyId = currency.id();
+        int fractionalDigits = currency.fractionalDigits();
         long now = System.currentTimeMillis();
-        tracker.compute(event.getFromId(), (id, existing) -> {
+        tracker.compute(new UsageKey(event.getFromId(), currencyId), (id, existing) -> {
             UsageWindow window = activeWindow(existing, now, windowMs, fractionalDigits);
             return new UsageWindow(window.startedAtMs(), window.totalSent().add(event.getSent()));
         });
+    }
+
+    private CurrencyInfo resolveCurrency(String currencyId) {
+        if (currencyId != null) {
+            CurrencyInfo currency = api.getCurrencyInfo(currencyId);
+            if (currency != null) {
+                return currency;
+            }
+        }
+        return api.getRules().currency();
     }
 
     private static UsageWindow activeWindow(UsageWindow existing, long now, long windowMs, int fractionalDigits) {

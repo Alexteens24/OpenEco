@@ -53,17 +53,37 @@ final class TransactionHistoryService {
     }
 
     List<TransactionEntry> getTransactions(UUID playerId, int page, int pageSize,
+            String currencyId) throws SQLException {
+        return repository.getTransactions(playerId, pageSize, (page - 1) * pageSize, currencyId);
+    }
+
+    List<TransactionEntry> getTransactions(UUID playerId, int page, int pageSize,
             @Nullable TransactionType type, long fromMs, long toMs) throws SQLException {
         return repository.getTransactions(playerId, pageSize, (page - 1) * pageSize, type, fromMs, toMs);
+    }
+
+    List<TransactionEntry> getTransactions(UUID playerId, int page, int pageSize,
+            @Nullable TransactionType type, long fromMs, long toMs,
+            String currencyId) throws SQLException {
+        return repository.getTransactions(playerId, pageSize, (page - 1) * pageSize, type, fromMs, toMs, currencyId);
     }
 
     int countTransactions(UUID playerId) throws SQLException {
         return repository.countTransactions(playerId);
     }
 
+    int countTransactions(UUID playerId, String currencyId) throws SQLException {
+        return repository.countTransactions(playerId, currencyId);
+    }
+
     int countTransactions(UUID playerId, @Nullable TransactionType type,
             long fromMs, long toMs) throws SQLException {
         return repository.countTransactions(playerId, type, fromMs, toMs);
+    }
+
+    int countTransactions(UUID playerId, @Nullable TransactionType type,
+            long fromMs, long toMs, String currencyId) throws SQLException {
+        return repository.countTransactions(playerId, type, fromMs, toMs, currencyId);
     }
 
     /**

@@ -1,14 +1,26 @@
-currency:
-  # Internal identifier used by VaultUnlocked multi-currency queries
-  id: "simpleeco"
-  name-singular: "Dollar"
-  name-plural: "Dollars"
-  # Number of decimal places (0–8)
-  decimal-digits: 2
-  # Balance given to new accounts
-  starting-balance: 0.00
-  # Maximum balance a player can hold (-1 = unlimited)
-  max-balance: -1
+currencies:
+  # Preferred multi-currency config. Existing servers may keep the legacy
+  # currency.* block; SimpleEco still reads it for backwards compatibility.
+  default: simpleeco
+  definitions:
+    simpleeco:
+      name-singular: "Dollar"
+      name-plural: "Dollars"
+      # Number of decimal places (0-8)
+      decimal-digits: 2
+      # Balance given to new accounts
+      starting-balance: 0.00
+      # Maximum balance a player can hold (-1 = unlimited)
+      max-balance: -1
+
+# Legacy single-currency format is still accepted during the migration window.
+# currency:
+#   id: "simpleeco"
+#   name-singular: "Dollar"
+#   name-plural: "Dollars"
+#   decimal-digits: 2
+#   starting-balance: 0.00
+#   max-balance: -1
 
 storage:
   # Backend to use: sqlite or h2
@@ -51,6 +63,7 @@ messages:
   account-name-conflict: "<red>Your economy account could not use the name <yellow><player><red> because it is already linked to another account. Contact an administrator."
   self-pay: "<red>You cannot pay yourself."
   insufficient-funds: "<red>Insufficient funds."
+  unknown-currency: "<red>The selected currency is not available right now."
   pay-balance-limit: "<red><player> has reached the maximum balance and cannot receive more money."
   pay-too-low: "<red>Minimum payment amount is <yellow><min><red>."
   pay-cancelled: "<red>The payment was cancelled by a plugin."

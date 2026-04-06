@@ -4,15 +4,18 @@ import dev.alexisbinh.simpleeco.model.AccountRecord;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 final class LeaderboardCache {
 
+    private static final String PRIMARY_BALANCE_CACHE_KEY = "__primary__";
+
     private final Object lock = new Object();
-    private List<AccountRecord> cachedBalTop;
-    private long cacheExpiry;
+    private final Map<String, List<AccountRecord>> cachedBalTopByCurrency = new HashMap<>();
+    private final Map<String, Long> cacheExpiryByCurrency = new HashMap<>();
     private long cacheTtlMs = 30_000L;
-    private long cacheVersion;
     private long invalidationVersion;
 
     void setCacheTtlMs(long cacheTtlMs) {
@@ -23,6 +26,15 @@ final class LeaderboardCache {
     }
 
     List<AccountRecord> getSnapshot(Collection<AccountRecord> liveRecords) {
+        return getSnapshotInternal(PRIMARY_BALANCE_CACHE_KEY, liveRecords, null);
+    }
+
+    List<AccountRecord> getSnapshot(String currencyId, Collection<AccountRecord> liveRecords) {
+        return getSnapshotInternal(currencyId, liveRecords, currencyId);
+    }
+
+    private List<AccountRecord> getSnapshotInternal(String cacheKey, Collection<AccountRecord> liveRecords,
+            String currencyId) {
         while (true) {
             long now = System.currentTimeMillis();
             long observedVersion;
@@ -30,8 +42,9 @@ final class LeaderboardCache {
 
             synchronized (lock) {
                 observedVersion = invalidationVersion;
-                cached = cachedBalTop;
-                if (cached != null && cacheVersion == observedVersion && now < cacheExpiry) {
+                cached = cachedBalTopByCurrency.get(cacheKey);
+                long expiry = cacheExpiryByCurrency.getOrDefault(cacheKey, 0L);
+                if (cached != null && now < expiry) {
                     return cached;
                 }
             }
@@ -42,7 +55,11 @@ final class LeaderboardCache {
                     sorted.add(record.snapshot());
                 }
             }
-            sorted.sort((left, right) -> right.getBalance().compareTo(left.getBalance()));
+            if (currencyId == null) {
+                sorted.sort((left, right) -> right.getBalance().compareTo(left.getBalance()));
+            } else {
+                sorted.sort((left, right) -> right.getBalance(currencyId).compareTo(left.getBalance(currencyId)));
+            }
             List<AccountRecord> snapshot = List.copyOf(sorted);
 
             synchronized (lock) {
@@ -50,9 +67,8 @@ final class LeaderboardCache {
                 if (invalidationVersion != observedVersion) {
                     continue;
                 }
-                cachedBalTop = snapshot;
-                cacheVersion = observedVersion;
-                cacheExpiry = System.currentTimeMillis() + cacheTtlMs;
+                cachedBalTopByCurrency.put(cacheKey, snapshot);
+                cacheExpiryByCurrency.put(cacheKey, System.currentTimeMillis() + cacheTtlMs);
                 return snapshot;
             }
         }
@@ -70,8 +86,7 @@ final class LeaderboardCache {
 
     private void invalidateLocked() {
         invalidationVersion++;
-        cachedBalTop = null;
-        cacheExpiry = 0L;
-        cacheVersion = invalidationVersion;
+        cachedBalTopByCurrency.clear();
+        cacheExpiryByCurrency.clear();
     }
 }

@@ -96,6 +96,7 @@ public class AccountService {
     private void readConfig(FileConfiguration config) {
         EconomyConfigSnapshot updated = EconomyConfigSnapshot.from(config);
         this.config = updated;
+        accountRegistry.syncPrimaryCurrency(updated.currencyId());
         leaderboardCache.setCacheTtlMs(updated.balTopCacheTtlMs());
     }
 
@@ -142,7 +143,13 @@ public class AccountService {
             }
             EconomyConfigSnapshot currentConfig = config;
             long now = System.currentTimeMillis();
-            AccountRecord record = new AccountRecord(id, validatedName, currentConfig.startingBalance(), now, now);
+            AccountRecord record = new AccountRecord(
+                    id,
+                    validatedName,
+                    currentConfig.currencyId(),
+                    Map.of(currentConfig.currencyId(), currentConfig.startingBalance()),
+                    now,
+                    now);
             record.markDirty();
             if (!accountRegistry.create(record)) {
                 return CreateAccountStatus.NAME_IN_USE;
@@ -293,47 +300,85 @@ public class AccountService {
     // ── Balance operations ───────────────────────────────────────────────────
 
     public BigDecimal getBalance(UUID id) {
+        return getBalance(id, config.currencyId());
+    }
+
+    public BigDecimal getBalance(UUID id, String currencyId) {
+        String resolvedCurrencyId = resolveCurrencyIdOrFallback(currencyId);
         AccountRecord record = accountRegistry.getLiveRecord(id);
-        return record == null ? BigDecimal.ZERO : record.getBalance();
+        return record == null ? BigDecimal.ZERO : record.getBalance(resolvedCurrencyId);
     }
 
     public boolean has(UUID id, BigDecimal amount) {
+        return has(id, config.currencyId(), amount);
+    }
+
+    public boolean has(UUID id, String currencyId, BigDecimal amount) {
         if (amount.compareTo(BigDecimal.ZERO) < 0) {
             return false;
         }
 
-        BigDecimal scaled = amount.setScale(config.fractionalDigits(), RoundingMode.HALF_UP);
+        CurrencyDefinition currency = resolveCurrency(currencyId);
+        if (currency == null) {
+            return false;
+        }
+
+        BigDecimal scaled = amount.setScale(currency.fractionalDigits(), RoundingMode.HALF_UP);
         if (amount.compareTo(BigDecimal.ZERO) > 0 && scaled.compareTo(BigDecimal.ZERO) <= 0) {
             return false;
         }
 
         AccountRecord record = accountRegistry.getLiveRecord(id);
         if (record == null) return false;
-        return record.getBalance().compareTo(scaled) >= 0;
+        return record.getBalance(currency.id()).compareTo(scaled) >= 0;
     }
 
     public BalanceCheckResult canDeposit(UUID id, BigDecimal amount) {
-        return economyOperations.canDeposit(id, amount);
+        return canDeposit(id, config.currencyId(), amount);
+    }
+
+    public BalanceCheckResult canDeposit(UUID id, String currencyId, BigDecimal amount) {
+        return economyOperations.canDeposit(id, currencyId, amount);
     }
 
     public BalanceCheckResult canWithdraw(UUID id, BigDecimal amount) {
-        return economyOperations.canWithdraw(id, amount);
+        return canWithdraw(id, config.currencyId(), amount);
+    }
+
+    public BalanceCheckResult canWithdraw(UUID id, String currencyId, BigDecimal amount) {
+        return economyOperations.canWithdraw(id, currencyId, amount);
     }
 
     public EconomyResponse deposit(UUID id, BigDecimal amount) {
-        return economyOperations.deposit(id, amount);
+        return deposit(id, config.currencyId(), amount);
+    }
+
+    public EconomyResponse deposit(UUID id, String currencyId, BigDecimal amount) {
+        return economyOperations.deposit(id, currencyId, amount);
     }
 
     public EconomyResponse withdraw(UUID id, BigDecimal amount) {
-        return economyOperations.withdraw(id, amount);
+        return withdraw(id, config.currencyId(), amount);
+    }
+
+    public EconomyResponse withdraw(UUID id, String currencyId, BigDecimal amount) {
+        return economyOperations.withdraw(id, currencyId, amount);
     }
 
     public EconomyResponse set(UUID id, BigDecimal amount) {
-        return economyOperations.set(id, amount);
+        return set(id, config.currencyId(), amount);
+    }
+
+    public EconomyResponse set(UUID id, String currencyId, BigDecimal amount) {
+        return economyOperations.set(id, currencyId, amount);
     }
 
     public EconomyResponse reset(UUID id) {
-        return economyOperations.reset(id);
+        return reset(id, config.currencyId());
+    }
+
+    public EconomyResponse reset(UUID id, String currencyId) {
+        return economyOperations.reset(id, currencyId);
     }
 
     /**
@@ -341,35 +386,67 @@ public class AccountService {
      * cooldown and tax according to config. Both accounts must already exist.
      */
     public PayResult pay(UUID fromId, UUID toId, BigDecimal rawAmount) {
-        return economyOperations.pay(fromId, toId, rawAmount);
+        return pay(fromId, toId, config.currencyId(), rawAmount);
+    }
+
+    public PayResult pay(UUID fromId, UUID toId, String currencyId, BigDecimal rawAmount) {
+        return economyOperations.pay(fromId, toId, currencyId, rawAmount);
     }
 
     public TransferCheckResult canTransfer(UUID fromId, UUID toId, BigDecimal amount) {
-        return economyOperations.canTransfer(fromId, toId, amount);
+        return canTransfer(fromId, toId, config.currencyId(), amount);
+    }
+
+    public TransferCheckResult canTransfer(UUID fromId, UUID toId, String currencyId, BigDecimal amount) {
+        return economyOperations.canTransfer(fromId, toId, currencyId, amount);
     }
 
     public TransferPreviewResult previewTransfer(UUID fromId, UUID toId, BigDecimal amount) {
-        return economyOperations.previewTransfer(fromId, toId, amount);
+        return previewTransfer(fromId, toId, config.currencyId(), amount);
+    }
+
+    public TransferPreviewResult previewTransfer(UUID fromId, UUID toId, String currencyId, BigDecimal amount) {
+        return economyOperations.previewTransfer(fromId, toId, currencyId, amount);
     }
 
     // ── Transaction history ──────────────────────────────────────────────────
 
     public List<TransactionEntry> getTransactions(UUID playerId, int page, int pageSize) throws SQLException {
-        return transactionHistoryService.getTransactions(playerId, page, pageSize);
+        return getTransactions(playerId, config.currencyId(), page, pageSize);
+    }
+
+    public List<TransactionEntry> getTransactions(UUID playerId, String currencyId, int page, int pageSize) throws SQLException {
+        return transactionHistoryService.getTransactions(playerId, page, pageSize, resolveCurrencyIdOrFallback(currencyId));
     }
 
     public List<TransactionEntry> getTransactions(UUID playerId, int page, int pageSize,
             @Nullable TransactionType type, long fromMs, long toMs) throws SQLException {
-        return transactionHistoryService.getTransactions(playerId, page, pageSize, type, fromMs, toMs);
+        return getTransactions(playerId, config.currencyId(), page, pageSize, type, fromMs, toMs);
+    }
+
+    public List<TransactionEntry> getTransactions(UUID playerId, String currencyId, int page, int pageSize,
+            @Nullable TransactionType type, long fromMs, long toMs) throws SQLException {
+        return transactionHistoryService.getTransactions(playerId, page, pageSize, type, fromMs, toMs,
+                resolveCurrencyIdOrFallback(currencyId));
     }
 
     public int countTransactions(UUID playerId) throws SQLException {
-        return transactionHistoryService.countTransactions(playerId);
+        return countTransactions(playerId, config.currencyId());
+    }
+
+    public int countTransactions(UUID playerId, String currencyId) throws SQLException {
+        return transactionHistoryService.countTransactions(playerId, resolveCurrencyIdOrFallback(currencyId));
     }
 
     public int countTransactions(UUID playerId, @Nullable TransactionType type,
             long fromMs, long toMs) throws SQLException {
-        return transactionHistoryService.countTransactions(playerId, type, fromMs, toMs);
+        return countTransactions(playerId, config.currencyId(), type, fromMs, toMs);
+    }
+
+    public int countTransactions(UUID playerId, String currencyId, @Nullable TransactionType type,
+            long fromMs, long toMs) throws SQLException {
+        return transactionHistoryService.countTransactions(playerId, type, fromMs, toMs,
+                resolveCurrencyIdOrFallback(currencyId));
     }
 
     public void logCustomTransaction(UUID accountId, TransactionEntry entry) {
@@ -394,11 +471,19 @@ public class AccountService {
     // ── Baltop ───────────────────────────────────────────────────────────────
 
     public List<AccountRecord> getBalTopSnapshot() {
-        return leaderboardCache.getSnapshot(accountRegistry.liveRecords());
+        return getBalTopSnapshot(config.currencyId());
+    }
+
+    public List<AccountRecord> getBalTopSnapshot(String currencyId) {
+        return leaderboardCache.getSnapshot(resolveCurrencyIdOrFallback(currencyId), accountRegistry.liveRecords());
     }
 
     public int getRankOf(UUID accountId) {
-        List<AccountRecord> snapshot = getBalTopSnapshot();
+        return getRankOf(accountId, config.currencyId());
+    }
+
+    public int getRankOf(UUID accountId, String currencyId) {
+        List<AccountRecord> snapshot = getBalTopSnapshot(currencyId);
         for (int i = 0; i < snapshot.size(); i++) {
             if (snapshot.get(i).getId().equals(accountId)) {
                 return i + 1;
@@ -437,11 +522,18 @@ public class AccountService {
     // ── Formatting / currency ─────────────────────────────────────────────────
 
     public String format(BigDecimal amount) {
-        EconomyConfigSnapshot currentConfig = config;
-        BigDecimal scaled = amount.setScale(currentConfig.fractionalDigits(), RoundingMode.HALF_UP);
+        return format(amount, config.currencyId());
+    }
+
+    public String format(BigDecimal amount, String currencyId) {
+        CurrencyDefinition currency = resolveCurrency(currencyId);
+        if (currency == null) {
+            return amount.toPlainString();
+        }
+        BigDecimal scaled = amount.setScale(currency.fractionalDigits(), RoundingMode.HALF_UP);
         String unit = scaled.abs().compareTo(BigDecimal.ONE) == 0
-                ? currentConfig.currencySingular()
-                : currentConfig.currencyPlural();
+                ? currency.singularName()
+                : currency.pluralName();
         return scaled.toPlainString() + " " + unit;
     }
 
@@ -451,6 +543,28 @@ public class AccountService {
     public int getFractionalDigits() { return config.fractionalDigits(); }
     public BigDecimal getStartingBalance() { return config.startingBalance(); }
     public BigDecimal getMaxBalance() { return config.maxBalance(); }
+    public boolean hasCurrency(String currencyId) { return resolveCurrency(currencyId) != null; }
+    public List<String> getCurrencyIds() { return config.currencies().all().stream().map(CurrencyDefinition::id).toList(); }
+    public String getCurrencySingular(String currencyId) {
+        CurrencyDefinition currency = resolveCurrency(currencyId);
+        return currency != null ? currency.singularName() : config.currencySingular();
+    }
+    public String getCurrencyPlural(String currencyId) {
+        CurrencyDefinition currency = resolveCurrency(currencyId);
+        return currency != null ? currency.pluralName() : config.currencyPlural();
+    }
+    public int getFractionalDigits(String currencyId) {
+        CurrencyDefinition currency = resolveCurrency(currencyId);
+        return currency != null ? currency.fractionalDigits() : config.fractionalDigits();
+    }
+    public BigDecimal getStartingBalance(String currencyId) {
+        CurrencyDefinition currency = resolveCurrency(currencyId);
+        return currency != null ? currency.startingBalance() : config.startingBalance();
+    }
+    public BigDecimal getMaxBalance(String currencyId) {
+        CurrencyDefinition currency = resolveCurrency(currencyId);
+        return currency != null ? currency.maxBalance() : config.maxBalance();
+    }
     public long getPayCooldownMs() { return config.payCooldownMs(); }
     public BigDecimal getPayTaxRate() { return config.payTaxRate(); }
     public BigDecimal getPayMinAmount() { return config.payMinAmount(); }
@@ -458,7 +572,12 @@ public class AccountService {
     public int getHistoryRetentionDays() { return config.historyRetentionDays(); }
     /** Returns the formatted max balance string, or null if unlimited. */
     public String getFormattedMaxBalance() {
-        return config.maxBalance() != null ? format(config.maxBalance()) : null;
+        return getFormattedMaxBalance(config.currencyId());
+    }
+
+    public String getFormattedMaxBalance(String currencyId) {
+        BigDecimal maxBalance = getMaxBalance(currencyId);
+        return maxBalance != null ? format(maxBalance, currencyId) : null;
     }
 
     // ── Flush ─────────────────────────────────────────────────────────────────
@@ -563,5 +682,14 @@ public class AccountService {
                         + existingOwner + " and " + record.getId() + ". Resolve duplicates before starting SimpleEco.");
             }
         }
+    }
+
+    private CurrencyDefinition resolveCurrency(String currencyId) {
+        return config.currencies().find(currencyId).orElse(null);
+    }
+
+    private String resolveCurrencyIdOrFallback(String currencyId) {
+        CurrencyDefinition currency = resolveCurrency(currencyId);
+        return currency != null ? currency.id() : config.currencyId();
     }
 }

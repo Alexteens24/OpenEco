@@ -1,6 +1,7 @@
 package dev.alexisbinh.simpleeco.enhancements.interest;
 
 import dev.alexisbinh.simpleeco.api.BalanceChangeResult;
+import dev.alexisbinh.simpleeco.api.CurrencyInfo;
 import dev.alexisbinh.simpleeco.api.SimpleEcoApi;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -32,7 +33,15 @@ public class InterestTask implements Runnable {
         FileConfiguration config = plugin.getConfig();
         double rate = config.getDouble("interest.rate", 5.0);
         long intervalSeconds = config.getLong("interest.interval-seconds", 3600);
-        int fractionalDigits = api.getRules().currency().fractionalDigits();
+        String configuredCurrencyId = config.getString("interest.currency");
+        boolean explicitCurrency = configuredCurrencyId != null && !configuredCurrencyId.isBlank();
+        String currencyId = explicitCurrency ? configuredCurrencyId : api.getRules().currency().id();
+        CurrencyInfo currency = explicitCurrency ? api.getCurrencyInfo(currencyId) : api.getRules().currency();
+        if (explicitCurrency && currency == null) {
+            plugin.getLogger().warning("[Interest] Unknown configured currency '" + currencyId + "'; skipping interest cycle.");
+            return;
+        }
+        int fractionalDigits = currency.fractionalDigits();
         BigDecimal minBalance = BigDecimal.valueOf(config.getDouble("interest.min-balance", 0))
             .setScale(fractionalDigits, RoundingMode.HALF_UP);
         BigDecimal maxPerInterval = BigDecimal.valueOf(config.getDouble("interest.max-per-interval", 0))
@@ -50,7 +59,7 @@ public class InterestTask implements Runnable {
         Map<UUID, String> accounts = api.getUUIDNameMap();
         for (UUID id : accounts.keySet()) {
             try {
-                credited += processAccount(id, factor, minBalance, maxPerInterval, fractionalDigits) ? 1 : 0;
+                credited += processAccount(id, currencyId, explicitCurrency, factor, minBalance, maxPerInterval, fractionalDigits) ? 1 : 0;
             } catch (Exception e) {
                 log.warning("[Interest] Error processing account " + id + ": " + e.getMessage());
                 skipped++;
@@ -59,9 +68,9 @@ public class InterestTask implements Runnable {
         log.info("[Interest] Cycle complete — credited: " + credited + ", skipped/error: " + skipped);
     }
 
-    private boolean processAccount(UUID id, BigDecimal factor, BigDecimal minBalance,
+    private boolean processAccount(UUID id, String currencyId, boolean explicitCurrency, BigDecimal factor, BigDecimal minBalance,
                                    BigDecimal maxPerInterval, int fractionalDigits) {
-        BigDecimal balance = api.getBalance(id);
+        BigDecimal balance = explicitCurrency ? api.getBalance(id, currencyId) : api.getBalance(id);
         if (balance.compareTo(minBalance) < 0) return false;
 
         BigDecimal interest = balance.multiply(factor)
@@ -73,7 +82,7 @@ public class InterestTask implements Runnable {
             interest = maxPerInterval;
         }
 
-        BalanceChangeResult result = api.deposit(id, interest);
+        BalanceChangeResult result = explicitCurrency ? api.deposit(id, currencyId, interest) : api.deposit(id, interest);
         return result.isSuccess();
     }
 }

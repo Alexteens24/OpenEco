@@ -20,6 +20,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -117,8 +118,35 @@ class PayLimitListenerTest {
         assertTrue(blockedAttempt.isCancelled());
     }
 
+    @Test
+    void unknownEventCurrencyFallsBackToDefaultRuleScale() {
+        when(api.getCurrencyInfo(anyString())).thenReturn(null);
+
+        listener.onPayCompleted(new PayCompletedEvent(
+                senderId,
+                recipientId,
+                new BigDecimal("10.00"),
+                new BigDecimal("10.00"),
+                BigDecimal.ZERO,
+                new BigDecimal("50.00"),
+                new BigDecimal("40.00"),
+                BigDecimal.ZERO,
+                new BigDecimal("10.00"),
+                "bogus"));
+
+        PayEvent blockedAttempt = payEvent(new BigDecimal("1.00"), "bogus");
+
+        listener.onPay(blockedAttempt);
+
+        assertTrue(blockedAttempt.isCancelled());
+    }
+
     private PayEvent payEvent(BigDecimal amount) {
         return new PayEvent(senderId, recipientId, amount, BigDecimal.ZERO, amount);
+    }
+
+    private PayEvent payEvent(BigDecimal amount, String currencyId) {
+        return new PayEvent(senderId, recipientId, amount, BigDecimal.ZERO, amount, currencyId);
     }
 
     private static EconomyRulesSnapshot rulesWith(int fractionalDigits, BigDecimal maxBalance) {

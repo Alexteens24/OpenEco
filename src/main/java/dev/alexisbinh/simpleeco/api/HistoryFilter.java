@@ -11,16 +11,22 @@ import org.jetbrains.annotations.Nullable;
 public record HistoryFilter(
         @Nullable TransactionKind kind,
         long fromMs,
-        long toMs
+        long toMs,
+        @Nullable String currencyId
 ) {
 
     /** A filter that applies no restrictions — equivalent to the unfiltered history. */
-    public static final HistoryFilter NONE = new HistoryFilter(null, 0L, Long.MAX_VALUE);
+    public static final HistoryFilter NONE = new HistoryFilter(null, 0L, Long.MAX_VALUE, null);
+
+    public HistoryFilter(@Nullable TransactionKind kind, long fromMs, long toMs) {
+        this(kind, fromMs, toMs, null);
+    }
 
     public HistoryFilter {
         if (fromMs < 0) throw new IllegalArgumentException("fromMs must be >= 0");
         if (toMs < 0) throw new IllegalArgumentException("toMs must be >= 0");
         if (fromMs > toMs) throw new IllegalArgumentException("fromMs must be <= toMs");
+        if (currencyId != null && currencyId.isBlank()) throw new IllegalArgumentException("currencyId must not be blank");
     }
 
     public static Builder builder() {
@@ -31,6 +37,7 @@ public record HistoryFilter(
         private @Nullable TransactionKind kind = null;
         private long fromMs = 0L;
         private long toMs = Long.MAX_VALUE;
+        private @Nullable String currencyId = null;
 
         private Builder() {}
 
@@ -49,8 +56,13 @@ public record HistoryFilter(
             return this;
         }
 
+        public Builder currencyId(String currencyId) {
+            this.currencyId = currencyId;
+            return this;
+        }
+
         public HistoryFilter build() {
-            return new HistoryFilter(kind, fromMs, toMs);
+            return new HistoryFilter(kind, fromMs, toMs, currencyId);
         }
     }
 }

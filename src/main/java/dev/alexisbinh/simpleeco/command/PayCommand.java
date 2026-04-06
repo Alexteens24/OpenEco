@@ -36,8 +36,8 @@ public class PayCommand implements CommandExecutor, TabCompleter {
             messages.send(payer, "no-permission");
             return true;
         }
-        if (args.length < 2) {
-            payer.sendMessage("§cUsage: /pay <player> <amount>");
+        if (args.length < 2 || args.length > 3) {
+            payer.sendMessage("§cUsage: /pay <player> <amount> [currency]");
             return true;
         }
 
@@ -69,13 +69,23 @@ public class PayCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        PayResult result = service.pay(payer.getUniqueId(), target.getId(), amount);
+        String currencyId = service.getCurrencyId();
+        if (args.length == 3) {
+            currencyId = args[2];
+            if (!service.hasCurrency(currencyId)) {
+                messages.send(payer, "unknown-currency");
+                return true;
+            }
+        }
+
+        PayResult result = service.pay(payer.getUniqueId(), target.getId(), currencyId, amount);
         switch (result.getStatus()) {
+            case UNKNOWN_CURRENCY    -> messages.send(payer, "unknown-currency");
             case INVALID_AMOUNT      -> messages.send(payer, "invalid-amount");
             case SELF_TRANSFER      -> messages.send(payer, "self-pay");
             case INSUFFICIENT_FUNDS -> messages.send(payer, "insufficient-funds");
             case TOO_LOW            -> messages.send(payer, "pay-too-low",
-                Placeholder.unparsed("min", service.format(result.getMinimumAmount())));
+                Placeholder.unparsed("min", service.format(result.getMinimumAmount(), currencyId)));
             case CANCELLED          -> messages.send(payer, "pay-cancelled");
             case BALANCE_LIMIT      -> messages.send(payer, "pay-balance-limit",
                     Placeholder.unparsed("player", target.getLastKnownName()));
@@ -90,15 +100,15 @@ public class PayCommand implements CommandExecutor, TabCompleter {
             case SUCCESS -> {
                 messages.send(payer, "pay-sent",
                         Placeholder.unparsed("player", target.getLastKnownName()),
-                        Placeholder.unparsed("amount", service.format(result.getSent())));
+                        Placeholder.unparsed("amount", service.format(result.getSent(), currencyId)));
                 if (result.getTax().compareTo(BigDecimal.ZERO) > 0) {
                     messages.send(payer, "pay-tax",
-                            Placeholder.unparsed("tax", service.format(result.getTax())));
+                            Placeholder.unparsed("tax", service.format(result.getTax(), currencyId)));
                 }
                 Player onlineTarget = payer.getServer().getPlayer(target.getId());
                 if (onlineTarget != null) {
                     messages.send(onlineTarget, "pay-received",
-                            Placeholder.unparsed("amount", service.format(result.getReceived())),
+                            Placeholder.unparsed("amount", service.format(result.getReceived(), currencyId)),
                             Placeholder.unparsed("player", payer.getName()));
                 }
             }
@@ -113,6 +123,13 @@ public class PayCommand implements CommandExecutor, TabCompleter {
             String prefix = args[0].toLowerCase();
             return service.getAccountNames().stream()
                     .filter(n -> n.toLowerCase().startsWith(prefix))
+                    .sorted()
+                    .toList();
+        }
+        if (args.length == 3 && sender.hasPermission("simpleeco.command.pay")) {
+            String prefix = args[2].toLowerCase();
+            return service.getCurrencyIds().stream()
+                    .filter(id -> id.toLowerCase().startsWith(prefix))
                     .sorted()
                     .toList();
         }

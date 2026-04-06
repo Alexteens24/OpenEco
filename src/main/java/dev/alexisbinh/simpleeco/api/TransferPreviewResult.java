@@ -18,6 +18,7 @@ public record TransferPreviewResult(
 
     public enum Status {
         ALLOWED,
+        UNKNOWN_CURRENCY,
         COOLDOWN,
         INSUFFICIENT_FUNDS,
         ACCOUNT_NOT_FOUND,

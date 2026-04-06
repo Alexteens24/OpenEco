@@ -39,16 +39,16 @@ VaultUnlocked is loaded by Paper as plugin `Vault`. SimpleEco depends on that ru
 
 | Command | Use | Permission |
 |---|---|---|
-| `/balance [player]` | Check balance | `simpleeco.command.balance` |
-| `/baltop [page]` | View leaderboard | `simpleeco.command.baltop` |
-| `/pay <player> <amount>` | Send money | `simpleeco.command.pay` |
-| `/eco give <player> <amount>` | Give money | `simpleeco.command.eco.give` |
-| `/eco take <player> <amount>` | Take money | `simpleeco.command.eco.take` |
-| `/eco set <player> <amount>` | Set balance | `simpleeco.command.eco.set` |
-| `/eco reset <player>` | Reset to starting balance | `simpleeco.command.eco.reset` |
+| `/balance [player] [currency]` | Check balance | `simpleeco.command.balance` |
+| `/baltop [page] [currency]` | View leaderboard | `simpleeco.command.baltop` |
+| `/pay <player> <amount> [currency]` | Send money | `simpleeco.command.pay` |
+| `/eco give <player> <amount> [currency]` | Give money | `simpleeco.command.eco.give` |
+| `/eco take <player> <amount> [currency]` | Take money | `simpleeco.command.eco.take` |
+| `/eco set <player> <amount> [currency]` | Set balance | `simpleeco.command.eco.set` |
+| `/eco reset <player> [currency]` | Reset to starting balance | `simpleeco.command.eco.reset` |
 | `/eco delete <player>` | Delete an account and that account's history | `simpleeco.command.eco.delete` |
 | `/eco reload` | Reload config and messages | `simpleeco.command.eco.reload` |
-| `/history [player] [page]` | View transaction history | `simpleeco.command.history` |
+| `/history [player] [page] [currency]` | View transaction history | `simpleeco.command.history` |
 
 `simpleeco.admin` grants all admin permissions.
 

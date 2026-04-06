@@ -130,6 +130,14 @@ final class AccountRegistry {
         return accounts.values();
     }
 
+    void syncPrimaryCurrency(String currencyId) {
+        for (AccountRecord record : accounts.values()) {
+            synchronized (record) {
+                record.setPrimaryCurrencyId(currencyId);
+            }
+        }
+    }
+
     static String normalizeName(String name) {
         return name.toLowerCase(Locale.ROOT);
     }

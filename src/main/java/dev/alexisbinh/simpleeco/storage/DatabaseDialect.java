@@ -27,6 +27,13 @@ public enum DatabaseDialect {
                  + "ON CONFLICT(id) DO UPDATE SET "
                  + "name=excluded.name, balance=excluded.balance, updated_at=excluded.updated_at, frozen=excluded.frozen";
         }
+
+        @Override
+        public String balanceUpsertSql() {
+            return "INSERT INTO account_balances(account_id,currency_id,balance,updated_at) VALUES(?,?,?,?) "
+                 + "ON CONFLICT(account_id,currency_id) DO UPDATE SET "
+                 + "balance=excluded.balance, updated_at=excluded.updated_at";
+        }
     },
 
     H2 {
@@ -45,6 +52,11 @@ public enum DatabaseDialect {
             // H2 proprietary MERGE shorthand
             return "MERGE INTO accounts(id,name,balance,created_at,updated_at,frozen) KEY(id) VALUES(?,?,?,?,?,?)";
         }
+
+        @Override
+        public String balanceUpsertSql() {
+            return "MERGE INTO account_balances(account_id,currency_id,balance,updated_at) KEY(account_id,currency_id) VALUES(?,?,?,?)";
+        }
     };
 
     public abstract String getJdbcUrl(String dataFolder, String filename);
@@ -52,6 +64,8 @@ public enum DatabaseDialect {
     public abstract void applyTuning(Connection conn) throws SQLException;
 
     public abstract String upsertSql();
+
+    public abstract String balanceUpsertSql();
 
     public static DatabaseDialect fromConfig(String value) {
         if (value == null) return SQLITE;

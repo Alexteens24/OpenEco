@@ -113,8 +113,20 @@ public final class SimpleEcoApiImpl implements SimpleEcoApi {
     }
 
     @Override
+    public BigDecimal getBalance(UUID accountId, String currencyId) {
+        UUID validatedId = requireAccountId(accountId);
+        String validatedCurrencyId = requireKnownCurrency(currencyId);
+        return service.getBalance(validatedId, validatedCurrencyId);
+    }
+
+    @Override
     public boolean has(UUID accountId, BigDecimal amount) {
         return service.has(requireAccountId(accountId), requireNonNegativeAmount(amount));
+    }
+
+    @Override
+    public boolean has(UUID accountId, String currencyId, BigDecimal amount) {
+        return service.has(requireAccountId(accountId), requireKnownCurrency(currencyId), requireNonNegativeAmount(amount));
     }
 
     @Override
@@ -123,8 +135,18 @@ public final class SimpleEcoApiImpl implements SimpleEcoApi {
     }
 
     @Override
+    public BalanceCheckResult canDeposit(UUID accountId, String currencyId, BigDecimal amount) {
+        return service.canDeposit(requireAccountId(accountId), requireKnownCurrency(currencyId), requireAmount(amount));
+    }
+
+    @Override
     public BalanceCheckResult canWithdraw(UUID accountId, BigDecimal amount) {
         return service.canWithdraw(requireAccountId(accountId), requireAmount(amount));
+    }
+
+    @Override
+    public BalanceCheckResult canWithdraw(UUID accountId, String currencyId, BigDecimal amount) {
+        return service.canWithdraw(requireAccountId(accountId), requireKnownCurrency(currencyId), requireAmount(amount));
     }
 
     @Override
@@ -133,8 +155,24 @@ public final class SimpleEcoApiImpl implements SimpleEcoApi {
     }
 
     @Override
+    public BalanceChangeResult deposit(UUID accountId, String currencyId, BigDecimal amount) {
+        UUID validatedId = requireAccountId(accountId);
+        String validatedCurrencyId = requireKnownCurrency(currencyId);
+        BigDecimal validatedAmount = requireAmount(amount);
+        return applyBalanceChange(validatedId, validatedCurrencyId, validatedAmount, service::deposit);
+    }
+
+    @Override
     public BalanceChangeResult withdraw(UUID accountId, BigDecimal amount) {
         return applyBalanceChange(requireAccountId(accountId), requireAmount(amount), service::withdraw);
+    }
+
+    @Override
+    public BalanceChangeResult withdraw(UUID accountId, String currencyId, BigDecimal amount) {
+        UUID validatedId = requireAccountId(accountId);
+        String validatedCurrencyId = requireKnownCurrency(currencyId);
+        BigDecimal validatedAmount = requireAmount(amount);
+        return applyBalanceChange(validatedId, validatedCurrencyId, validatedAmount, service::withdraw);
     }
 
     @Override
@@ -143,10 +181,31 @@ public final class SimpleEcoApiImpl implements SimpleEcoApi {
     }
 
     @Override
+    public BalanceChangeResult setBalance(UUID accountId, String currencyId, BigDecimal amount) {
+        UUID validatedId = requireAccountId(accountId);
+        String validatedCurrencyId = requireKnownCurrency(currencyId);
+        BigDecimal validatedAmount = requireAmount(amount);
+        return applyBalanceChange(validatedId, validatedCurrencyId, validatedAmount, service::set);
+    }
+
+    @Override
     public BalanceChangeResult reset(UUID accountId) {
         UUID validatedId = requireAccountId(accountId);
         BigDecimal previousBalance = getAccount(validatedId).map(AccountSnapshot::balance).orElse(BigDecimal.ZERO);
         EconomyResponse response = service.reset(validatedId);
+        return new BalanceChangeResult(
+                mapChangeStatus(response),
+                response.amount,
+                previousBalance,
+                response.transactionSuccess() ? response.balance : previousBalance);
+    }
+
+    @Override
+    public BalanceChangeResult reset(UUID accountId, String currencyId) {
+        UUID validatedId = requireAccountId(accountId);
+        String validatedCurrencyId = requireKnownCurrency(currencyId);
+        BigDecimal previousBalance = service.getBalance(validatedId, validatedCurrencyId);
+        EconomyResponse response = service.reset(validatedId, validatedCurrencyId);
         return new BalanceChangeResult(
                 mapChangeStatus(response),
                 response.amount,
@@ -166,8 +225,32 @@ public final class SimpleEcoApiImpl implements SimpleEcoApi {
     }
 
     @Override
+    public TransferResult transfer(UUID fromId, UUID toId, String currencyId, BigDecimal amount) {
+        PayResult result = service.pay(
+                requireAccountId(fromId),
+                requireAccountId(toId),
+                requireKnownCurrency(currencyId),
+                requireAmount(amount));
+        return new TransferResult(
+                mapTransferStatus(result.getStatus()),
+                result.getSent(),
+                result.getReceived(),
+                result.getTax(),
+                result.getCooldownRemainingMs());
+    }
+
+    @Override
     public TransferPreviewResult previewTransfer(UUID fromId, UUID toId, BigDecimal amount) {
         return service.previewTransfer(requireAccountId(fromId), requireAccountId(toId), requireAmount(amount));
+    }
+
+    @Override
+    public TransferPreviewResult previewTransfer(UUID fromId, UUID toId, String currencyId, BigDecimal amount) {
+        return service.previewTransfer(
+                requireAccountId(fromId),
+                requireAccountId(toId),
+                requireKnownCurrency(currencyId),
+                requireAmount(amount));
     }
 
     @Override
@@ -189,31 +272,51 @@ public final class SimpleEcoApiImpl implements SimpleEcoApi {
     }
 
     @Override
+    public HistoryPage getHistory(UUID accountId, String currencyId, int page, int pageSize) {
+        return loadHistoryPage(requireAccountId(accountId), requireKnownCurrency(currencyId), page, pageSize, null);
+    }
+
+    @Override
     public HistoryPage getHistory(UUID accountId, int page, int pageSize, HistoryFilter filter) {
         if (filter == null || filter.equals(HistoryFilter.NONE)) {
             return getHistory(accountId, page, pageSize);
         }
-        UUID validatedId = requireAccountId(accountId);
-        int validatedPage = requirePositive(page, "page");
-        int validatedPageSize = requirePositive(pageSize, "pageSize");
-        TransactionType type = filter.kind() != null ? mapTransactionType(filter.kind()) : null;
-        try {
-            int totalEntries = service.countTransactions(validatedId, type, filter.fromMs(), filter.toMs());
-            List<TransactionSnapshot> entries = service.getTransactions(
-                    validatedId, validatedPage, validatedPageSize, type, filter.fromMs(), filter.toMs())
-                    .stream()
-                    .map(SimpleEcoApiImpl::toTransactionSnapshot)
-                    .toList();
-            int totalPages = totalEntries == 0 ? 0 : (int) Math.ceil(totalEntries / (double) validatedPageSize);
-            return new HistoryPage(validatedPage, validatedPageSize, totalEntries, totalPages, entries);
-        } catch (SQLException e) {
-            throw new SimpleEcoApiException("Failed to load filtered account history", e);
+
+        if (filter.currencyId() == null) {
+            UUID validatedId = requireAccountId(accountId);
+            int validatedPage = requirePositive(page, "page");
+            int validatedPageSize = requirePositive(pageSize, "pageSize");
+            TransactionType type = filter.kind() != null ? mapTransactionType(filter.kind()) : null;
+            try {
+                int totalEntries = service.countTransactions(validatedId, type, filter.fromMs(), filter.toMs());
+                List<TransactionSnapshot> entries = service.getTransactions(
+                                validatedId, validatedPage, validatedPageSize, type, filter.fromMs(), filter.toMs())
+                        .stream()
+                        .map(SimpleEcoApiImpl::toTransactionSnapshot)
+                        .toList();
+                int totalPages = totalEntries == 0 ? 0 : (int) Math.ceil(totalEntries / (double) validatedPageSize);
+                return new HistoryPage(validatedPage, validatedPageSize, totalEntries, totalPages, entries);
+            } catch (SQLException e) {
+                throw new SimpleEcoApiException("Failed to load filtered account history", e);
+            }
         }
+
+        return loadHistoryPage(requireAccountId(accountId), requireKnownCurrency(filter.currencyId()), page, pageSize, filter);
+    }
+
+    @Override
+    public HistoryPage getHistory(UUID accountId, String currencyId, int page, int pageSize, HistoryFilter filter) {
+        return loadHistoryPage(requireAccountId(accountId), requireKnownCurrency(currencyId), page, pageSize, filter);
     }
 
     @Override
     public int getRankOf(UUID accountId) {
         return service.getRankOf(requireAccountId(accountId));
+    }
+
+    @Override
+    public int getRankOf(UUID accountId, String currencyId) {
+        return service.getRankOf(requireAccountId(accountId), requireKnownCurrency(currencyId));
     }
 
     @Override
@@ -227,8 +330,22 @@ public final class SimpleEcoApiImpl implements SimpleEcoApi {
     }
 
     @Override
+    public TransferCheckResult canTransfer(UUID fromId, UUID toId, String currencyId, BigDecimal amount) {
+        return service.canTransfer(
+                requireAccountId(fromId),
+                requireAccountId(toId),
+                requireKnownCurrency(currencyId),
+                requireAmount(amount));
+    }
+
+    @Override
     public void logCustomTransaction(UUID accountId, BigDecimal amount, TransactionKind kind) {
         logCustomTransaction(accountId, amount, kind, TransactionMetadata.empty());
+    }
+
+    @Override
+    public void logCustomTransaction(UUID accountId, String currencyId, BigDecimal amount, TransactionKind kind) {
+        logCustomTransaction(accountId, currencyId, amount, kind, TransactionMetadata.empty());
     }
 
     @Override
@@ -258,6 +375,33 @@ public final class SimpleEcoApiImpl implements SimpleEcoApi {
     }
 
     @Override
+    public void logCustomTransaction(UUID accountId, String currencyId, BigDecimal amount, TransactionKind kind, TransactionMetadata metadata) {
+        UUID validatedId = requireAccountId(accountId);
+        String validatedCurrencyId = requireKnownCurrency(currencyId);
+        BigDecimal validatedAmount = requirePositiveAmount(amount);
+        Objects.requireNonNull(kind, "kind");
+        TransactionMetadata validatedMetadata = Objects.requireNonNull(metadata, "metadata");
+
+        if (!service.hasAccount(validatedId)) {
+            throw new SimpleEcoApiException("Account not found: " + validatedId);
+        }
+        BigDecimal currentBalance = service.getBalance(validatedId, validatedCurrencyId);
+
+        TransactionEntry entry = new TransactionEntry(
+                mapTransactionType(kind),
+                null,
+                validatedId,
+                validatedAmount,
+                currentBalance,
+                currentBalance,
+                System.currentTimeMillis(),
+                validatedMetadata.source(),
+                validatedMetadata.note(),
+                validatedCurrencyId);
+        service.logCustomTransaction(validatedId, entry);
+    }
+
+    @Override
     public List<AccountSnapshot> getTopAccounts(int limit) {
         if (limit < 0) {
             throw new IllegalArgumentException("limit must be >= 0");
@@ -272,10 +416,40 @@ public final class SimpleEcoApiImpl implements SimpleEcoApi {
     }
 
     @Override
+    public List<AccountSnapshot> getTopAccounts(int limit, String currencyId) {
+        if (limit < 0) {
+            throw new IllegalArgumentException("limit must be >= 0");
+        }
+        if (limit == 0) {
+            return List.of();
+        }
+        return service.getBalTopSnapshot(requireKnownCurrency(currencyId)).stream()
+                .limit(limit)
+                .map(SimpleEcoApiImpl::toAccountSnapshot)
+                .toList();
+    }
+
+    @Override
     public LeaderboardPage getTopAccounts(int page, int pageSize) {
         int validatedPage = requirePositive(page, "page");
         int validatedPageSize = requirePositive(pageSize, "pageSize");
         List<AccountSnapshot> all = service.getBalTopSnapshot().stream()
+            .map(SimpleEcoApiImpl::toAccountSnapshot)
+            .toList();
+        int total = all.size();
+        int totalPages = total == 0 ? 0 : (int) Math.ceil(total / (double) validatedPageSize);
+        int fromIndex = (validatedPage - 1) * validatedPageSize;
+        List<AccountSnapshot> slice = fromIndex >= total
+            ? List.of()
+            : all.subList(fromIndex, Math.min(fromIndex + validatedPageSize, total));
+        return new LeaderboardPage(validatedPage, validatedPageSize, total, totalPages, slice);
+    }
+
+    @Override
+    public LeaderboardPage getTopAccounts(int page, int pageSize, String currencyId) {
+        int validatedPage = requirePositive(page, "page");
+        int validatedPageSize = requirePositive(pageSize, "pageSize");
+        List<AccountSnapshot> all = service.getBalTopSnapshot(requireKnownCurrency(currencyId)).stream()
                 .map(SimpleEcoApiImpl::toAccountSnapshot)
                 .toList();
         int total = all.size();
@@ -325,8 +499,37 @@ public final class SimpleEcoApiImpl implements SimpleEcoApi {
     }
 
     @Override
+    public CurrencyInfo getCurrencyInfo(String currencyId) {
+        String validatedCurrencyId = requireKnownCurrency(currencyId);
+        return new CurrencyInfo(
+                validatedCurrencyId,
+                service.getCurrencySingular(validatedCurrencyId),
+                service.getCurrencyPlural(validatedCurrencyId),
+                service.getFractionalDigits(validatedCurrencyId),
+                service.getStartingBalance(validatedCurrencyId),
+                service.getMaxBalance(validatedCurrencyId));
+    }
+
+    @Override
+    public List<CurrencyInfo> getCurrencies() {
+        return service.getCurrencyIds().stream()
+                .map(this::getCurrencyInfo)
+                .toList();
+    }
+
+    @Override
+    public boolean hasCurrency(String currencyId) {
+        return currencyId != null && service.hasCurrency(currencyId);
+    }
+
+    @Override
     public String format(BigDecimal amount) {
         return service.format(requireAmount(amount));
+    }
+
+    @Override
+    public String format(BigDecimal amount, String currencyId) {
+        return service.format(requireAmount(amount), requireKnownCurrency(currencyId));
     }
 
     private BalanceChangeResult applyBalanceChange(UUID accountId, BigDecimal amount,
@@ -338,6 +541,54 @@ public final class SimpleEcoApiImpl implements SimpleEcoApi {
                 response.amount,
                 previousBalance,
                 response.transactionSuccess() ? response.balance : previousBalance);
+    }
+
+    private BalanceChangeResult applyBalanceChange(UUID accountId, String currencyId, BigDecimal amount,
+                                                   CurrencyBalanceMutation mutation) {
+        BigDecimal previousBalance = service.getBalance(accountId, currencyId);
+        EconomyResponse response = mutation.apply(accountId, currencyId, amount);
+        return new BalanceChangeResult(
+                mapChangeStatus(response),
+                response.amount,
+                previousBalance,
+                response.transactionSuccess() ? response.balance : previousBalance);
+    }
+
+    private HistoryPage loadHistoryPage(UUID accountId, String currencyId, int page, int pageSize, HistoryFilter filter) {
+        int validatedPage = requirePositive(page, "page");
+        int validatedPageSize = requirePositive(pageSize, "pageSize");
+
+        if (filter == null || filter.equals(HistoryFilter.NONE)) {
+            try {
+                int totalEntries = service.countTransactions(accountId, currencyId);
+                List<TransactionSnapshot> entries = service.getTransactions(accountId, currencyId, validatedPage, validatedPageSize)
+                        .stream()
+                        .map(SimpleEcoApiImpl::toTransactionSnapshot)
+                        .toList();
+                int totalPages = totalEntries == 0 ? 0 : (int) Math.ceil(totalEntries / (double) validatedPageSize);
+                return new HistoryPage(validatedPage, validatedPageSize, totalEntries, totalPages, entries);
+            } catch (SQLException e) {
+                throw new SimpleEcoApiException("Failed to load account history", e);
+            }
+        }
+
+        if (filter.currencyId() != null && !currencyId.equalsIgnoreCase(filter.currencyId())) {
+            throw new IllegalArgumentException("currencyId does not match HistoryFilter currencyId");
+        }
+
+        TransactionType type = filter.kind() != null ? mapTransactionType(filter.kind()) : null;
+        try {
+            int totalEntries = service.countTransactions(accountId, currencyId, type, filter.fromMs(), filter.toMs());
+            List<TransactionSnapshot> entries = service.getTransactions(
+                    accountId, currencyId, validatedPage, validatedPageSize, type, filter.fromMs(), filter.toMs())
+                    .stream()
+                    .map(SimpleEcoApiImpl::toTransactionSnapshot)
+                    .toList();
+            int totalPages = totalEntries == 0 ? 0 : (int) Math.ceil(totalEntries / (double) validatedPageSize);
+            return new HistoryPage(validatedPage, validatedPageSize, totalEntries, totalPages, entries);
+        } catch (SQLException e) {
+            throw new SimpleEcoApiException("Failed to load filtered account history", e);
+        }
     }
 
     private AccountOperationResult reconcileExistingAccount(UUID accountId, String validatedName,
@@ -373,12 +624,13 @@ public final class SimpleEcoApiImpl implements SimpleEcoApi {
                 mapTransactionKind(entry.getType()),
                 entry.getCounterpartId(),
                 entry.getTargetId(),
+                entry.getCurrencyId(),
                 entry.getAmount(),
                 entry.getBalanceBefore(),
                 entry.getBalanceAfter(),
-            entry.getTimestamp(),
-            entry.getSource(),
-            entry.getNote());
+                entry.getTimestamp(),
+                entry.getSource(),
+                entry.getNote());
     }
 
     private static TransactionKind mapTransactionKind(TransactionType type) {
@@ -408,6 +660,7 @@ public final class SimpleEcoApiImpl implements SimpleEcoApi {
             return BalanceChangeResult.Status.SUCCESS;
         }
         return switch (response.errorMessage) {
+            case "Unknown currency" -> BalanceChangeResult.Status.UNKNOWN_CURRENCY;
             case "Account not found" -> BalanceChangeResult.Status.ACCOUNT_NOT_FOUND;
             case "Amount must be positive", "Amount cannot be negative" -> BalanceChangeResult.Status.INVALID_AMOUNT;
             case "Insufficient funds" -> BalanceChangeResult.Status.INSUFFICIENT_FUNDS;
@@ -421,6 +674,7 @@ public final class SimpleEcoApiImpl implements SimpleEcoApi {
     private static TransferResult.Status mapTransferStatus(PayResult.Status status) {
         return switch (status) {
             case SUCCESS -> TransferResult.Status.SUCCESS;
+            case UNKNOWN_CURRENCY -> TransferResult.Status.UNKNOWN_CURRENCY;
             case COOLDOWN -> TransferResult.Status.COOLDOWN;
             case INSUFFICIENT_FUNDS -> TransferResult.Status.INSUFFICIENT_FUNDS;
             case ACCOUNT_NOT_FOUND -> TransferResult.Status.ACCOUNT_NOT_FOUND;
@@ -439,6 +693,14 @@ public final class SimpleEcoApiImpl implements SimpleEcoApi {
 
     private static BigDecimal requireAmount(BigDecimal amount) {
         return Objects.requireNonNull(amount, "amount");
+    }
+
+    private String requireKnownCurrency(String currencyId) {
+        Objects.requireNonNull(currencyId, "currencyId");
+        if (!service.hasCurrency(currencyId)) {
+            throw new IllegalArgumentException("Unknown currency: " + currencyId);
+        }
+        return currencyId;
     }
 
     private static BigDecimal requireNonNegativeAmount(BigDecimal amount) {
@@ -479,5 +741,10 @@ public final class SimpleEcoApiImpl implements SimpleEcoApi {
     @FunctionalInterface
     private interface BalanceMutation {
         EconomyResponse apply(UUID accountId, BigDecimal amount);
+    }
+
+    @FunctionalInterface
+    private interface CurrencyBalanceMutation {
+        EconomyResponse apply(UUID accountId, String currencyId, BigDecimal amount);
     }
 }

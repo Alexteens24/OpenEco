@@ -9,13 +9,32 @@ public record TransactionSnapshot(
         TransactionKind kind,
         UUID counterpartId,
         UUID targetId,
+        @Nullable String currencyId,
         BigDecimal amount,
         BigDecimal balanceBefore,
         BigDecimal balanceAfter,
+        long timestamp,
+        @Nullable String source,
+        @Nullable String note
+) {
+
+        public TransactionSnapshot(
+                TransactionKind kind,
+                UUID counterpartId,
+                UUID targetId,
+                BigDecimal amount,
+                BigDecimal balanceBefore,
+                BigDecimal balanceAfter,
                 long timestamp,
                 @Nullable String source,
                 @Nullable String note
-) {
+        ) {
+                this(kind, counterpartId, targetId, null, amount, balanceBefore, balanceAfter, timestamp, source, note);
+        }
+
+        public boolean hasCurrencyId() {
+                return currencyId != null;
+        }
 
         public boolean hasSource() {
                 return source != null;

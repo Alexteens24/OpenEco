@@ -5,6 +5,7 @@ import dev.alexisbinh.simpleeco.model.PayResult;
 import dev.alexisbinh.simpleeco.model.TransactionEntry;
 import dev.alexisbinh.simpleeco.model.TransactionType;
 import dev.alexisbinh.simpleeco.service.AccountService;
+import net.milkbowl.vault2.economy.EconomyResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -148,6 +149,39 @@ class SimpleEcoApiImplTest {
         assertEquals(0, BigDecimal.ZERO.compareTo(result.sent()));
         assertEquals(0, BigDecimal.ZERO.compareTo(result.received()));
         assertEquals(0, BigDecimal.ZERO.compareTo(result.tax()));
+    }
+
+    @Test
+    void transferMapsUnknownCurrencyResult() {
+        UUID fromId = UUID.randomUUID();
+        UUID toId = UUID.randomUUID();
+        BigDecimal amount = new BigDecimal("5.00");
+
+        when(service.pay(fromId, toId, amount)).thenReturn(PayResult.unknownCurrency());
+
+        TransferResult result = api.transfer(fromId, toId, amount);
+
+        assertEquals(TransferResult.Status.UNKNOWN_CURRENCY, result.status());
+    }
+
+    @Test
+    void depositMapsUnknownCurrencyFailure() {
+        UUID accountId = UUID.randomUUID();
+        BigDecimal amount = new BigDecimal("10.00");
+        AccountRecord account = new AccountRecord(accountId, "Alice", new BigDecimal("25.00"), 1L, 2L);
+
+        when(service.getAccount(accountId)).thenReturn(Optional.of(account));
+        when(service.deposit(accountId, amount)).thenReturn(new EconomyResponse(
+                amount,
+                account.getBalance(),
+                EconomyResponse.ResponseType.FAILURE,
+                "Unknown currency"));
+
+        BalanceChangeResult result = api.deposit(accountId, amount);
+
+        assertEquals(BalanceChangeResult.Status.UNKNOWN_CURRENCY, result.status());
+        assertEquals(account.getBalance(), result.previousBalance());
+        assertEquals(account.getBalance(), result.newBalance());
     }
 
     @Test
