@@ -50,7 +50,7 @@ dependencies {
 
     testImplementation(platform("org.junit:junit-bom:6.0.3"))
     testImplementation("org.junit.jupiter:junit-jupiter-api")
-    testImplementation("org.mockito:mockito-junit-jupiter:5.16.1")
+    testImplementation("org.mockito:mockito-junit-jupiter:5.23.0")
     testImplementation("io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT")
     testImplementation("net.cfh.vault:VaultUnlocked:2.19.1")
     testImplementation("me.clip:placeholderapi:2.12.2")
