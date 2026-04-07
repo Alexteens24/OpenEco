@@ -78,4 +78,37 @@ class AccountRegistryTest {
         assertEquals("Bob", registry.getLiveRecord(bob.getId()).getLastKnownName());
         assertEquals("Alice", registry.findSnapshotByName("alice").orElseThrow().getLastKnownName());
     }
+
+    @Test
+    void replaceUpdatesExistingRecordAndMovesNameLookup() {
+        AccountRegistry registry = new AccountRegistry();
+        UUID accountId = UUID.randomUUID();
+        AccountRecord live = new AccountRecord(accountId, "Alice", new BigDecimal("10.00"), 1L, 1L);
+        AccountRecord refreshed = new AccountRecord(accountId, "Alicia", new BigDecimal("15.00"), 1L, 2L);
+
+        assertTrue(registry.create(live));
+        assertTrue(registry.replace(refreshed));
+
+        assertTrue(registry.findSnapshotByName("alice").isEmpty());
+        assertEquals("Alicia", registry.findSnapshotByName("alicia").orElseThrow().getLastKnownName());
+        assertEquals(new BigDecimal("15.00"), registry.getLiveRecord(accountId).getBalance());
+    }
+
+    @Test
+    void replaceRejectsConflictingNameAndKeepsExistingRecord() {
+        AccountRegistry registry = new AccountRegistry();
+        UUID aliceId = UUID.randomUUID();
+        UUID bobId = UUID.randomUUID();
+        AccountRecord alice = new AccountRecord(aliceId, "Alice", new BigDecimal("10.00"), 1L, 1L);
+        AccountRecord bob = new AccountRecord(bobId, "Bob", new BigDecimal("5.00"), 1L, 1L);
+        AccountRecord conflictingAlice = new AccountRecord(aliceId, "Bob", new BigDecimal("12.00"), 1L, 2L);
+
+        assertTrue(registry.create(alice));
+        assertTrue(registry.create(bob));
+        assertFalse(registry.replace(conflictingAlice));
+
+        assertEquals("Alice", registry.getLiveRecord(aliceId).getLastKnownName());
+        assertEquals(new BigDecimal("10.00"), registry.getLiveRecord(aliceId).getBalance());
+        assertEquals("Bob", registry.findSnapshotByName("bob").orElseThrow().getLastKnownName());
+    }
 }

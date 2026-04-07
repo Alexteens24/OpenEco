@@ -102,6 +102,28 @@ final class AccountRegistry {
         return true;
     }
 
+    boolean replace(AccountRecord record) {
+        AccountRecord previous = accounts.get(record.getId());
+        if (previous == null) {
+            return create(record);
+        }
+
+        String newKey = normalizeName(record.getLastKnownName());
+        UUID owner = nameIndex.get(newKey);
+        if (owner != null && !owner.equals(record.getId())) {
+            return false;
+        }
+
+        accounts.put(record.getId(), record);
+        nameIndex.put(newKey, record.getId());
+
+        String oldKey = normalizeName(previous.getLastKnownName());
+        if (!oldKey.equals(newKey)) {
+            nameIndex.remove(oldKey, record.getId());
+        }
+        return true;
+    }
+
     void restore(AccountRecord record) {
         accounts.put(record.getId(), record);
         nameIndex.put(normalizeName(record.getLastKnownName()), record.getId());

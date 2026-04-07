@@ -58,11 +58,21 @@ public class EcoSyncCommand implements SimpleCommand {
                     "Syncing " + player.getUsername() + " on " + serverName + "...",
                     NamedTextColor.GRAY));
 
-            java.util.concurrent.CompletableFuture<Void> ackFuture = flushAckTracker.register(uuid);
+            java.util.concurrent.CompletableFuture<FlushAckTracker.FlushOutcome> ackFuture = flushAckTracker.register(uuid);
             conn.sendPluginMessage(PlayerServerSwitchListener.CHANNEL,
                     PlayerServerSwitchListener.encode("flush " + uuid));
 
-            ackFuture.thenRun(() -> {
+            ackFuture.thenAccept(outcome -> {
+                if (outcome == FlushAckTracker.FlushOutcome.TIMED_OUT) {
+                    source.sendMessage(Component.text(
+                            "Timed out waiting for a flush acknowledgement from " + serverName
+                            + ". No automatic refresh was sent.",
+                            NamedTextColor.YELLOW));
+                    logger.warn("Manual sync for {} ({}) timed out waiting for backend ack from {}",
+                            player.getUsername(), uuid, serverName);
+                    return;
+                }
+
                 // Re-read current server — player could have moved during flush
                 player.getCurrentServer().ifPresent(liveConn -> {
                     liveConn.sendPluginMessage(PlayerServerSwitchListener.CHANNEL,

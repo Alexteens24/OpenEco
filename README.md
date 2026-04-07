@@ -2,21 +2,24 @@
 
 [![CI](https://github.com/Alexteens24/OpenEco/actions/workflows/ci.yml/badge.svg)](https://github.com/Alexteens24/OpenEco/actions/workflows/ci.yml)
 
-OpenEco is an economy plugin for one Paper or Folia server.
+OpenEco is a single-server-first economy plugin for Paper or Folia.
+
+It keeps account state in memory for fast local use, and can optionally do proxy-assisted account handoff sync when you run multiple backend servers against one shared remote database.
 
 What it does:
 
 - Keeps balances in memory for fast reads and writes.
-- Stores data locally in SQLite or H2 under `plugins/OpenEco/`.
+- Stores data in SQLite, H2, MySQL, MariaDB, or PostgreSQL.
 - Supports multiple named currencies with a configurable default-currency compatibility layer.
 - Exposes Vault v1 and VaultUnlocked v2 economy providers.
 - Supports PlaceholderAPI if it is installed.
+- Offers optional cross-server handoff sync for shared remote databases when paired with the Velocity proxy addon.
 
 What it does not do:
 
-- Cross-server or proxy-wide balance sync.
 - Automatic migration between storage backends or file names.
-- Shared database access across multiple JVMs.
+- Real-time distributed balance broadcasts to every backend server.
+- Safe simultaneous writes to the same account from multiple live backends without controlled player handoff.
 
 ## Requirements
 
@@ -35,6 +38,17 @@ VaultUnlocked is loaded by Paper as plugin `Vault`. OpenEco depends on that runt
 4. Stop the server and review the config.
 5. Back up `plugins/OpenEco/` before opening the server.
 6. Start the server again and verify `/balance`, `/baltop`, and `/history`.
+
+## Network Mode
+
+For multi-backend networks:
+
+1. Use MySQL, MariaDB, or PostgreSQL.
+2. Enable `cross-server.enabled: true` on every backend.
+3. Install the `proxy-addon` jar on Velocity.
+4. Restart the proxy and all backend servers.
+
+This mode is for player handoff between backends. It is not a real-time distributed ledger.
 
 ## Commands
 
@@ -56,6 +70,7 @@ VaultUnlocked is loaded by Paper as plugin `Vault`. OpenEco depends on that runt
 ## Owner Notes
 
 - OpenEco is meant for one server with local storage.
+- Network mode is opt-in and meant for player handoff over a shared remote database, not for general multi-writer sharing.
 - New configs should use `currencies.default` and `currencies.definitions.*`; the legacy `currency.*` block is still read for backward compatibility.
 - SQLite companion files such as `economy.db-wal` and `economy.db-shm` are normal while the server is running.
 - Balance data is flushed periodically and on normal shutdown.
@@ -70,6 +85,7 @@ VaultUnlocked is loaded by Paper as plugin `Vault`. OpenEco depends on that runt
 - [PlaceholderAPI](docs/placeholders.md)
 - [Addon API](docs/api.md)
 - [Technical Notes](docs/technical.md)
+- [Proxy Addon](proxy-addon/README.md)
 
 ## Build From Source
 

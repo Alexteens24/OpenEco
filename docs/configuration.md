@@ -3,7 +3,14 @@
 Config file: `plugins/OpenEco/config.yml`  
 Reload command: `/eco reload`
 
-Most settings reload safely. Storage backend and storage file changes do not. Treat those as stop-the-server maintenance.
+`/eco reload` refreshes messages and most runtime rules.
+
+Treat these as restart-required settings:
+
+- `storage.type`
+- local database file names
+- remote database connection targets
+- `cross-server.enabled`
 
 ## Currency
 
@@ -44,13 +51,42 @@ storage:
     file: economy.db
   h2:
     file: economy
+  mysql:
+    host: localhost
+    port: 3306
+    database: openeco
+  mariadb:
+    host: localhost
+    port: 3306
+    database: openeco
+  postgresql:
+    host: localhost
+    port: 5432
+    database: openeco
 ```
 
 Notes:
 
-- Data is stored under `plugins/OpenEco/`.
+- `sqlite` and `h2` are local file backends under `plugins/OpenEco/`.
+- `mysql`, `mariadb`, and `postgresql` are remote JDBC backends.
 - `sqlite` is the default.
 - Changing backend or file name does not move old data.
+
+## Cross-Server Handoff
+
+```yaml
+cross-server:
+  enabled: false
+```
+
+Notes:
+
+- This mode is only for networks with a shared remote database and the optional Velocity proxy addon.
+- It flushes a player's account during backend handoff and reloads it on the destination backend.
+- It does not push live balance updates to every backend.
+- It does not make simultaneous writes to the same account from multiple live servers safe.
+- Do not use it with SQLite or H2.
+- Toggling this setting requires a full restart; `/eco reload` is not enough.
 
 ## Auto-Save
 
@@ -63,6 +99,7 @@ Notes:
 - Value is in seconds.
 - Values less than 1 are clamped to 1.
 - Lower values reduce possible loss after an unclean stop, but write more often.
+- This still matters in network mode because the periodic flush is separate from proxy handoff sync.
 
 ## Pay
 

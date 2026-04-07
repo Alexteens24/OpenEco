@@ -22,9 +22,9 @@ import java.util.UUID;
  * <ol>
  *   <li>{@link ServerPreConnectEvent}: proxy sends {@code flush <uuid>} to Server A
  *       and <em>suspends the event</em> until Server A replies with
- *       {@code flushed <uuid>} (or the ${@value FlushAckTracker#TIMEOUT_MS} ms
- *       timeout elapses). This guarantees the player's balance is in the database
- *       before the switch happens.</li>
+ *       {@code flushed <uuid>} (or the ${@value FlushAckTracker#DEFAULT_TIMEOUT_MS} ms
+ *       timeout elapses). If the timeout is hit, the switch still proceeds and the
+ *       refresh on the destination server becomes best-effort rather than guaranteed.</li>
  *   <li>{@link ServerConnectedEvent}: proxy sends {@code refresh <uuid>} to Server B
  *       so it discards its cached balance and reads the authoritative value from DB.</li>
  * </ol>
@@ -54,14 +54,20 @@ public class PlayerServerSwitchListener {
         Optional<ServerConnection> current = event.getPlayer().getCurrentServer();
         if (current.isEmpty()) return null; // initial connection — nothing to flush
 
+        ServerConnection currentServer = current.get();
         UUID uuid = event.getPlayer().getUniqueId();
-        java.util.concurrent.CompletableFuture<Void> flushDone = flushAckTracker.register(uuid);
-        current.get().sendPluginMessage(CHANNEL, encode("flush " + uuid));
+        java.util.concurrent.CompletableFuture<Void> flushDone = flushAckTracker.register(uuid)
+                .thenAccept(outcome -> {
+                if (outcome == FlushAckTracker.FlushOutcome.TIMED_OUT) {
+                    logger.warn("Timed out waiting for flush ack from {} for player {}. Proceeding with best-effort sync.",
+                            currentServer.getServerInfo().getName(), uuid);
+                }
+            });
+        currentServer.sendPluginMessage(CHANNEL, encode("flush " + uuid));
         logger.debug("Sent flush to {} for player {} — waiting for ack",
-                current.get().getServerInfo().getName(), uuid);
+                currentServer.getServerInfo().getName(), uuid);
 
-        // Suspend the Velocity event until the ack arrives (or 2 s timeout).
-        // This ensures the DB row is written before the destination server loads the player.
+        // Suspend the Velocity event until the ack arrives or the timeout downgrades this to best-effort.
         return EventTask.resumeWhenComplete(flushDone);
     }
 

@@ -43,14 +43,16 @@ pay-limit:
 
 # ── Permission Balance Cap ────────────────────────────────────────────────────
 perm-cap:
-  # Set to true to allow permission nodes to grant higher balance caps.
-  # This only affects operations that reach the addon listeners.
-  # If a currency's own max-balance is lower, the core plugin will still reject first.
-  # Startup warnings are logged for any tier that exceeds a configured currency limit.
+  # Set to true to enforce addon-side balance ceilings based on permissions.
+  # This listener cannot raise OpenEco's own currency max-balance.
+  # If you want a player to hold more, raise the matching currency max-balance in OpenEco too.
+  # Only online-player operations that reach these addon listeners are affected.
+  # Startup warnings are logged for any tier that sits above the configured core currency limit.
   enabled: false
 
   # List of permission → cap pairs.
-  # All matching permissions are considered and the highest matching cap is used.
+  # All matching permissions are considered and the highest matching tier is used.
+  # The effective limit is still bounded by OpenEco's own per-currency max-balance.
   # Players without any matching permission fall back to OpenEco's per-currency max-balance.
   tiers:
     - permission: openeco.cap.vip

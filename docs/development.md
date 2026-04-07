@@ -53,7 +53,7 @@ If storage open or initial account load fails, the plugin disables itself early.
 
 ## Runtime Model
 
-OpenEco is an in-memory economy with local persistence.
+OpenEco is an in-memory economy with a single-JVM authority and JDBC persistence.
 
 - All account rows are loaded into memory at startup.
 - Live account state is held inside `AccountRegistry`.
@@ -63,7 +63,10 @@ OpenEco is an in-memory economy with local persistence.
 - Before a dirty balance batch is persisted, older queued history writes are drained so the persisted balance snapshot does not outrun its audit trail.
 - Baltop is cached with a TTL and stored as frozen account snapshots.
 
-This design optimizes same-server latency and keeps storage logic simple, but it is not a shared-database or multi-JVM design.
+Storage can be local SQLite/H2 or remote MySQL/MariaDB/PostgreSQL.
+There is also an optional proxy-assisted handoff mode that re-reads and flushes player accounts during server transfers.
+
+This design optimizes same-server latency first. Even with proxy-assisted handoff enabled, it is not a real-time distributed ledger or a safe multi-writer design for the same account.
 
 ## Main Components
 
@@ -116,9 +119,10 @@ If you add a new mutation that should appear in history, keep the write path con
 
 Important details:
 
-- SQLite and H2 are both supported.
+- SQLite, H2, MySQL, MariaDB, and PostgreSQL are supported.
 - SQLite uses a case-insensitive name index based on `LOWER(name)`.
 - H2 uses a plain name index because the SQLite expression index is not portable there.
+- remote backends are used directly through HikariCP
 - account deletes also delete that account's transaction rows.
 - filtered history queries are built centrally to keep pagination and counting aligned.
 

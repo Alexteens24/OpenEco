@@ -78,15 +78,20 @@ history:
   retention-days: -1
 
 cross-server:
-  # Enable cross-server balance synchronisation for networks running multiple backend servers
+  # Enable proxy-assisted account handoff sync for networks running multiple backend servers
   # behind a Velocity or BungeeCord proxy that share the same remote database
-  # (MySQL / MariaDB / PostgreSQL).
+  # (MySQL / MariaDB / PostgreSQL only).
   #
   # When enabled:
-  #   - Each player's account is written to the database immediately on quit.
-  #   - Each player's account is re-read from the database before they finish joining.
+  #   - Each player's account is flushed to the shared database when they leave a backend.
+  #   - Each player's account is re-read from the shared database before they finish joining.
   #   - The openeco:sync plugin messaging channel is registered so the optional
   #     openeco-proxy Velocity addon can trigger targeted flush/refresh requests.
+  #
+  # This is a handoff sync, not a real-time distributed ledger:
+  #   - balances are not broadcast live to every backend
+  #   - simultaneous writes to the same account from multiple live servers are still unsafe
+  #   - SQLite and H2 are not supported for this mode
   #
   # Requires a restart to take effect after toggling.
   # Do NOT enable this on single-server setups — it adds unnecessary DB round-trips.

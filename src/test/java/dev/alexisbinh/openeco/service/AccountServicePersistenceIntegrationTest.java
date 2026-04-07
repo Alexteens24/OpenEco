@@ -203,6 +203,37 @@ class AccountServicePersistenceIntegrationTest {
     }
 
     @Test
+    void refreshAccountLoadsAccountCreatedOnAnotherBackendAfterStartup() throws Exception {
+        String filename = "cross-server-refresh-test";
+        UUID accountId = UUID.randomUUID();
+
+        JdbcAccountRepository writerRepository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), filename);
+        JdbcAccountRepository readerRepository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), filename);
+        try {
+            AccountService writer = newService(writerRepository);
+            AccountService reader = newService(readerRepository);
+            writer.loadAll();
+            reader.loadAll();
+
+            assertTrue(writer.createAccount(accountId, "Alice"));
+            assertTrue(writer.deposit(accountId, new BigDecimal("7.50")).transactionSuccess());
+            writer.flushAccount(accountId);
+
+            reader.refreshAccount(accountId);
+
+            assertTrue(reader.hasAccount(accountId));
+            assertEquals("Alice", reader.getAccount(accountId).orElseThrow().getLastKnownName());
+            assertEquals(0, new BigDecimal("12.50").compareTo(reader.getBalance(accountId)));
+
+            writer.shutdown();
+            reader.shutdown();
+        } finally {
+            writerRepository.close();
+            readerRepository.close();
+        }
+    }
+
+    @Test
     void payRejectsSelfTransferWithoutMutatingBalance() throws Exception {
         JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "self-pay-test");
         try {

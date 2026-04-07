@@ -659,23 +659,23 @@ public class AccountService {
     }
 
     /**
-     * Re-reads a single account from the database and updates the in-memory record.
+     * Re-reads a single account from the database and refreshes the in-memory record.
      * Intended for cross-server use: call async when a player connects from another server.
      */
     public void refreshAccount(UUID id) {
-        AccountRecord live = accountRegistry.getLiveRecord(id);
-        if (live == null) return;
         try {
             Optional<AccountRecord> fresh = repository.loadAccount(id);
             if (fresh.isEmpty()) return;
             AccountRecord freshRecord = fresh.get();
-            synchronized (live) {
-                if (!accountRegistry.isLive(id, live)) return;
-                for (Map.Entry<String, BigDecimal> entry : freshRecord.getBalancesSnapshot().entrySet()) {
-                    live.setBalance(entry.getKey(), entry.getValue());
+            alignLoadedRecordCurrencies(freshRecord, config);
+
+            synchronized (persistenceLock) {
+                if (!accountRegistry.replace(freshRecord)) {
+                    log.warning("Cross-server refresh skipped for " + id
+                            + " because refreshed account name '" + freshRecord.getLastKnownName()
+                            + "' is already claimed by another in-memory account.");
+                    return;
                 }
-                live.setFrozen(freshRecord.isFrozen());
-                live.clearDirty();
             }
             invalidateBalTopCache();
         } catch (SQLException e) {
@@ -715,6 +715,15 @@ public class AccountService {
             CurrencyDefinition currency = configSnapshot.currencies().find(currencyId).orElse(null);
             return currency != null ? currency.id() : null;
         });
+    }
+
+    private void alignLoadedRecordCurrencies(AccountRecord record, EconomyConfigSnapshot configSnapshot) {
+        record.canonicalizeCurrencyIds(currencyId -> {
+            CurrencyDefinition currency = configSnapshot.currencies().find(currencyId).orElse(null);
+            return currency != null ? currency.id() : null;
+        });
+        record.setPrimaryCurrencyId(configSnapshot.currencyId());
+        record.clearDirty();
     }
 
     private static String sanitizeAccountName(String name) {

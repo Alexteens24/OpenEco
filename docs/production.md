@@ -1,18 +1,20 @@
 # Production Guide
 
-Use OpenEco when you want a local economy for one Paper or Folia server.
+Use OpenEco when you want a single-server-first economy for Paper or Folia, with an optional proxy-assisted handoff mode for shared remote databases.
 
 ## Good Fit
 
 - One server.
-- Local file-based storage.
+- Local file-based storage, or one shared remote JDBC database.
+- Optional player handoff between backend servers through the Velocity proxy addon.
 - Standard Vault economy integrations.
 - Predictable operational model over feature breadth.
 
 ## Not A Fit
 
-- Cross-server balances.
-- Multiple servers writing to one economy state.
+- Real-time distributed balance replication across every backend.
+- Multiple live backends mutating the same account at the same time.
+- Network mode on SQLite or H2.
 - Shared accounts or multi-currency beyond the current feature set.
 
 ## Before You Launch
@@ -26,6 +28,13 @@ Use OpenEco when you want a local economy for one Paper or Folia server.
 5. Review storage, autosave, pay, history retention, and messages.
 6. Back up `plugins/OpenEco/`.
 7. Test one restart, one `/eco reload`, one `/pay`, and one Vault plugin that depends on an economy provider.
+
+If you are using network mode, also:
+
+1. Use MySQL, MariaDB, or PostgreSQL.
+2. Install the `proxy-addon` jar on Velocity.
+3. Enable `cross-server.enabled: true` on every backend.
+4. Restart the proxy and every backend after changing those settings.
 
 ## Storage Choice
 
@@ -45,6 +54,14 @@ Use H2 only if you prefer that file format.
 - Supported.
 - Still local-only.
 - Does not change the single-server design.
+
+### Remote JDBC Backends
+
+Use MySQL, MariaDB, or PostgreSQL only when you need one shared database for backend handoff.
+
+- Required for proxy-assisted cross-server mode.
+- Still not a distributed ledger.
+- You should assume one active writer per player account during normal play.
 
 ### Backend Changes
 
@@ -116,6 +133,17 @@ After a restore, verify:
 - Balance mutations are applied in memory immediately.
 - Dirty balances are flushed on the autosave interval and on normal shutdown.
 - An unclean stop can lose up to one autosave interval of recent balance changes.
+- In network mode, backend handoff also requests an immediate flush, but that is still operationally best-effort rather than a global real-time replication system.
+
+## Network Mode Checklist
+
+Use this only when you need backend handoff on a proxy network.
+
+1. Shared backend must be MySQL, MariaDB, or PostgreSQL.
+2. Install `proxy-addon` on Velocity.
+3. Enable `cross-server.enabled: true` on all backends.
+4. Restart everything after toggling cross-server mode.
+5. Test at least one server switch, one disconnect, and one manual `/ecosync <player>` before trusting it in production.
 
 ## Rollout Advice
 
