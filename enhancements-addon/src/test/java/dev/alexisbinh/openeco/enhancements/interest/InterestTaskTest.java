@@ -6,6 +6,8 @@ import dev.alexisbinh.openeco.api.EconomyRulesSnapshot;
 import dev.alexisbinh.openeco.api.OpenEcoApi;
 import dev.alexisbinh.openeco.api.TransactionKind;
 import dev.alexisbinh.openeco.api.TransactionMetadata;
+import io.papermc.paper.threadedregions.scheduler.GlobalRegionScheduler;
+import org.bukkit.Server;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,6 +23,7 @@ import java.util.logging.Logger;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -33,6 +36,12 @@ class InterestTaskTest {
 
     @Mock
     private JavaPlugin plugin;
+
+    @Mock
+    private Server server;
+
+    @Mock
+    private GlobalRegionScheduler globalRegionScheduler;
 
     private YamlConfiguration config;
     private UUID accountId;
@@ -50,6 +59,13 @@ class InterestTaskTest {
 
         when(plugin.getConfig()).thenReturn(config);
         when(plugin.getLogger()).thenReturn(Logger.getLogger("interest-test"));
+        when(plugin.getServer()).thenReturn(server);
+        when(server.getGlobalRegionScheduler()).thenReturn(globalRegionScheduler);
+        doAnswer(invocation -> {
+            invocation.<java.util.function.Consumer<io.papermc.paper.threadedregions.scheduler.ScheduledTask>>getArgument(1)
+                .accept(null);
+            return null;
+        }).when(globalRegionScheduler).run(eq(plugin), any());
         when(api.getRules()).thenReturn(new EconomyRulesSnapshot(
                 new CurrencyInfo("coins", "coin", "coins", 2, BigDecimal.ZERO, null),
                 0,
@@ -73,6 +89,7 @@ class InterestTaskTest {
     void successfulInterestDepositDoesNotWriteDuplicateCustomHistory() {
         task.run();
 
+        verify(globalRegionScheduler).run(eq(plugin), any());
         verify(api).deposit(accountId, new BigDecimal("5.00"));
         verify(api, never()).logCustomTransaction(
             eq(accountId),

@@ -88,8 +88,8 @@ public class OpenEcoLegacyEconomyProvider implements Economy {
             return false;
         }
         BigDecimal requestedAmount = BigDecimal.valueOf(amount);
-        return service.findByName(playerName)
-                .map(account -> account.getBalance().compareTo(requestedAmount) >= 0)
+        return accountIdOf(playerName)
+                .map(accountId -> service.has(accountId, requestedAmount))
                 .orElse(false);
     }
     @Override public boolean has(OfflinePlayer player, double amount) { return service.has(player.getUniqueId(), BigDecimal.valueOf(amount)); }

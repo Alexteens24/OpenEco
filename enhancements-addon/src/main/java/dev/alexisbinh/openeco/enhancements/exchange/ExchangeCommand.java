@@ -157,7 +157,17 @@ public class ExchangeCommand implements CommandExecutor, TabCompleter {
         BalanceChangeResult depositResult = api.deposit(player.getUniqueId(), toId, toAmount);
         if (!depositResult.isSuccess()) {
             // Rollback the withdraw
-            api.deposit(player.getUniqueId(), fromId, scaledAmount);
+            BalanceChangeResult rollbackResult = api.deposit(player.getUniqueId(), fromId, scaledAmount);
+            if (!rollbackResult.isSuccess()) {
+            plugin.getLogger().severe("Exchange rollback failed for player " + player.getUniqueId()
+                + " (" + player.getName() + "): withdrew " + scaledAmount.toPlainString() + " " + fromId
+                + ", target deposit failed with status " + depositResult.status()
+                + ", rollback failed with status " + rollbackResult.status() + ".");
+            String msg = config.getString("exchange.messages.rollback-failed",
+                "<red>Exchange failed and automatic rollback could not be completed. Contact an administrator.");
+            player.sendMessage(mm.deserialize(msg));
+            return true;
+            }
             String msg = switch (depositResult.status()) {
                 case BALANCE_LIMIT -> config.getString("exchange.messages.balance-limit",
                         "<red>Exchange would exceed your balance limit.");

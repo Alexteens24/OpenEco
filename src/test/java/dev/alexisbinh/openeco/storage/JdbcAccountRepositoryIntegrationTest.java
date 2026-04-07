@@ -152,6 +152,84 @@ class JdbcAccountRepositoryIntegrationTest {
     }
 
     @Test
+    void loadAllPreservesUpdatedAtWhenPersistedBalancesExist() throws Exception {
+        JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "updated-at-load-test");
+        try {
+            UUID accountId = UUID.randomUUID();
+            AccountRecord account = new AccountRecord(
+                    accountId,
+                    "Eli",
+                    "openeco",
+                    java.util.Map.of("openeco", new BigDecimal("10.00"), "gems", new BigDecimal("3")),
+                    100L,
+                    200L);
+            account.setFrozen(true);
+
+            repository.upsertBatch(List.of(account));
+
+            AccountRecord loaded = repository.loadAll().getFirst();
+            assertEquals(200L, loaded.getUpdatedAt());
+            assertTrue(loaded.isFrozen());
+            assertEquals(0, new BigDecimal("10.00").compareTo(loaded.getBalance("openeco")));
+            assertEquals(0, new BigDecimal("3").compareTo(loaded.getBalance("gems")));
+        } finally {
+            repository.close();
+        }
+    }
+
+    @Test
+    void historyCurrencyFiltersIgnoreStoredCase() throws Exception {
+        JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "history-case-filter-test");
+        try {
+            UUID accountId = UUID.randomUUID();
+            repository.upsertBatch(List.of(new AccountRecord(accountId, "Finn", BigDecimal.ZERO, 1L, 1L)));
+            repository.insertTransaction(new TransactionEntry(
+                    TransactionType.GIVE,
+                    null,
+                    accountId,
+                    BigDecimal.ONE,
+                    BigDecimal.ZERO,
+                    BigDecimal.ONE,
+                    1_000L,
+                    null,
+                    null,
+                    "gems"));
+
+            assertEquals(1, repository.countTransactions(accountId, "GEMS"));
+            assertEquals(1, repository.getTransactions(accountId, 10, 0, "GEMS").size());
+        } finally {
+            repository.close();
+        }
+    }
+
+    @Test
+    void insertTransactionMakesSameMillisecondEntriesMonotonicPerAccount() throws Exception {
+        JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "history-monotonic-ts-test");
+        try {
+            UUID accountId = UUID.randomUUID();
+            repository.upsertBatch(List.of(new AccountRecord(accountId, "Gina", BigDecimal.ZERO, 1L, 1L)));
+
+            repository.insertTransaction(txAt(accountId, 1_000L, TransactionType.GIVE));
+            repository.insertTransaction(txAt(accountId, 1_000L, TransactionType.TAKE));
+            repository.insertTransaction(txAt(accountId, 1_000L, TransactionType.RESET));
+
+            List<Long> timestamps = repository.getTransactions(accountId, 10, 0).stream()
+                    .map(TransactionEntry::getTimestamp)
+                    .toList();
+
+            assertEquals(List.of(1_002L, 1_001L, 1_000L), timestamps);
+            assertEquals(List.of(1_002L, 1_001L), repository.getTransactions(accountId, 2, 0).stream()
+                    .map(TransactionEntry::getTimestamp)
+                    .toList());
+            assertEquals(List.of(1_000L), repository.getTransactions(accountId, 2, 2).stream()
+                    .map(TransactionEntry::getTimestamp)
+                    .toList());
+        } finally {
+            repository.close();
+        }
+    }
+
+    @Test
     void upsertBatchOnNoOpIsIdempotent() throws Exception {
         JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "upsert-empty-test");
         try {

@@ -58,6 +58,8 @@ public class PayLimitListener implements Listener {
             return;
         }
 
+        pruneExpiredEntries(System.currentTimeMillis(), windowMs);
+
         int fractionalDigits = currency.fractionalDigits();
         BigDecimal maxAmount = scale(config.getDouble("pay-limit.max-amount", 10000), fractionalDigits);
         String message = config.getString("pay-limit.message",
@@ -96,14 +98,24 @@ public class PayLimitListener implements Listener {
             return;
         }
 
+        long now = System.currentTimeMillis();
+        pruneExpiredEntries(now, windowMs);
+
         CurrencyInfo currency = resolveCurrency(event.hasCurrencyId() ? event.getCurrencyId() : null);
         String currencyId = currency.id();
         int fractionalDigits = currency.fractionalDigits();
-        long now = System.currentTimeMillis();
         tracker.compute(new UsageKey(event.getFromId(), currencyId), (id, existing) -> {
             UsageWindow window = activeWindow(existing, now, windowMs, fractionalDigits);
             return new UsageWindow(window.startedAtMs(), window.totalSent().add(event.getSent()));
         });
+    }
+
+    void pruneExpiredEntries(long now, long windowMs) {
+        tracker.entrySet().removeIf(entry -> now - entry.getValue().startedAtMs() >= windowMs);
+    }
+
+    int trackedWindowCount() {
+        return tracker.size();
     }
 
     private CurrencyInfo resolveCurrency(String currencyId) {

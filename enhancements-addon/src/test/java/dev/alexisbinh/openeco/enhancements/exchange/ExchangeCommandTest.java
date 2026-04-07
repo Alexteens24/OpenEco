@@ -21,6 +21,7 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -36,6 +37,7 @@ class ExchangeCommandTest {
     @Mock private JavaPlugin plugin;
     @Mock private Player player;
     @Mock private Command command;
+    @Mock private Logger logger;
 
     private YamlConfiguration config;
     private ExchangeCommand subject;
@@ -46,7 +48,9 @@ class ExchangeCommandTest {
         config = new YamlConfiguration();
         playerId = UUID.randomUUID();
         when(plugin.getConfig()).thenReturn(config);
+        when(plugin.getLogger()).thenReturn(logger);
         when(player.getUniqueId()).thenReturn(playerId);
+        when(player.getName()).thenReturn("Alice");
         subject = new ExchangeCommand(api, plugin);
     }
 
@@ -237,11 +241,35 @@ class ExchangeCommandTest {
         when(api.deposit(eq(playerId), eq("gems"), eq(new BigDecimal("100"))))
                 .thenReturn(new BalanceChangeResult(BalanceChangeResult.Status.BALANCE_LIMIT,
                         BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO));
+        when(api.deposit(eq(playerId), eq("openeco"), eq(new BigDecimal("10.00"))))
+            .thenReturn(success(new BigDecimal("10.00")));
 
         subject.onCommand(player, command, "exchange", new String[]{"10", "openeco", "gems"});
 
         // rollback: re-deposit the withdrawn amount to openeco
         verify(api).deposit(playerId, "openeco", new BigDecimal("10.00"));
+        verify(player).sendMessage(any(Component.class));
+    }
+
+    @Test
+    void rollbackFailureIsLoggedAndReportedToPlayer() {
+        setUpBasicCurrencies();
+        when(api.canWithdraw(eq(playerId), eq("openeco"), eq(new BigDecimal("10.00"))))
+                .thenReturn(allowed());
+        when(api.canDeposit(eq(playerId), eq("gems"), eq(new BigDecimal("100"))))
+                .thenReturn(allowed());
+        when(api.withdraw(eq(playerId), eq("openeco"), eq(new BigDecimal("10.00"))))
+                .thenReturn(success(new BigDecimal("10.00")));
+        when(api.deposit(eq(playerId), eq("gems"), eq(new BigDecimal("100"))))
+                .thenReturn(new BalanceChangeResult(BalanceChangeResult.Status.BALANCE_LIMIT,
+                        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO));
+        when(api.deposit(eq(playerId), eq("openeco"), eq(new BigDecimal("10.00"))))
+                .thenReturn(new BalanceChangeResult(BalanceChangeResult.Status.FROZEN,
+                        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO));
+
+        subject.onCommand(player, command, "exchange", new String[]{"10", "openeco", "gems"});
+
+        verify(logger).severe(contains("Exchange rollback failed for player"));
         verify(player).sendMessage(any(Component.class));
     }
 

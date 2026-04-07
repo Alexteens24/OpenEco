@@ -89,3 +89,4 @@ exchange:
     frozen: "<red>Your account is frozen."
     invalid-amount: "<red>Invalid amount."
     failed: "<red>Exchange failed."
+    rollback-failed: "<red>Exchange failed and automatic rollback could not be completed. Contact an administrator."

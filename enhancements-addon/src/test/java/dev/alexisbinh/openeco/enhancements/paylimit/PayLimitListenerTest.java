@@ -18,6 +18,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.math.BigDecimal;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -55,9 +56,6 @@ class PayLimitListenerTest {
         recipientId = UUID.randomUUID();
 
         when(plugin.getConfig()).thenReturn(config);
-        when(plugin.getServer()).thenReturn(server);
-        when(server.getPlayer(senderId)).thenReturn(sender);
-        when(sender.hasPermission("openeco.enhancements.bypass.paylimit")).thenReturn(false);
         when(api.getRules()).thenReturn(rulesWith(2, null));
 
         listener = new PayLimitListener(api, plugin);
@@ -65,6 +63,8 @@ class PayLimitListenerTest {
 
     @Test
     void quotaOnlyAdvancesAfterConfirmedPay() {
+        stubSenderChecks();
+
         PayEvent firstAttempt = payEvent(new BigDecimal("8.00"));
 
         listener.onPay(firstAttempt);
@@ -98,6 +98,7 @@ class PayLimitListenerTest {
     @Test
     void quotaRespectsConfiguredFractionalDigits() {
         config.set("pay-limit.max-amount", 0.555);
+        stubSenderChecks();
         when(api.getRules()).thenReturn(rulesWith(3, null));
 
         listener.onPayCompleted(new PayCompletedEvent(
@@ -120,6 +121,7 @@ class PayLimitListenerTest {
 
     @Test
     void unknownEventCurrencyFallsBackToDefaultRuleScale() {
+        stubSenderChecks();
         when(api.getCurrencyInfo(anyString())).thenReturn(null);
 
         listener.onPayCompleted(new PayCompletedEvent(
@@ -141,6 +143,28 @@ class PayLimitListenerTest {
         assertTrue(blockedAttempt.isCancelled());
     }
 
+    @Test
+    void expiredUsageWindowsArePruned() {
+        config.set("pay-limit.window-seconds", 1);
+
+        listener.onPayCompleted(new PayCompletedEvent(
+                senderId,
+                recipientId,
+                new BigDecimal("4.00"),
+                new BigDecimal("4.00"),
+                BigDecimal.ZERO,
+                new BigDecimal("20.00"),
+                new BigDecimal("16.00"),
+                BigDecimal.ZERO,
+                new BigDecimal("4.00")));
+
+        assertEquals(1, listener.trackedWindowCount());
+
+        listener.pruneExpiredEntries(System.currentTimeMillis() + 1_001L, 1_000L);
+
+        assertEquals(0, listener.trackedWindowCount());
+    }
+
     private PayEvent payEvent(BigDecimal amount) {
         return new PayEvent(senderId, recipientId, amount, BigDecimal.ZERO, amount);
     }
@@ -157,5 +181,11 @@ class PayLimitListenerTest {
                 null,
                 0,
                 0);
+    }
+
+    private void stubSenderChecks() {
+        when(plugin.getServer()).thenReturn(server);
+        when(server.getPlayer(senderId)).thenReturn(sender);
+        when(sender.hasPermission("openeco.enhancements.bypass.paylimit")).thenReturn(false);
     }
 }

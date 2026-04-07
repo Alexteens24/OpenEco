@@ -61,6 +61,19 @@ class OpenEcoLegacyEconomyProviderTest {
     }
 
     @Test
+    void hasByNameDelegatesToServiceRulesAfterResolvingAccount() {
+        UUID accountId = UUID.randomUUID();
+        AccountRecord account = new AccountRecord(accountId, "Alice", new BigDecimal("1.00"), 1L, 1L);
+
+        when(service.findByName("Alice")).thenReturn(Optional.of(account));
+        when(service.has(accountId, BigDecimal.valueOf(0.001))).thenReturn(false);
+
+        assertFalse(provider.has("Alice", 0.001));
+
+        verify(service).has(accountId, BigDecimal.valueOf(0.001));
+    }
+
+    @Test
     void depositByNameDelegatesUsingResolvedAccountId() {
         UUID accountId = UUID.randomUUID();
         AccountRecord account = new AccountRecord(accountId, "Alice", new BigDecimal("12.50"), 1L, 1L);

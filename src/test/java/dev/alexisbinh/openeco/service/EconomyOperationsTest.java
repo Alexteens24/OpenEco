@@ -131,6 +131,27 @@ class EconomyOperationsTest {
         assertEquals(0, new BigDecimal("12.00").compareTo(registry.getLiveRecord(aliceId).getBalance()));
     }
 
+    @Test
+    void deposit_frozenByListenerBeforeCommit_isRejected() {
+        ops = buildOps(event -> {
+            if (event instanceof BalanceChangeEvent balanceEvent
+                    && balanceEvent.getReason() == BalanceChangeEvent.Reason.GIVE) {
+                AccountRecord record = registry.getLiveRecord(aliceId);
+                synchronized (record) {
+                    record.setFrozen(true);
+                }
+            }
+        });
+
+        EconomyResponse resp = ops.deposit(aliceId, new BigDecimal("3.00"));
+
+        assertFalse(resp.transactionSuccess());
+        assertEquals("Account is frozen", resp.errorMessage);
+        assertEquals(0, new BigDecimal("10.00").compareTo(registry.getLiveRecord(aliceId).getBalance()));
+        assertTrue(logged.isEmpty());
+        assertEquals(List.of(BalanceChangeEvent.class), dispatchedEvents.stream().map(Event::getClass).toList());
+    }
+
     // ── withdraw ─────────────────────────────────────────────────────────────
 
     @Test
@@ -163,6 +184,27 @@ class EconomyOperationsTest {
         assertFalse(resp.transactionSuccess());
         assertEquals(0, new BigDecimal("10.00").compareTo(registry.getLiveRecord(aliceId).getBalance()));
         assertTrue(logged.isEmpty());
+    }
+
+    @Test
+    void withdraw_frozenByListenerBeforeCommit_isRejected() {
+        ops = buildOps(event -> {
+            if (event instanceof BalanceChangeEvent balanceEvent
+                    && balanceEvent.getReason() == BalanceChangeEvent.Reason.TAKE) {
+                AccountRecord record = registry.getLiveRecord(aliceId);
+                synchronized (record) {
+                    record.setFrozen(true);
+                }
+            }
+        });
+
+        EconomyResponse resp = ops.withdraw(aliceId, new BigDecimal("4.00"));
+
+        assertFalse(resp.transactionSuccess());
+        assertEquals("Account is frozen", resp.errorMessage);
+        assertEquals(0, new BigDecimal("10.00").compareTo(registry.getLiveRecord(aliceId).getBalance()));
+        assertTrue(logged.isEmpty());
+        assertEquals(List.of(BalanceChangeEvent.class), dispatchedEvents.stream().map(Event::getClass).toList());
     }
 
     // ── set ───────────────────────────────────────────────────────────────────
@@ -308,6 +350,26 @@ class EconomyOperationsTest {
         assertTrue(result.isSuccess());
         assertEquals(0, new BigDecimal("8.00").compareTo(registry.getLiveRecord(aliceId).getBalance()));
         assertEquals(0, new BigDecimal("9.00").compareTo(registry.getLiveRecord(bobId).getBalance()));
+    }
+
+    @Test
+    void pay_frozenByListenerBeforeCommit_isRejected() {
+        ops = buildOps(event -> {
+            if (event instanceof PayEvent) {
+                AccountRecord senderRecord = registry.getLiveRecord(aliceId);
+                synchronized (senderRecord) {
+                    senderRecord.setFrozen(true);
+                }
+            }
+        });
+
+        PayResult result = ops.pay(aliceId, bobId, new BigDecimal("4.00"));
+
+        assertEquals(PayResult.Status.FROZEN, result.getStatus());
+        assertEquals(0, new BigDecimal("10.00").compareTo(registry.getLiveRecord(aliceId).getBalance()));
+        assertEquals(0, new BigDecimal("5.00").compareTo(registry.getLiveRecord(bobId).getBalance()));
+        assertTrue(logged.isEmpty());
+        assertEquals(List.of(PayEvent.class), dispatchedEvents.stream().map(Event::getClass).toList());
     }
 
     @Test

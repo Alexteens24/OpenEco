@@ -36,6 +36,8 @@ Add OpenEco as a dependency in `plugin.yml`:
 depend: [OpenEco]
 ```
 
+The core plugin keeps the runtime plugin name `openeco` and provides the alias `OpenEco`, so this dependency remains valid without changing existing server data folders.
+
 Resolve the service through Bukkit:
 
 ```java

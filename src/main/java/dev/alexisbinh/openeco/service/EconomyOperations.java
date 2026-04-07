@@ -168,6 +168,9 @@ final class EconomyOperations {
             }
 
             BigDecimal before = record.getBalance(currency.id());
+            if (record.isFrozen()) {
+                return failure(scaled, before, "Account is frozen");
+            }
             BigDecimal newBalance = before.add(scaled);
             if (currency.maxBalance() != null && newBalance.compareTo(currency.maxBalance()) > 0) {
                 return failure(scaled, before, "Balance limit reached");
@@ -234,6 +237,9 @@ final class EconomyOperations {
                 return failure(scaled, BigDecimal.ZERO, "Account not found");
             }
             BigDecimal before = record.getBalance(currency.id());
+            if (record.isFrozen()) {
+                return failure(scaled, before, "Account is frozen");
+            }
             if (before.compareTo(scaled) < 0) {
                 return failure(scaled, before, "Insufficient funds");
             }
@@ -602,6 +608,10 @@ final class EconomyOperations {
             synchronized (second) {
                 if (!accountRegistry.isLive(fromId, fromRecord) || !accountRegistry.isLive(toId, toRecord)) {
                     return PayResult.accountNotFound();
+                }
+
+                if (fromRecord.isFrozen() || toRecord.isFrozen()) {
+                    return PayResult.frozen();
                 }
 
                 if (currentConfig.payCooldownMs() > 0) {

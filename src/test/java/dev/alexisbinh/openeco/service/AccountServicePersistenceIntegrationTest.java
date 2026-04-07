@@ -121,6 +121,61 @@ class AccountServicePersistenceIntegrationTest {
     }
 
     @Test
+    void loadAllCanonicalizesBalancesWhenCurrencyCaseChangesAcrossRestart() throws Exception {
+        String filename = "currency-case-restart-test";
+        UUID accountId = UUID.randomUUID();
+
+        JdbcAccountRepository writerRepository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), filename, "openeco");
+        try {
+            AccountService writer = newServiceWithConfig(writerRepository, multiCurrencyConfig("openeco", "gems"));
+
+            assertTrue(writer.createAccount(accountId, "Alice"));
+            assertTrue(writer.deposit(accountId, "gems", new BigDecimal("7")).transactionSuccess());
+
+            writer.shutdown();
+        } finally {
+            writerRepository.close();
+        }
+
+        JdbcAccountRepository readerRepository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), filename, "openeco");
+        try {
+            AccountService reader = newServiceWithConfig(readerRepository, multiCurrencyConfig("openeco", "Gems"));
+            reader.loadAll();
+
+            AccountRecord snapshot = reader.getAccount(accountId).orElseThrow();
+            assertEquals(0, new BigDecimal("12").compareTo(reader.getBalance(accountId, "Gems")));
+            assertTrue(snapshot.getBalancesSnapshot().containsKey("Gems"));
+            assertFalse(snapshot.getBalancesSnapshot().containsKey("gems"));
+            assertEquals(1, reader.countTransactions(accountId, "Gems"));
+
+            reader.shutdown();
+        } finally {
+            readerRepository.close();
+        }
+
+        try (java.sql.Connection connection = java.sql.DriverManager.getConnection(
+                     DatabaseDialect.H2.getJdbcUrl(tempDir.toString(), filename));
+             java.sql.PreparedStatement gemsCountPs = connection.prepareStatement(
+                     "SELECT COUNT(*) FROM account_balances WHERE account_id=? AND currency_id=?");
+             java.sql.PreparedStatement lowerCaseCountPs = connection.prepareStatement(
+                     "SELECT COUNT(*) FROM account_balances WHERE account_id=? AND currency_id=?")) {
+            gemsCountPs.setString(1, accountId.toString());
+            gemsCountPs.setString(2, "Gems");
+            try (java.sql.ResultSet rs = gemsCountPs.executeQuery()) {
+                assertTrue(rs.next());
+                assertEquals(1, rs.getInt(1));
+            }
+
+            lowerCaseCountPs.setString(1, accountId.toString());
+            lowerCaseCountPs.setString(2, "gems");
+            try (java.sql.ResultSet rs = lowerCaseCountPs.executeQuery()) {
+                assertTrue(rs.next());
+                assertEquals(0, rs.getInt(1));
+            }
+        }
+    }
+
+    @Test
     void reloadConfigSwitchesDefaultCurrencyWithoutLosingNamedBalances() throws Exception {
         JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "reload-default-currency-test");
         try {
@@ -511,6 +566,10 @@ class AccountServicePersistenceIntegrationTest {
     }
 
     private static YamlConfiguration multiCurrencyConfig(String defaultCurrencyId) {
+        return multiCurrencyConfig(defaultCurrencyId, "gems");
+    }
+
+    private static YamlConfiguration multiCurrencyConfig(String defaultCurrencyId, String secondaryCurrencyId) {
         YamlConfiguration config = new YamlConfiguration();
         config.set("currencies.default", defaultCurrencyId);
         config.set("currencies.definitions.openeco.name-singular", "Dollar");
@@ -518,11 +577,11 @@ class AccountServicePersistenceIntegrationTest {
         config.set("currencies.definitions.openeco.decimal-digits", 2);
         config.set("currencies.definitions.openeco.starting-balance", 0.0);
         config.set("currencies.definitions.openeco.max-balance", -1.0);
-        config.set("currencies.definitions.gems.name-singular", "Gem");
-        config.set("currencies.definitions.gems.name-plural", "Gems");
-        config.set("currencies.definitions.gems.decimal-digits", 0);
-        config.set("currencies.definitions.gems.starting-balance", 5.0);
-        config.set("currencies.definitions.gems.max-balance", -1.0);
+        config.set("currencies.definitions." + secondaryCurrencyId + ".name-singular", "Gem");
+        config.set("currencies.definitions." + secondaryCurrencyId + ".name-plural", "Gems");
+        config.set("currencies.definitions." + secondaryCurrencyId + ".decimal-digits", 0);
+        config.set("currencies.definitions." + secondaryCurrencyId + ".starting-balance", 5.0);
+        config.set("currencies.definitions." + secondaryCurrencyId + ".max-balance", -1.0);
         config.set("pay.cooldown-seconds", 0);
         config.set("pay.tax-percent", 0.0);
         config.set("pay.min-amount", 0.01);

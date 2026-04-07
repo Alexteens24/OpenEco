@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 
 final class AccountRegistry {
 
@@ -130,10 +131,14 @@ final class AccountRegistry {
         return accounts.values();
     }
 
-    void syncPrimaryCurrency(String currencyId) {
+    void syncCurrencies(String currencyId, Function<String, String> canonicalizer) {
         for (AccountRecord record : accounts.values()) {
             synchronized (record) {
+                boolean changed = record.canonicalizeCurrencyIds(canonicalizer);
                 record.setPrimaryCurrencyId(currencyId);
+                if (changed) {
+                    record.markDirty();
+                }
             }
         }
     }

@@ -95,7 +95,7 @@ public class AccountService {
     private void readConfig(FileConfiguration config) {
         EconomyConfigSnapshot updated = EconomyConfigSnapshot.from(config);
         this.config = updated;
-        accountRegistry.syncPrimaryCurrency(updated.currencyId());
+        syncConfiguredCurrencies(updated);
         leaderboardCache.setCacheTtlMs(updated.balTopCacheTtlMs());
     }
 
@@ -105,6 +105,7 @@ public class AccountService {
         List<AccountRecord> records = repository.loadAll();
         validateLoadedNames(records);
         accountRegistry.loadAll(records);
+        syncConfiguredCurrencies(config);
         log.info("Loaded " + records.size() + " economy accounts.");
     }
 
@@ -655,6 +656,13 @@ public class AccountService {
 
     private void invalidateBalTopCache() {
         leaderboardCache.invalidate();
+    }
+
+    private void syncConfiguredCurrencies(EconomyConfigSnapshot configSnapshot) {
+        accountRegistry.syncCurrencies(configSnapshot.currencyId(), currencyId -> {
+            CurrencyDefinition currency = configSnapshot.currencies().find(currencyId).orElse(null);
+            return currency != null ? currency.id() : null;
+        });
     }
 
     private static String sanitizeAccountName(String name) {

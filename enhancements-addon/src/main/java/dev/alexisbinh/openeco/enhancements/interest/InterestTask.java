@@ -3,6 +3,7 @@ package dev.alexisbinh.openeco.enhancements.interest;
 import dev.alexisbinh.openeco.api.BalanceChangeResult;
 import dev.alexisbinh.openeco.api.CurrencyInfo;
 import dev.alexisbinh.openeco.api.OpenEcoApi;
+import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -30,6 +31,10 @@ public class InterestTask implements Runnable {
 
     @Override
     public void run() {
+        plugin.getServer().getGlobalRegionScheduler().run(plugin, this::runInterestCycle);
+    }
+
+    private void runInterestCycle(ScheduledTask task) {
         FileConfiguration config = plugin.getConfig();
         double rate = config.getDouble("interest.rate", 5.0);
         long intervalSeconds = config.getLong("interest.interval-seconds", 3600);

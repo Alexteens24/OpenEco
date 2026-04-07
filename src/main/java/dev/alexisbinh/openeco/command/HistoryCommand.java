@@ -1,6 +1,7 @@
 package dev.alexisbinh.openeco.command;
 
 import dev.alexisbinh.openeco.Messages;
+import dev.alexisbinh.openeco.model.AccountRecord;
 import dev.alexisbinh.openeco.model.TransactionEntry;
 import dev.alexisbinh.openeco.service.AccountService;
 import net.kyori.adventure.text.Component;
@@ -44,107 +45,147 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command,
                              @NotNull String label, @NotNull String[] args) {
         if (args.length > 3) {
-            sender.sendMessage("§cUsage: /history [player] [page] [currency]");
+            sender.sendMessage("§cUsage: /history [self|player] [page] [currency]");
             return true;
         }
 
-        UUID targetId;
-        String targetName;
-        int page = 1;
-        String currencyId = service.getCurrencyId();
-
-        boolean selfRequest = args.length == 0
-                || (sender instanceof Player && (isPageNumber(args[0]) || service.hasCurrency(args[0])));
-
-        if (selfRequest) {
-            if (!(sender instanceof Player player)) {
-                messages.send(sender, "console-player-only");
-                return true;
-            }
-            if (!sender.hasPermission("openeco.command.history")) {
-                messages.send(sender, "no-permission");
-                return true;
-            }
-            targetId = player.getUniqueId();
-            targetName = player.getName();
-            if (args.length >= 1) {
-                if (isPageNumber(args[0])) {
-                    page = parsePageSafe(args[0]);
-                    if (args.length == 2) {
-                        currencyId = args[1];
-                    }
-                } else {
-                    currencyId = args[0];
-                    if (args.length == 2) {
-                        page = parsePageSafe(args[1]);
-                    }
-                }
-            }
+        HistoryRequest request;
+        if (sender instanceof Player player) {
+            request = resolvePlayerRequest(player, args);
         } else {
-            if (!sender.hasPermission("openeco.command.history.others")) {
-                messages.send(sender, "no-permission");
-                return true;
-            }
-            var opt = service.findByName(args[0]);
-            if (opt.isEmpty()) {
-                messages.send(sender, "account-not-found", Placeholder.unparsed("player", args[0]));
-                return true;
-            }
-            targetId = opt.get().getId();
-            targetName = opt.get().getLastKnownName();
-            if (args.length >= 2) {
-                if (isPageNumber(args[1])) {
-                    page = parsePageSafe(args[1]);
-                    if (args.length == 3) {
-                        currencyId = args[2];
-                    }
-                } else {
-                    currencyId = args[1];
-                    if (args.length == 3) {
-                        page = parsePageSafe(args[2]);
-                    }
-                }
-            }
+            request = resolveConsoleRequest(sender, args);
+        }
+        if (request == null) {
+            return true;
         }
 
-        if (!service.hasCurrency(currencyId)) {
+        if (!service.hasCurrency(request.currencyId())) {
             messages.send(sender, "unknown-currency");
             return true;
         }
 
-        final UUID fTargetId = targetId;
-        final String fTargetName = targetName;
-        final int fPage = page;
-        final int fPageSize = PAGE_SIZE;
-        final String fCurrencyId = currencyId;
+        final UUID targetId = request.targetId();
+        final String targetName = request.targetName();
+        final int requestedPage = request.page();
+        final String currencyId = request.currencyId();
 
         plugin.getServer().getAsyncScheduler().runNow(plugin, task -> {
             try {
-                int total = service.countTransactions(fTargetId, fCurrencyId);
-                int totalPages = Math.max(1, (int) Math.ceil((double) total / fPageSize));
-                int clampedPage = Math.min(fPage, totalPages);
-                List<TransactionEntry> entries = service.getTransactions(fTargetId, fCurrencyId, clampedPage, fPageSize);
+                int totalEntries = service.countTransactions(targetId, currencyId);
+                int totalPages = Math.max(1, (int) Math.ceil((double) totalEntries / PAGE_SIZE));
+                int page = Math.min(requestedPage, totalPages);
+                List<TransactionEntry> entries = service.getTransactions(targetId, currencyId, page, PAGE_SIZE);
                 Map<UUID, String> nameMap = service.getUUIDNameMap();
 
                 dispatchReply(sender, () -> {
                     messages.send(sender, "history-header",
-                            Placeholder.unparsed("player", fTargetName),
-                            Placeholder.unparsed("page", String.valueOf(clampedPage)),
+                            Placeholder.unparsed("player", targetName),
+                            Placeholder.unparsed("page", String.valueOf(page)),
                             Placeholder.unparsed("total", String.valueOf(totalPages)));
                     if (entries.isEmpty()) {
                         messages.send(sender, "history-empty");
                         return;
                     }
-                    for (TransactionEntry e : entries) {
-                        sender.sendMessage(formatEntry(e, nameMap, fCurrencyId));
+                    for (TransactionEntry entry : entries) {
+                        sender.sendMessage(formatEntry(entry, nameMap, currencyId));
                     }
                 });
             } catch (SQLException ex) {
-                plugin.getLogger().warning("Failed to load transaction history for " + fTargetId + ": " + ex.getMessage());
+                plugin.getLogger().warning("Failed to load transaction history for " + targetId + ": " + ex.getMessage());
                 dispatchReply(sender, () -> messages.send(sender, "history-error"));
             }
         });
         return true;
+    }
+
+    private HistoryRequest resolvePlayerRequest(Player player, String[] args) {
+        if (args.length == 0) {
+            if (!player.hasPermission("openeco.command.history")) {
+                messages.send(player, "no-permission");
+                return null;
+            }
+            return createSelfRequest(player, args, 0);
+        }
+
+        if (args[0].equalsIgnoreCase("self")) {
+            if (!player.hasPermission("openeco.command.history")) {
+                messages.send(player, "no-permission");
+                return null;
+            }
+            return createSelfRequest(player, args, 1);
+        }
+
+        if (player.hasPermission("openeco.command.history.others")) {
+            var target = service.findByName(args[0]);
+            if (target.isPresent()) {
+                return createOtherRequest(target.get(), args, 1);
+            }
+        }
+
+        if (isPageNumber(args[0]) || service.hasCurrency(args[0])) {
+            if (!player.hasPermission("openeco.command.history")) {
+                messages.send(player, "no-permission");
+                return null;
+            }
+            return createSelfRequest(player, args, 0);
+        }
+
+        if (!player.hasPermission("openeco.command.history.others")) {
+            messages.send(player, "no-permission");
+            return null;
+        }
+
+        messages.send(player, "account-not-found", Placeholder.unparsed("player", args[0]));
+        return null;
+    }
+
+    private HistoryRequest resolveConsoleRequest(CommandSender sender, String[] args) {
+        if (args.length == 0) {
+            messages.send(sender, "console-player-only");
+            return null;
+        }
+        if (!sender.hasPermission("openeco.command.history.others")) {
+            messages.send(sender, "no-permission");
+            return null;
+        }
+
+        var target = service.findByName(args[0]);
+        if (target.isEmpty()) {
+            messages.send(sender, "account-not-found", Placeholder.unparsed("player", args[0]));
+            return null;
+        }
+        return createOtherRequest(target.get(), args, 1);
+    }
+
+    private HistoryRequest createSelfRequest(Player player, String[] args, int startIndex) {
+        ParsedArguments parsed = parseArguments(args, startIndex);
+        return new HistoryRequest(player.getUniqueId(), player.getName(), parsed.page(), parsed.currencyId());
+    }
+
+    private HistoryRequest createOtherRequest(AccountRecord target, String[] args, int startIndex) {
+        ParsedArguments parsed = parseArguments(args, startIndex);
+        return new HistoryRequest(target.getId(), target.getLastKnownName(), parsed.page(), parsed.currencyId());
+    }
+
+    private ParsedArguments parseArguments(String[] args, int startIndex) {
+        int page = 1;
+        String currencyId = service.getCurrencyId();
+
+        if (args.length > startIndex) {
+            if (isPageNumber(args[startIndex])) {
+                page = parsePageSafe(args[startIndex]);
+                if (args.length > startIndex + 1) {
+                    currencyId = args[startIndex + 1];
+                }
+            } else {
+                currencyId = args[startIndex];
+                if (args.length > startIndex + 1) {
+                    page = parsePageSafe(args[startIndex + 1]);
+                }
+            }
+        }
+
+        return new ParsedArguments(page, currencyId);
     }
 
     private void dispatchReply(CommandSender sender, Runnable reply) {
@@ -155,34 +196,34 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
         plugin.getServer().getGlobalRegionScheduler().run(plugin, task -> reply.run());
     }
 
-    private Component formatEntry(TransactionEntry e, Map<UUID, String> nameMap, String fallbackCurrencyId) {
-        String date = DATE_FORMAT.format(Instant.ofEpochMilli(e.getTimestamp()));
-        String currencyId = e.hasCurrencyId() ? e.getCurrencyId() : fallbackCurrencyId;
-        String amount = service.format(e.getAmount(), currencyId);
-        String balance = service.format(e.getBalanceAfter(), currencyId);
+    private Component formatEntry(TransactionEntry entry, Map<UUID, String> nameMap, String fallbackCurrencyId) {
+        String date = DATE_FORMAT.format(Instant.ofEpochMilli(entry.getTimestamp()));
+        String currencyId = entry.hasCurrencyId() ? entry.getCurrencyId() : fallbackCurrencyId;
+        String amount = service.format(entry.getAmount(), currencyId);
+        String balance = service.format(entry.getBalanceAfter(), currencyId);
 
-        if (e.hasMetadata()) {
+        if (entry.hasMetadata()) {
             return messages.getOrDefault("history-custom",
-                "<dark_gray>[<date>] <aqua><kind> <yellow><amount> <gray>(<details>)",
+                    "<dark_gray>[<date>] <aqua><kind> <yellow><amount> <gray>(<details>)",
                     Placeholder.unparsed("date", date),
-                    Placeholder.unparsed("kind", humanizeType(e)),
-                    Placeholder.unparsed("amount", signedAmount(e, amount)),
+                    Placeholder.unparsed("kind", humanizeType(entry)),
+                    Placeholder.unparsed("amount", signedAmount(entry, amount)),
                     Placeholder.unparsed("balance", balance),
-                    Placeholder.unparsed("source", e.getSource() != null ? e.getSource() : ""),
-                    Placeholder.unparsed("note", e.getNote() != null ? e.getNote() : ""),
-                    Placeholder.unparsed("details", customDetails(e)));
+                    Placeholder.unparsed("source", entry.getSource() != null ? entry.getSource() : ""),
+                    Placeholder.unparsed("note", entry.getNote() != null ? entry.getNote() : ""),
+                    Placeholder.unparsed("details", customDetails(entry)));
         }
 
-        String counterpart = e.getCounterpartId() != null
-                ? nameMap.getOrDefault(e.getCounterpartId(), e.getCounterpartId().toString())
+        String counterpart = entry.getCounterpartId() != null
+                ? nameMap.getOrDefault(entry.getCounterpartId(), entry.getCounterpartId().toString())
                 : "Admin";
 
-        String key = switch (e.getType()) {
-            case GIVE         -> "history-give";
-            case TAKE         -> "history-take";
-            case SET          -> "history-set";
-            case RESET        -> "history-reset";
-            case PAY_SENT     -> "history-pay-sent";
+        String key = switch (entry.getType()) {
+            case GIVE -> "history-give";
+            case TAKE -> "history-take";
+            case SET -> "history-set";
+            case RESET -> "history-reset";
+            case PAY_SENT -> "history-pay-sent";
             case PAY_RECEIVED -> "history-pay-received";
         };
         return messages.get(key,
@@ -222,48 +263,77 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
     public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command,
                                       @NotNull String alias, @NotNull String[] args) {
         if (args.length == 1 && sender.hasPermission("openeco.command.history.others")) {
-            String prefix = args[0].toLowerCase();
+            String prefix = args[0].toLowerCase(Locale.ROOT);
             List<String> suggestions = new java.util.ArrayList<>(service.getAccountNames().stream()
-                .filter(n -> n.toLowerCase().startsWith(prefix))
-                .sorted()
-                .toList());
+                    .filter(name -> name.toLowerCase(Locale.ROOT).startsWith(prefix))
+                    .sorted()
+                    .toList());
+            if (sender instanceof Player && "self".startsWith(prefix) && !suggestions.contains("self")) {
+                suggestions.add("self");
+            }
             suggestions.addAll(service.getCurrencyIds().stream()
-                .filter(id -> id.toLowerCase().startsWith(prefix))
-                .sorted()
-                .filter(id -> !suggestions.contains(id))
-                .toList());
+                    .filter(id -> id.toLowerCase(Locale.ROOT).startsWith(prefix))
+                    .sorted()
+                    .filter(id -> !suggestions.contains(id))
+                    .toList());
             return suggestions;
         }
+
         if (args.length == 1) {
-            String prefix = args[0].toLowerCase();
-            return service.getCurrencyIds().stream()
-                .filter(id -> id.toLowerCase().startsWith(prefix))
-                .sorted()
-                .toList();
+            String prefix = args[0].toLowerCase(Locale.ROOT);
+            List<String> suggestions = new java.util.ArrayList<>();
+            if (sender instanceof Player && "self".startsWith(prefix)) {
+                suggestions.add("self");
+            }
+            suggestions.addAll(service.getCurrencyIds().stream()
+                    .filter(id -> id.toLowerCase(Locale.ROOT).startsWith(prefix))
+                    .sorted()
+                    .filter(id -> !suggestions.contains(id))
+                    .toList());
+            return suggestions;
         }
-        if (args.length == 2 && (!sender.hasPermission("openeco.command.history.others")
-            || service.findByName(args[0]).isPresent() || isPageNumber(args[0]))) {
-            String prefix = args[1].toLowerCase();
+
+        if (args.length == 2 && (args[0].equalsIgnoreCase("self")
+                || !sender.hasPermission("openeco.command.history.others")
+                || service.findByName(args[0]).isPresent()
+                || isPageNumber(args[0]))) {
+            String prefix = args[1].toLowerCase(Locale.ROOT);
             return service.getCurrencyIds().stream()
-                .filter(id -> id.toLowerCase().startsWith(prefix))
-                .sorted()
-                .toList();
+                    .filter(id -> id.toLowerCase(Locale.ROOT).startsWith(prefix))
+                    .sorted()
+                    .toList();
         }
+
         if (args.length == 3 && isPageNumber(args[1])) {
-            String prefix = args[2].toLowerCase();
+            String prefix = args[2].toLowerCase(Locale.ROOT);
             return service.getCurrencyIds().stream()
-                .filter(id -> id.toLowerCase().startsWith(prefix))
-                .sorted()
-                .toList();
+                    .filter(id -> id.toLowerCase(Locale.ROOT).startsWith(prefix))
+                    .sorted()
+                    .toList();
         }
+
         return Collections.emptyList();
     }
 
-    private static boolean isPageNumber(String s) {
-        try { Integer.parseInt(s); return true; } catch (NumberFormatException e) { return false; }
+    private static boolean isPageNumber(String value) {
+        try {
+            Integer.parseInt(value);
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
     }
 
-    private static int parsePageSafe(String s) {
-        try { int p = Integer.parseInt(s); return p < 1 ? 1 : p; } catch (NumberFormatException e) { return 1; }
+    private static int parsePageSafe(String value) {
+        try {
+            int page = Integer.parseInt(value);
+            return Math.max(page, 1);
+        } catch (NumberFormatException e) {
+            return 1;
+        }
     }
+
+    private record ParsedArguments(int page, String currencyId) {}
+
+    private record HistoryRequest(UUID targetId, String targetName, int page, String currencyId) {}
 }
