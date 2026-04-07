@@ -23,7 +23,7 @@ currencies:
 #   max-balance: -1
 
 storage:
-  # Backend to use: sqlite or h2
+  # Backend to use: sqlite, h2, mysql, mariadb, or postgresql
   # Changing backend or file name does not migrate existing data automatically.
   type: sqlite
   sqlite:
@@ -31,6 +31,28 @@ storage:
   h2:
     # File name (without extension); H2 appends .mv.db automatically
     file: economy
+  mysql:
+    host: localhost
+    port: 3306
+    database: openeco
+    username: root
+    password: ""
+    # Number of concurrent database connections (remote backends only)
+    pool-size: 10
+  mariadb:
+    host: localhost
+    port: 3306
+    database: openeco
+    username: root
+    password: ""
+    pool-size: 10
+  postgresql:
+    host: localhost
+    port: 5432
+    database: openeco
+    username: postgres
+    password: ""
+    pool-size: 10
 
 # Seconds between automatic background saves (values <= 0 are clamped to 1)
 # Lower values reduce worst-case data loss after a crash but increase write pressure.

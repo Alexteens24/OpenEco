@@ -1,5 +1,7 @@
 package dev.alexisbinh.openeco.storage;
 
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
 import dev.alexisbinh.openeco.model.AccountRecord;
 import dev.alexisbinh.openeco.model.TransactionEntry;
 import dev.alexisbinh.openeco.model.TransactionType;
@@ -17,9 +19,11 @@ import java.util.UUID;
 
 public class JdbcAccountRepository implements AccountRepository {
 
-    private final Connection connection;
+    private final HikariDataSource dataSource;
     private final DatabaseDialect dialect;
     private final String defaultCurrencyId;
+
+    // ── Local (SQLite / H2) constructors — backward compatible ──────────────
 
     public JdbcAccountRepository(DatabaseDialect dialect, String dataFolder, String filename) throws SQLException {
         this(dialect, dataFolder, filename, "openeco");
@@ -27,76 +31,102 @@ public class JdbcAccountRepository implements AccountRepository {
 
     public JdbcAccountRepository(DatabaseDialect dialect, String dataFolder, String filename,
                                  String defaultCurrencyId) throws SQLException {
+        this(buildLocalDataSource(dialect, dataFolder, filename), dialect, defaultCurrencyId);
+    }
+
+    // ── Remote (MySQL / MariaDB / PostgreSQL) constructor ───────────────────
+
+    public JdbcAccountRepository(HikariDataSource dataSource, DatabaseDialect dialect,
+                                 String defaultCurrencyId) throws SQLException {
+        this.dataSource = dataSource;
         this.dialect = dialect;
         this.defaultCurrencyId = normalizeCurrencyId(defaultCurrencyId);
-        String url = dialect.getJdbcUrl(dataFolder, filename);
-        this.connection = DriverManager.getConnection(url);
-        dialect.applyTuning(connection);
         createSchema();
     }
 
+    private static HikariDataSource buildLocalDataSource(DatabaseDialect dialect,
+                                                         String dataFolder, String filename) {
+        HikariConfig cfg = new HikariConfig();
+        switch (dialect) {
+            case SQLITE -> {
+                cfg.setJdbcUrl("jdbc:sqlite:" + dataFolder + "/" + filename);
+                cfg.addDataSourceProperty("journal_mode", "WAL");
+                cfg.addDataSourceProperty("synchronous", "NORMAL");
+                cfg.addDataSourceProperty("foreign_keys", "ON");
+            }
+            case H2 -> cfg.setJdbcUrl("jdbc:h2:" + dataFolder + "/" + filename + ";DB_CLOSE_ON_EXIT=FALSE");
+            default -> throw new IllegalArgumentException("Not a local dialect: " + dialect);
+        }
+        cfg.setMaximumPoolSize(1);
+        cfg.setMinimumIdle(1);
+        cfg.setPoolName("OpenEco-" + dialect.name());
+        return new HikariDataSource(cfg);
+    }
+
+    // ── Schema ────────────────────────────────────────────────────────────────
+
     private void createSchema() throws SQLException {
-        connection.setAutoCommit(false);
-        try (Statement stmt = connection.createStatement()) {
-            stmt.execute("""
-                CREATE TABLE IF NOT EXISTS accounts (
-                    id         VARCHAR(36)   NOT NULL PRIMARY KEY,
-                    name       VARCHAR(16)   NOT NULL,
-                    balance    DECIMAL(30,8) NOT NULL DEFAULT 0,
-                    created_at BIGINT        NOT NULL,
-                    updated_at BIGINT        NOT NULL
-                )
-                """);
-            stmt.execute(switch (dialect) {
-                case H2 -> "CREATE INDEX IF NOT EXISTS idx_accounts_name ON accounts(name)";
-                case SQLITE -> "CREATE INDEX IF NOT EXISTS idx_accounts_name_lower ON accounts(LOWER(name))";
-            });
-            stmt.execute("""
-                CREATE TABLE IF NOT EXISTS account_balances (
-                    account_id  VARCHAR(36)   NOT NULL,
-                    currency_id VARCHAR(32)   NOT NULL,
-                    balance     DECIMAL(30,8) NOT NULL DEFAULT 0,
-                    updated_at  BIGINT        NOT NULL,
-                    PRIMARY KEY (account_id, currency_id)
-                )
-                """);
-            stmt.execute("""
-                CREATE TABLE IF NOT EXISTS transactions (
-                    type           VARCHAR(16)   NOT NULL,
-                    counterpart_id VARCHAR(36),
-                    target_id      VARCHAR(36)   NOT NULL,
-                    amount         DECIMAL(30,8) NOT NULL,
-                    balance_before DECIMAL(30,8) NOT NULL,
-                    balance_after  DECIMAL(30,8) NOT NULL,
-                    ts             BIGINT        NOT NULL
-                )
-                """);
-            ensureColumn(stmt, "transactions", "source", "VARCHAR(64)");
-            ensureColumn(stmt, "transactions", "note", "VARCHAR(255)");
-            ensureColumn(stmt, "transactions", "currency_id",
-                    "VARCHAR(32) NOT NULL DEFAULT '" + sqlLiteral(defaultCurrencyId) + "'");
-            ensureColumn(stmt, "accounts", "frozen", "BOOLEAN NOT NULL DEFAULT FALSE");
-            stmt.execute("CREATE INDEX IF NOT EXISTS idx_tx_target_ts ON transactions(target_id, ts DESC)");
-            backfillDefaultBalances();
-            backfillTransactionCurrencies();
-            connection.commit();
-        } catch (SQLException e) {
-            connection.rollback();
-            throw e;
-        } finally {
-            connection.setAutoCommit(true);
+        try (Connection conn = dataSource.getConnection()) {
+            conn.setAutoCommit(false);
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute("""
+                    CREATE TABLE IF NOT EXISTS accounts (
+                        id         VARCHAR(36)   NOT NULL PRIMARY KEY,
+                        name       VARCHAR(16)   NOT NULL,
+                        balance    DECIMAL(30,8) NOT NULL DEFAULT 0,
+                        created_at BIGINT        NOT NULL,
+                        updated_at BIGINT        NOT NULL
+                    )
+                    """);
+                stmt.execute(dialect.createNameIndexSql());
+                stmt.execute("""
+                    CREATE TABLE IF NOT EXISTS account_balances (
+                        account_id  VARCHAR(36)   NOT NULL,
+                        currency_id VARCHAR(32)   NOT NULL,
+                        balance     DECIMAL(30,8) NOT NULL DEFAULT 0,
+                        updated_at  BIGINT        NOT NULL,
+                        PRIMARY KEY (account_id, currency_id)
+                    )
+                    """);
+                stmt.execute("""
+                    CREATE TABLE IF NOT EXISTS transactions (
+                        type           VARCHAR(16)   NOT NULL,
+                        counterpart_id VARCHAR(36),
+                        target_id      VARCHAR(36)   NOT NULL,
+                        amount         DECIMAL(30,8) NOT NULL,
+                        balance_before DECIMAL(30,8) NOT NULL,
+                        balance_after  DECIMAL(30,8) NOT NULL,
+                        ts             BIGINT        NOT NULL
+                    )
+                    """);
+                ensureColumn(conn, stmt, "transactions", "source", "VARCHAR(64)");
+                ensureColumn(conn, stmt, "transactions", "note", "VARCHAR(255)");
+                ensureColumn(conn, stmt, "transactions", "currency_id",
+                        "VARCHAR(32) NOT NULL DEFAULT '" + sqlLiteral(defaultCurrencyId) + "'");
+                ensureColumn(conn, stmt, "accounts", "frozen", "BOOLEAN NOT NULL DEFAULT FALSE");
+                stmt.execute("CREATE INDEX IF NOT EXISTS idx_tx_target_ts ON transactions(target_id, ts DESC)");
+                backfillDefaultBalances(conn);
+                backfillTransactionCurrencies(conn);
+                conn.commit();
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(true);
+            }
         }
     }
 
-    private void ensureColumn(Statement stmt, String tableName, String columnName, String definition) throws SQLException {
-        if (columnExists(tableName, columnName)) {
+    private void ensureColumn(Connection conn, Statement stmt, String tableName,
+                               String columnName, String definition) throws SQLException {
+        if (columnExists(conn, tableName, columnName)) {
             return;
         }
         stmt.execute("ALTER TABLE " + tableName + " ADD COLUMN " + columnName + " " + definition);
     }
 
-    private boolean columnExists(String tableName, String columnName) throws SQLException {
-        DatabaseMetaData metaData = connection.getMetaData();
+    private boolean columnExists(Connection conn, String tableName, String columnName) throws SQLException {
+        DatabaseMetaData metaData = conn.getMetaData();
         return hasColumn(metaData, tableName, columnName)
                 || hasColumn(metaData, tableName.toUpperCase(Locale.ROOT), columnName.toUpperCase(Locale.ROOT))
                 || hasColumn(metaData, tableName.toLowerCase(Locale.ROOT), columnName.toLowerCase(Locale.ROOT));
@@ -108,121 +138,128 @@ public class JdbcAccountRepository implements AccountRepository {
         }
     }
 
+    // ── AccountRepository ─────────────────────────────────────────────────────
+
     @Override
-    public synchronized List<AccountRecord> loadAll() throws SQLException {
+    public List<AccountRecord> loadAll() throws SQLException {
         Map<UUID, AccountRecord> result = new LinkedHashMap<>();
-        try (Statement stmt = connection.createStatement();
-             ResultSet rs = stmt.executeQuery("SELECT id,name,created_at,updated_at,frozen FROM accounts")) {
-            while (rs.next()) {
-                UUID id = UUID.fromString(rs.getString("id"));
-                String name = rs.getString("name");
-                long createdAt = rs.getLong("created_at");
-                long updatedAt = rs.getLong("updated_at");
-                boolean frozen = rs.getBoolean("frozen");
-                AccountRecord rec = new AccountRecord(
-                        id,
-                        name,
-                        defaultCurrencyId,
-                        Map.of(defaultCurrencyId, BigDecimal.ZERO),
-                        createdAt,
-                        updatedAt);
-                rec.setFrozen(frozen);
-                rec.clearDirty();
-                result.put(id, rec);
-            }
-        }
-
-        try (Statement stmt = connection.createStatement();
-             ResultSet rs = stmt.executeQuery("SELECT account_id,currency_id,balance,updated_at FROM account_balances")) {
-            while (rs.next()) {
-                UUID accountId = UUID.fromString(rs.getString("account_id"));
-                AccountRecord record = result.get(accountId);
-                if (record == null) {
-                    continue;
+        try (Connection conn = dataSource.getConnection()) {
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery("SELECT id,name,created_at,updated_at,frozen FROM accounts")) {
+                while (rs.next()) {
+                    UUID id = UUID.fromString(rs.getString("id"));
+                    String name = rs.getString("name");
+                    long createdAt = rs.getLong("created_at");
+                    long updatedAt = rs.getLong("updated_at");
+                    boolean frozen = rs.getBoolean("frozen");
+                    AccountRecord rec = new AccountRecord(
+                            id,
+                            name,
+                            defaultCurrencyId,
+                            Map.of(defaultCurrencyId, BigDecimal.ZERO),
+                            createdAt,
+                            updatedAt);
+                    rec.setFrozen(frozen);
+                    rec.clearDirty();
+                    result.put(id, rec);
                 }
-                record.setBalance(rs.getString("currency_id"), rs.getBigDecimal("balance"));
-                record.clearDirty();
+            }
+
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery(
+                         "SELECT account_id,currency_id,balance,updated_at FROM account_balances")) {
+                while (rs.next()) {
+                    UUID accountId = UUID.fromString(rs.getString("account_id"));
+                    AccountRecord record = result.get(accountId);
+                    if (record == null) {
+                        continue;
+                    }
+                    record.setBalance(rs.getString("currency_id"), rs.getBigDecimal("balance"));
+                    record.clearDirty();
+                }
             }
         }
-
         return new ArrayList<>(result.values());
     }
 
     @Override
-    public synchronized void upsertBatch(Collection<AccountRecord> records) throws SQLException {
+    public void upsertBatch(Collection<AccountRecord> records) throws SQLException {
         if (records.isEmpty()) return;
-        connection.setAutoCommit(false);
-        try (PreparedStatement accountPs = connection.prepareStatement(dialect.upsertSql());
-             PreparedStatement balancePs = connection.prepareStatement(dialect.balanceUpsertSql())) {
-            for (AccountRecord r : records) {
-                accountPs.setString(1, r.getId().toString());
-                accountPs.setString(2, r.getLastKnownName());
-                accountPs.setBigDecimal(3, r.getBalance());
-                accountPs.setLong(4, r.getCreatedAt());
-                accountPs.setLong(5, r.getUpdatedAt());
-                accountPs.setBoolean(6, r.isFrozen());
-                accountPs.addBatch();
+        try (Connection conn = dataSource.getConnection()) {
+            conn.setAutoCommit(false);
+            try (PreparedStatement accountPs = conn.prepareStatement(dialect.upsertSql());
+                 PreparedStatement balancePs = conn.prepareStatement(dialect.balanceUpsertSql())) {
+                for (AccountRecord r : records) {
+                    accountPs.setString(1, r.getId().toString());
+                    accountPs.setString(2, r.getLastKnownName());
+                    accountPs.setBigDecimal(3, r.getBalance());
+                    accountPs.setLong(4, r.getCreatedAt());
+                    accountPs.setLong(5, r.getUpdatedAt());
+                    accountPs.setBoolean(6, r.isFrozen());
+                    accountPs.addBatch();
 
-                for (Map.Entry<String, BigDecimal> balanceEntry : r.getBalancesSnapshot().entrySet()) {
-                    balancePs.setString(1, r.getId().toString());
-                    balancePs.setString(2, balanceEntry.getKey());
-                    balancePs.setBigDecimal(3, balanceEntry.getValue());
-                    balancePs.setLong(4, r.getUpdatedAt());
-                    balancePs.addBatch();
+                    for (Map.Entry<String, BigDecimal> balanceEntry : r.getBalancesSnapshot().entrySet()) {
+                        balancePs.setString(1, r.getId().toString());
+                        balancePs.setString(2, balanceEntry.getKey());
+                        balancePs.setBigDecimal(3, balanceEntry.getValue());
+                        balancePs.setLong(4, r.getUpdatedAt());
+                        balancePs.addBatch();
+                    }
                 }
+                accountPs.executeBatch();
+                balancePs.executeBatch();
+                conn.commit();
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(true);
             }
-            accountPs.executeBatch();
-            balancePs.executeBatch();
-            connection.commit();
-        } catch (SQLException e) {
-            connection.rollback();
-            throw e;
-        } finally {
-            connection.setAutoCommit(true);
         }
     }
 
     @Override
-    public synchronized void delete(UUID accountId) throws SQLException {
-        connection.setAutoCommit(false);
-        try (PreparedStatement deleteTransactions = connection.prepareStatement(
-                    "DELETE FROM transactions WHERE target_id=?");
-             PreparedStatement deleteBalances = connection.prepareStatement(
-                "DELETE FROM account_balances WHERE account_id=?");
-             PreparedStatement deleteAccount = connection.prepareStatement(
-                    "DELETE FROM accounts WHERE id=?")) {
-            deleteTransactions.setString(1, accountId.toString());
-            deleteTransactions.executeUpdate();
+    public void delete(UUID accountId) throws SQLException {
+        try (Connection conn = dataSource.getConnection()) {
+            conn.setAutoCommit(false);
+            try (PreparedStatement deleteTransactions = conn.prepareStatement(
+                         "DELETE FROM transactions WHERE target_id=?");
+                 PreparedStatement deleteBalances = conn.prepareStatement(
+                     "DELETE FROM account_balances WHERE account_id=?");
+                 PreparedStatement deleteAccount = conn.prepareStatement(
+                         "DELETE FROM accounts WHERE id=?")) {
+                deleteTransactions.setString(1, accountId.toString());
+                deleteTransactions.executeUpdate();
 
-            deleteBalances.setString(1, accountId.toString());
-            deleteBalances.executeUpdate();
+                deleteBalances.setString(1, accountId.toString());
+                deleteBalances.executeUpdate();
 
-            deleteAccount.setString(1, accountId.toString());
-            deleteAccount.executeUpdate();
+                deleteAccount.setString(1, accountId.toString());
+                deleteAccount.executeUpdate();
 
-            connection.commit();
-        } catch (SQLException e) {
-            connection.rollback();
-            throw e;
-        } finally {
-            connection.setAutoCommit(true);
+                conn.commit();
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(true);
+            }
         }
     }
 
     @Override
-    public synchronized void close() throws SQLException {
-        if (connection != null && !connection.isClosed()) {
-            connection.close();
-        }
+    public void close() throws SQLException {
+        dataSource.close();
     }
 
-    // ── TransactionRepository ────────────────────────────────────────────────
+    // ── TransactionRepository ─────────────────────────────────────────────────
 
     @Override
-    public synchronized void insertTransaction(TransactionEntry entry) throws SQLException {
-        try (PreparedStatement ps = connection.prepareStatement(
-                                "INSERT INTO transactions(type,counterpart_id,target_id,amount,balance_before,balance_after,ts,source,note,currency_id) "
-                            + "VALUES(?,?,?,?,?,?,?,?,?,?)")) {
+    public void insertTransaction(TransactionEntry entry) throws SQLException {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "INSERT INTO transactions(type,counterpart_id,target_id,amount,balance_before,balance_after,ts,source,note,currency_id) "
+                   + "VALUES(?,?,?,?,?,?,?,?,?,?)")) {
             ps.setString(1, entry.getType().name());
             if (entry.getCounterpartId() != null) {
                 ps.setString(2, entry.getCounterpartId().toString());
@@ -249,13 +286,13 @@ public class JdbcAccountRepository implements AccountRepository {
         }
     }
 
-    private void backfillDefaultBalances() throws SQLException {
-        try (PreparedStatement selectAccounts = connection.prepareStatement(
-                    "SELECT id,balance,updated_at FROM accounts");
-             PreparedStatement hasAnyBalance = connection.prepareStatement(
-                    "SELECT 1 FROM account_balances WHERE account_id=?");
-             PreparedStatement insertBalance = connection.prepareStatement(
-                    "INSERT INTO account_balances(account_id,currency_id,balance,updated_at) VALUES(?,?,?,?)")) {
+    private void backfillDefaultBalances(Connection conn) throws SQLException {
+        try (PreparedStatement selectAccounts = conn.prepareStatement(
+                     "SELECT id,balance,updated_at FROM accounts");
+             PreparedStatement hasAnyBalance = conn.prepareStatement(
+                     "SELECT 1 FROM account_balances WHERE account_id=?");
+             PreparedStatement insertBalance = conn.prepareStatement(
+                     "INSERT INTO account_balances(account_id,currency_id,balance,updated_at) VALUES(?,?,?,?)")) {
             try (ResultSet rs = selectAccounts.executeQuery()) {
                 while (rs.next()) {
                     String accountId = rs.getString("id");
@@ -277,8 +314,8 @@ public class JdbcAccountRepository implements AccountRepository {
         }
     }
 
-    private void backfillTransactionCurrencies() throws SQLException {
-        try (PreparedStatement ps = connection.prepareStatement(
+    private void backfillTransactionCurrencies(Connection conn) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
                 "UPDATE transactions SET currency_id=? WHERE currency_id IS NULL OR TRIM(currency_id) = ''")) {
             ps.setString(1, defaultCurrencyId);
             ps.executeUpdate();
@@ -286,41 +323,43 @@ public class JdbcAccountRepository implements AccountRepository {
     }
 
     @Override
-    public synchronized List<TransactionEntry> getTransactions(UUID targetId, int limit, int offset)
+    public List<TransactionEntry> getTransactions(UUID targetId, int limit, int offset)
             throws SQLException {
         return getTransactions(targetId, limit, offset, null, 0L, Long.MAX_VALUE, null);
     }
 
     @Override
-    public synchronized List<TransactionEntry> getTransactions(UUID targetId, int limit, int offset,
+    public List<TransactionEntry> getTransactions(UUID targetId, int limit, int offset,
             @Nullable String currencyId) throws SQLException {
         return getTransactions(targetId, limit, offset, null, 0L, Long.MAX_VALUE, currencyId);
     }
 
     @Override
-    public synchronized int countTransactions(UUID targetId) throws SQLException {
+    public int countTransactions(UUID targetId) throws SQLException {
         return countTransactions(targetId, null, 0L, Long.MAX_VALUE, null);
     }
 
     @Override
-    public synchronized int countTransactions(UUID targetId, @Nullable String currencyId) throws SQLException {
+    public int countTransactions(UUID targetId, @Nullable String currencyId) throws SQLException {
         return countTransactions(targetId, null, 0L, Long.MAX_VALUE, currencyId);
     }
 
     @Override
-    public synchronized List<TransactionEntry> getTransactions(UUID targetId, int limit, int offset,
+    public List<TransactionEntry> getTransactions(UUID targetId, int limit, int offset,
             @Nullable TransactionType type, long fromMs, long toMs) throws SQLException {
         return getTransactions(targetId, limit, offset, type, fromMs, toMs, null);
     }
 
     @Override
-    public synchronized List<TransactionEntry> getTransactions(UUID targetId, int limit, int offset,
+    public List<TransactionEntry> getTransactions(UUID targetId, int limit, int offset,
             @Nullable TransactionType type, long fromMs, long toMs, @Nullable String currencyId) throws SQLException {
-        String sql = buildFilteredSql("SELECT type,counterpart_id,target_id,amount,balance_before,balance_after,ts,source,note,currency_id "
+        String sql = buildFilteredSql(
+                "SELECT type,counterpart_id,target_id,amount,balance_before,balance_after,ts,source,note,currency_id "
                 + "FROM transactions", targetId, type, fromMs, toMs, currencyId)
                 + " ORDER BY ts DESC LIMIT ? OFFSET ?";
         List<TransactionEntry> result = new ArrayList<>();
-        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
             int idx = bindFilterParams(ps, targetId, type, fromMs, toMs, currencyId, 1);
             ps.setInt(idx++, limit);
             ps.setInt(idx, offset);
@@ -334,16 +373,18 @@ public class JdbcAccountRepository implements AccountRepository {
     }
 
     @Override
-    public synchronized int countTransactions(UUID targetId, @Nullable TransactionType type,
+    public int countTransactions(UUID targetId, @Nullable TransactionType type,
             long fromMs, long toMs) throws SQLException {
         return countTransactions(targetId, type, fromMs, toMs, null);
     }
 
     @Override
-    public synchronized int countTransactions(UUID targetId, @Nullable TransactionType type,
+    public int countTransactions(UUID targetId, @Nullable TransactionType type,
             long fromMs, long toMs, @Nullable String currencyId) throws SQLException {
-        String sql = buildFilteredSql("SELECT COUNT(*) FROM transactions", targetId, type, fromMs, toMs, currencyId);
-        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+        String sql = buildFilteredSql("SELECT COUNT(*) FROM transactions",
+                targetId, type, fromMs, toMs, currencyId);
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
             bindFilterParams(ps, targetId, type, fromMs, toMs, currencyId, 1);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? rs.getInt(1) : 0;
@@ -395,9 +436,10 @@ public class JdbcAccountRepository implements AccountRepository {
     }
 
     @Override
-    public synchronized int pruneTransactions(long cutoffMs) throws SQLException {
-        try (PreparedStatement ps = connection.prepareStatement(
-                "DELETE FROM transactions WHERE ts < ?")) {
+    public int pruneTransactions(long cutoffMs) throws SQLException {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "DELETE FROM transactions WHERE ts < ?")) {
             ps.setLong(1, cutoffMs);
             return ps.executeUpdate();
         }
@@ -415,3 +457,4 @@ public class JdbcAccountRepository implements AccountRepository {
         return value.replace("'", "''");
     }
 }
+

@@ -8,6 +8,8 @@ import dev.alexisbinh.openeco.economy.OpenEcoLegacyEconomyProvider;
 import dev.alexisbinh.openeco.listener.PlayerConnectionListener;
 import dev.alexisbinh.openeco.placeholder.OpenEcoPlaceholderExpansion;
 import dev.alexisbinh.openeco.service.AccountService;
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
 import dev.alexisbinh.openeco.storage.AccountRepository;
 import dev.alexisbinh.openeco.storage.DatabaseDialect;
 import dev.alexisbinh.openeco.storage.JdbcAccountRepository;
@@ -37,10 +39,6 @@ public class OpenEcoPlugin extends JavaPlugin {
         // ── Storage ──────────────────────────────────────────────────────────
         String dialectStr = getConfig().getString("storage.type", "sqlite");
         DatabaseDialect dialect = DatabaseDialect.fromConfig(dialectStr);
-        String filename = switch (dialect) {
-            case H2 -> getConfig().getString("storage.h2.file", "economy");
-            default -> getConfig().getString("storage.sqlite.file", "economy.db");
-        };
 
         File dataDir = getDataFolder();
         if (!dataDir.exists() && !dataDir.mkdirs()) {
@@ -50,11 +48,22 @@ public class OpenEcoPlugin extends JavaPlugin {
         }
 
         try {
-            repository = new JdbcAccountRepository(
-                    dialect,
-                    dataDir.getAbsolutePath(),
-                    filename,
-                    resolveDefaultCurrencyId());
+            if (dialect.isLocal()) {
+                String filename = switch (dialect) {
+                    case H2 -> getConfig().getString("storage.h2.file", "economy");
+                    default -> getConfig().getString("storage.sqlite.file", "economy.db");
+                };
+                repository = new JdbcAccountRepository(
+                        dialect,
+                        dataDir.getAbsolutePath(),
+                        filename,
+                        resolveDefaultCurrencyId());
+            } else {
+                repository = new JdbcAccountRepository(
+                        buildRemoteDataSource(dialect),
+                        dialect,
+                        resolveDefaultCurrencyId());
+            }
         } catch (SQLException e) {
             getLogger().severe("Failed to open database: " + e.getMessage());
             getServer().getPluginManager().disablePlugin(this);
@@ -139,6 +148,34 @@ public class OpenEcoPlugin extends JavaPlugin {
         }
         restartAutoSaveTask();
         restartPruneTask();
+    }
+
+    private HikariDataSource buildRemoteDataSource(DatabaseDialect dialect) {
+        String section = dialect.name().toLowerCase(java.util.Locale.ROOT);
+        String host = getConfig().getString("storage." + section + ".host", "localhost");
+        int defaultPort = (dialect == DatabaseDialect.POSTGRESQL) ? 5432 : 3306;
+        int port = getConfig().getInt("storage." + section + ".port", defaultPort);
+        String database = getConfig().getString("storage." + section + ".database", "openeco");
+        String username = getConfig().getString("storage." + section + ".username", "root");
+        String password = getConfig().getString("storage." + section + ".password", "");
+        int poolSize = getConfig().getInt("storage." + section + ".pool-size", 10);
+
+        HikariConfig cfg = new HikariConfig();
+        cfg.setJdbcUrl(switch (dialect) {
+            case MYSQL    -> "jdbc:mysql://" + host + ":" + port + "/" + database
+                           + "?useSSL=false&serverTimezone=UTC&characterEncoding=utf8&allowReconnect=true";
+            case MARIADB  -> "jdbc:mariadb://" + host + ":" + port + "/" + database
+                           + "?characterEncoding=utf8";
+            case POSTGRESQL -> "jdbc:postgresql://" + host + ":" + port + "/" + database;
+            default -> throw new IllegalStateException("Unexpected remote dialect: " + dialect);
+        });
+        cfg.setUsername(username);
+        cfg.setPassword(password);
+        cfg.setMaximumPoolSize(poolSize);
+        cfg.setMinimumIdle(Math.min(2, poolSize));
+        cfg.setConnectionTimeout(10_000);
+        cfg.setPoolName("OpenEco-" + dialect.name());
+        return new HikariDataSource(cfg);
     }
 
     private String resolveDefaultCurrencyId() {

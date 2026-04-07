@@ -41,6 +41,12 @@ dependencies {
     compileOnly("org.xerial:sqlite-jdbc:3.51.3.0")
     compileOnly("com.h2database:h2:2.4.240")
     implementation("org.bstats:bstats-bukkit:3.2.1")
+    implementation("com.zaxxer:HikariCP:7.0.2")
+    implementation("com.mysql:mysql-connector-j:9.6.0") {
+        exclude(group = "com.google.protobuf") // only needed for X Protocol (mysqlx://), not standard JDBC
+    }
+    implementation("org.mariadb.jdbc:mariadb-java-client:3.5.8")
+    implementation("org.postgresql:postgresql:42.7.10")
 
     testImplementation(platform("org.junit:junit-bom:5.12.2"))
     testImplementation("org.junit.jupiter:junit-jupiter-api")
@@ -69,6 +75,7 @@ tasks.compileJava {
 tasks.shadowJar {
     archiveClassifier.set("")
     relocate("org.bstats", "${project.group}.libs.bstats")
+    relocate("com.zaxxer.hikari", "${project.group}.libs.hikari")
 }
 
 tasks.build {
