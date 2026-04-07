@@ -54,7 +54,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4.6.2
         with:
-          name: simpleeco-jar
+          name: openeco-jar
           path: build/libs/*.jar
           if-no-files-found: error
 
@@ -62,7 +62,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: simpleeco-test-reports
+          name: openeco-test-reports
           path: |
             build/reports/tests/test/**
             build/test-results/test/**

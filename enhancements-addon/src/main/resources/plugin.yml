@@ -1,27 +1,27 @@
-name: SimpleEcoEnhancements
+name: OpenEcoEnhancements
 version: "${version}"
-main: dev.alexisbinh.simpleeco.enhancements.SimpleEcoEnhancementsPlugin
-description: "Addon for SimpleEco: interest, pay limits, permission-based balance caps, and currency exchange"
+main: dev.alexisbinh.openeco.enhancements.OpenEcoEnhancementsPlugin
+description: "Addon for OpenEco: interest, pay limits, permission-based balance caps, and currency exchange"
 api-version: '1.21'
 authors:
   - alexisbinh
 
 depend:
-  - SimpleEco
+  - OpenEco
 
 commands:
   exchange:
     description: Exchange one currency for another at a configured rate.
     usage: /exchange <amount> <from> <to>
-    permission: simpleeco.enhancements.exchange
+    permission: openeco.enhancements.exchange
 
 permissions:
-  simpleeco.enhancements.bypass.paylimit:
-    description: Bypass the pay limit enforced by SimpleEcoEnhancements
+  openeco.enhancements.bypass.paylimit:
+    description: Bypass the pay limit enforced by OpenEcoEnhancements
     default: op
-  simpleeco.enhancements.bypass.permcap:
-    description: Bypass the permission balance cap enforced by SimpleEcoEnhancements
+  openeco.enhancements.bypass.permcap:
+    description: Bypass the permission balance cap enforced by OpenEcoEnhancements
     default: op
-  simpleeco.enhancements.exchange:
+  openeco.enhancements.exchange:
     description: Use the /exchange command to swap currencies
     default: true

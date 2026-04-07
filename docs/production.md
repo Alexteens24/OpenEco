@@ -1,6 +1,6 @@
 # Production Guide
 
-Use SimpleEco when you want a local economy for one Paper or Folia server.
+Use OpenEco when you want a local economy for one Paper or Folia server.
 
 ## Good Fit
 
@@ -22,9 +22,9 @@ Use SimpleEco when you want a local economy for one Paper or Folia server.
   Paper 1.20.5 is confirmed to boot this plugin.
   Folia 1.21+ is the current safe baseline for the scheduler APIs used here.
 3. Install VaultUnlocked. Paper exposes it as plugin `Vault`.
-4. Start once so `plugins/SimpleEco/config.yml` is created.
+4. Start once so `plugins/OpenEco/config.yml` is created.
 5. Review storage, autosave, pay, history retention, and messages.
-6. Back up `plugins/SimpleEco/`.
+6. Back up `plugins/OpenEco/`.
 7. Test one restart, one `/eco reload`, one `/pay`, and one Vault plugin that depends on an economy provider.
 
 ## Storage Choice
@@ -53,7 +53,7 @@ Changing `storage.type` or changing the configured database file name does not m
 Safe process:
 
 1. Stop the server.
-2. Back up `plugins/SimpleEco/`.
+2. Back up `plugins/OpenEco/`.
 3. Move or copy the old database yourself.
 4. Change config.
 5. Start the server and verify balances and history before reopening.
@@ -89,7 +89,7 @@ Notes:
 Best method:
 
 1. Stop the server.
-2. Copy the full `plugins/SimpleEco/` directory.
+2. Copy the full `plugins/OpenEco/` directory.
 
 If you back up SQLite while the server is running, copy all of these together:
 

@@ -40,7 +40,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: SimpleEco ${{ github.ref_name }}
+          name: OpenEco ${{ github.ref_name }}
           generate_release_notes: true
-          files: build/libs/SimpleEco-*.jar
+          files: build/libs/OpenEco-*.jar
           fail_on_unmatched_files: true

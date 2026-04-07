@@ -1,14 +1,14 @@
-# SimpleEco Addon API
+# OpenEco Addon API
 
-This document is for plugin developers integrating with SimpleEco directly.
+This document is for plugin developers integrating with OpenEco directly.
 
-Server owners can ignore this file unless another plugin needs the SimpleEco service.
+Server owners can ignore this file unless another plugin needs the OpenEco service.
 
 If you need the internal architecture, lifecycle, storage, or contributor workflow, read [Developer Guide](development.md) too.
 
 ## Scope
 
-SimpleEco exposes a plugin-native API for same-server integrations.
+OpenEco exposes a plugin-native API for same-server integrations.
 
 What this API is good for:
 
@@ -30,22 +30,22 @@ Currency-aware overloads target the named currency directly.
 
 ## Getting The Service
 
-Add SimpleEco as a dependency in `plugin.yml`:
+Add OpenEco as a dependency in `plugin.yml`:
 
 ```yaml
-depend: [SimpleEco]
+depend: [OpenEco]
 ```
 
 Resolve the service through Bukkit:
 
 ```java
-RegisteredServiceProvider<SimpleEcoApi> registration = Bukkit.getServicesManager()
-        .getRegistration(SimpleEcoApi.class);
+RegisteredServiceProvider<OpenEcoApi> registration = Bukkit.getServicesManager()
+        .getRegistration(OpenEcoApi.class);
 if (registration == null) {
-    throw new IllegalStateException("SimpleEco API is not available");
+    throw new IllegalStateException("OpenEco API is not available");
 }
 
-SimpleEcoApi api = registration.getProvider();
+OpenEcoApi api = registration.getProvider();
 ```
 
 Resolve it during plugin startup and fail fast if it is missing.
@@ -79,7 +79,7 @@ Invalid arguments raise standard Java exceptions such as `IllegalArgumentExcepti
 
 ## Result Model
 
-SimpleEco uses result objects for normal business-rule failures.
+OpenEco uses result objects for normal business-rule failures.
 
 Examples:
 
@@ -89,7 +89,7 @@ Examples:
 - transfer cooldown
 - plugin-cancelled event
 
-`SimpleEcoApiException` is reserved for API-level failures such as history read failures.
+`OpenEcoApiException` is reserved for API-level failures such as history read failures.
 
 ## Accounts
 
@@ -479,7 +479,7 @@ Rules:
 - amount must be positive
 - kind must not be `null`
 
-If the account does not exist, the API throws `SimpleEcoApiException`.
+If the account does not exist, the API throws `OpenEcoApiException`.
 
 ### TransactionMetadata
 
@@ -504,7 +504,7 @@ api.logCustomTransaction(
     new TransactionMetadata("QuestAddon", "Daily contract payout"));
 ```
 
-When metadata is present, SimpleEco can render that history line as a custom entry instead of the built-in admin wording.
+When metadata is present, OpenEco can render that history line as a custom entry instead of the built-in admin wording.
 
 ## Leaderboard And Name Map
 
@@ -581,7 +581,7 @@ You should expect three categories of failure:
 2. Normal business-rule failures.
    These are returned through result/status objects.
 3. API-level failures.
-   These raise `SimpleEcoApiException`.
+   These raise `OpenEcoApiException`.
 
 Examples of API-level failures:
 
@@ -591,7 +591,7 @@ Examples of API-level failures:
 
 ## Bukkit Events
 
-SimpleEco also emits Bukkit events for integrations that prefer event listeners.
+OpenEco also emits Bukkit events for integrations that prefer event listeners.
 
 Available events:
 
@@ -641,15 +641,15 @@ public void onPayCompleted(PayCompletedEvent event) {
 ```java
 public final class ShopBridge extends JavaPlugin {
 
-    private SimpleEcoApi api;
+    private OpenEcoApi api;
 
     @Override
     public void onEnable() {
-        RegisteredServiceProvider<SimpleEcoApi> registration = getServer()
+        RegisteredServiceProvider<OpenEcoApi> registration = getServer()
                 .getServicesManager()
-                .getRegistration(SimpleEcoApi.class);
+                .getRegistration(OpenEcoApi.class);
         if (registration == null) {
-            throw new IllegalStateException("SimpleEco API is not available");
+            throw new IllegalStateException("OpenEco API is not available");
         }
         api = registration.getProvider();
     }

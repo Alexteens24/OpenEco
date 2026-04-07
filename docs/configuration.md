@@ -1,6 +1,6 @@
 # Configuration
 
-Config file: `plugins/SimpleEco/config.yml`  
+Config file: `plugins/OpenEco/config.yml`  
 Reload command: `/eco reload`
 
 Most settings reload safely. Storage backend and storage file changes do not. Treat those as stop-the-server maintenance.
@@ -9,9 +9,9 @@ Most settings reload safely. Storage backend and storage file changes do not. Tr
 
 ```yaml
 currencies:
-  default: "simpleeco"
+  default: "openeco"
   definitions:
-    simpleeco:
+    openeco:
       name-singular: "Dollar"
       name-plural: "Dollars"
       decimal-digits: 2
@@ -48,7 +48,7 @@ storage:
 
 Notes:
 
-- Data is stored under `plugins/SimpleEco/`.
+- Data is stored under `plugins/OpenEco/`.
 - `sqlite` is the default.
 - Changing backend or file name does not move old data.
 

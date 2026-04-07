@@ -1,6 +1,6 @@
-name: SimpleEco
+name: OpenEco
 version: "${version}"
-main: dev.alexisbinh.simpleeco.SimpleEcoPlugin
+main: dev.alexisbinh.openeco.OpenEcoPlugin
 description: "Just a simple economy plugin"
 api-version: '1.20'
 folia-supported: true
@@ -42,63 +42,63 @@ commands:
     aliases: [txhistory, ecohistory]
 
 permissions:
-  simpleeco.admin:
+  openeco.admin:
     description: Wildcard for all admin economy permissions
     default: op
     children:
-      simpleeco.command.eco.give: true
-      simpleeco.command.eco.take: true
-      simpleeco.command.eco.set: true
-      simpleeco.command.eco.reset: true
-      simpleeco.command.eco.delete: true
-      simpleeco.command.eco.freeze: true
-      simpleeco.command.eco.unfreeze: true
-      simpleeco.command.eco.rename: true
-      simpleeco.command.eco.reload: true
-      simpleeco.command.balance.others: true
-      simpleeco.command.history.others: true
-  simpleeco.command.balance:
+      openeco.command.eco.give: true
+      openeco.command.eco.take: true
+      openeco.command.eco.set: true
+      openeco.command.eco.reset: true
+      openeco.command.eco.delete: true
+      openeco.command.eco.freeze: true
+      openeco.command.eco.unfreeze: true
+      openeco.command.eco.rename: true
+      openeco.command.eco.reload: true
+      openeco.command.balance.others: true
+      openeco.command.history.others: true
+  openeco.command.balance:
     description: Check own balance
     default: true
-  simpleeco.command.balance.others:
+  openeco.command.balance.others:
     description: Check other players' balance
     default: op
-  simpleeco.command.baltop:
+  openeco.command.baltop:
     description: View the balance top list
     default: true
-  simpleeco.command.pay:
+  openeco.command.pay:
     description: Pay another player
     default: true
-  simpleeco.command.eco.give:
+  openeco.command.eco.give:
     description: Give money to a player
     default: op
-  simpleeco.command.eco.take:
+  openeco.command.eco.take:
     description: Take money from a player
     default: op
-  simpleeco.command.eco.set:
+  openeco.command.eco.set:
     description: Set a player's balance
     default: op
-  simpleeco.command.eco.reload:
-    description: Reload SimpleEco configuration
+  openeco.command.eco.reload:
+    description: Reload OpenEco configuration
     default: op
-  simpleeco.command.eco.reset:
+  openeco.command.eco.reset:
     description: Reset a player's balance to starting balance
     default: op
-  simpleeco.command.eco.delete:
+  openeco.command.eco.delete:
     description: Delete a player's current economy account and own history
     default: op
-  simpleeco.command.eco.freeze:
+  openeco.command.eco.freeze:
     description: Freeze a player's economy account
     default: op
-  simpleeco.command.eco.unfreeze:
+  openeco.command.eco.unfreeze:
     description: Unfreeze a player's economy account
     default: op
-  simpleeco.command.eco.rename:
+  openeco.command.eco.rename:
     description: Rename a player's economy account display name
     default: op
-  simpleeco.command.history:
+  openeco.command.history:
     description: View own transaction history
     default: true
-  simpleeco.command.history.others:
+  openeco.command.history.others:
     description: View other players' transaction history
     default: op

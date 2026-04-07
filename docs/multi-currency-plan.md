@@ -4,7 +4,7 @@
 
 
 
-Add true per-player multi-currency balances to SimpleEco without breaking the current default-currency behavior for existing servers, legacy Vault v1 integrations, and addons that only know about one balance.
+Add true per-player multi-currency balances to OpenEco without breaking the current default-currency behavior for existing servers, legacy Vault v1 integrations, and addons that only know about one balance.
 
 ## Current State In Code
 
@@ -13,10 +13,10 @@ The current implementation is single-currency from top to bottom.
 - `AccountRecord` stores one `BigDecimal balance` and uses that field for all in-memory reads, writes, snapshots, and dirty tracking.
 - `JdbcAccountRepository` persists one `balance` column on `accounts` and stores history rows without `currency_id`.
 - `AccountService`, `EconomyOperations`, commands, placeholders, and leaderboard logic all read and format one balance.
-- `SimpleEcoApi` exposes one balance per account and one `CurrencyInfo` as the only currency model.
+- `OpenEcoApi` exposes one balance per account and one `CurrencyInfo` as the only currency model.
 - `BalanceChangeEvent`, `BalanceChangedEvent`, `PayEvent`, and `PayCompletedEvent` do not identify which currency changed.
-- `SimpleEcoEconomyProvider` implements VaultUnlocked v2 but explicitly reports `hasMultiCurrencySupport() == false` and ignores the currency parameter in balance and mutation calls.
-- `SimpleEcoLegacyEconomyProvider` can only ever represent one default currency because Vault v1 itself is single-currency.
+- `OpenEcoEconomyProvider` implements VaultUnlocked v2 but explicitly reports `hasMultiCurrencySupport() == false` and ignores the currency parameter in balance and mutation calls.
+- `OpenEcoLegacyEconomyProvider` can only ever represent one default currency because Vault v1 itself is single-currency.
 - The enhancements addon and its tests assume `api.getBalance(id)`, `api.deposit(id, amount)`, and `api.getRules().currency()` refer to the whole economy.
 
 This means multi-currency is feasible, but it is a public-contract change, not just a storage tweak.
@@ -28,11 +28,11 @@ These should be treated as explicit decisions before implementation starts.
 1. Keep legacy Vault v1 default-currency only.
    Reason: Vault v1 does not model multiple currencies.
 
-2. Keep the existing `SimpleEcoApi` as a default-currency compatibility layer.
+2. Keep the existing `OpenEcoApi` as a default-currency compatibility layer.
    Reason: current addons and tests already depend on it.
 
 3. Add a new multi-currency addon API instead of breaking the old one in place.
-   Recommended name: `SimpleEcoMultiCurrencyApi`.
+   Recommended name: `OpenEcoMultiCurrencyApi`.
 
 4. Disallow cross-currency conversion in the first release.
    Only transfers within the same currency should be supported.
@@ -59,9 +59,9 @@ Suggested shape:
 
 ```yaml
 currencies:
-  default: simpleeco
+  default: openeco
   definitions:
-    simpleeco:
+    openeco:
       name-singular: Dollar
       name-plural: Dollars
       decimal-digits: 2
@@ -138,11 +138,11 @@ Why not add a `currencies` DB table in v1:
 
 ### Public API Model
 
-Keep `SimpleEcoApi` working exactly as the default-currency facade.
+Keep `OpenEcoApi` working exactly as the default-currency facade.
 
 Add a new interface, for example:
 
-- `SimpleEcoMultiCurrencyApi`
+- `OpenEcoMultiCurrencyApi`
   - `Set<String> getCurrencies()`
   - `Optional<CurrencyInfo> getCurrencyInfo(String currencyId)`
   - `BigDecimal getBalance(UUID accountId, String currencyId)`
@@ -185,9 +185,9 @@ Goal: lock the compatibility strategy before touching storage.
 Files likely involved:
 
 - `src/main/resources/config.yml`
-- `src/main/java/dev/alexisbinh/simpleeco/service/EconomyConfigSnapshot.java`
-- new currency definition classes under `src/main/java/dev/alexisbinh/simpleeco/api/` or `service/`
-- `src/test/java/dev/alexisbinh/simpleeco/service/EconomyConfigSnapshotTest.java`
+- `src/main/java/dev/alexisbinh/openeco/service/EconomyConfigSnapshot.java`
+- new currency definition classes under `src/main/java/dev/alexisbinh/openeco/api/` or `service/`
+- `src/test/java/dev/alexisbinh/openeco/service/EconomyConfigSnapshotTest.java`
 
 Tasks:
 
@@ -208,10 +208,10 @@ Goal: add persistence support without changing public behavior yet.
 
 Files likely involved:
 
-- `src/main/java/dev/alexisbinh/simpleeco/storage/AccountRepository.java`
-- `src/main/java/dev/alexisbinh/simpleeco/storage/TransactionRepository.java`
-- `src/main/java/dev/alexisbinh/simpleeco/storage/JdbcAccountRepository.java`
-- `src/test/java/dev/alexisbinh/simpleeco/storage/JdbcAccountRepositoryIntegrationTest.java`
+- `src/main/java/dev/alexisbinh/openeco/storage/AccountRepository.java`
+- `src/main/java/dev/alexisbinh/openeco/storage/TransactionRepository.java`
+- `src/main/java/dev/alexisbinh/openeco/storage/JdbcAccountRepository.java`
+- `src/test/java/dev/alexisbinh/openeco/storage/JdbcAccountRepositoryIntegrationTest.java`
 
 Tasks:
 
@@ -236,14 +236,14 @@ Goal: make the service layer currency-aware while preserving current default-cur
 
 Files likely involved:
 
-- `src/main/java/dev/alexisbinh/simpleeco/model/AccountRecord.java`
-- `src/main/java/dev/alexisbinh/simpleeco/service/AccountRegistry.java`
-- `src/main/java/dev/alexisbinh/simpleeco/service/AccountService.java`
-- `src/main/java/dev/alexisbinh/simpleeco/service/EconomyOperations.java`
-- `src/main/java/dev/alexisbinh/simpleeco/service/TransactionHistoryService.java`
-- `src/test/java/dev/alexisbinh/simpleeco/service/AccountRegistryTest.java`
-- `src/test/java/dev/alexisbinh/simpleeco/service/EconomyOperationsTest.java`
-- `src/test/java/dev/alexisbinh/simpleeco/service/AccountServicePersistenceIntegrationTest.java`
+- `src/main/java/dev/alexisbinh/openeco/model/AccountRecord.java`
+- `src/main/java/dev/alexisbinh/openeco/service/AccountRegistry.java`
+- `src/main/java/dev/alexisbinh/openeco/service/AccountService.java`
+- `src/main/java/dev/alexisbinh/openeco/service/EconomyOperations.java`
+- `src/main/java/dev/alexisbinh/openeco/service/TransactionHistoryService.java`
+- `src/test/java/dev/alexisbinh/openeco/service/AccountRegistryTest.java`
+- `src/test/java/dev/alexisbinh/openeco/service/EconomyOperationsTest.java`
+- `src/test/java/dev/alexisbinh/openeco/service/AccountServicePersistenceIntegrationTest.java`
 
 Tasks:
 
@@ -266,11 +266,11 @@ Goal: remove the remaining single-balance assumptions from user-facing read mode
 
 Files likely involved:
 
-- `src/main/java/dev/alexisbinh/simpleeco/service/LeaderboardCache.java`
-- `src/main/java/dev/alexisbinh/simpleeco/model/TransactionEntry.java`
-- `src/main/java/dev/alexisbinh/simpleeco/command/BalTopCommand.java`
-- `src/main/java/dev/alexisbinh/simpleeco/command/HistoryCommand.java`
-- `src/main/java/dev/alexisbinh/simpleeco/placeholder/SimpleEcoPlaceholderExpansion.java`
+- `src/main/java/dev/alexisbinh/openeco/service/LeaderboardCache.java`
+- `src/main/java/dev/alexisbinh/openeco/model/TransactionEntry.java`
+- `src/main/java/dev/alexisbinh/openeco/command/BalTopCommand.java`
+- `src/main/java/dev/alexisbinh/openeco/command/HistoryCommand.java`
+- `src/main/java/dev/alexisbinh/openeco/placeholder/OpenEcoPlaceholderExpansion.java`
 - docs under `docs/placeholders.md`, `docs/configuration.md`, `docs/api.md`
 
 Tasks:
@@ -281,9 +281,9 @@ Tasks:
 3. Add optional currency selectors to `/baltop` and `/history`.
 4. Add new PlaceholderAPI patterns for currency-aware balance and top placeholders.
    Example:
-   - `%simpleeco_balance_simpleeco%`
-   - `%simpleeco_balance_formatted_gems%`
-   - `%simpleeco_top_simpleeco_1_balance%`
+   - `%openeco_balance_openeco%`
+   - `%openeco_balance_formatted_gems%`
+   - `%openeco_top_openeco_1_balance%`
 5. Keep current placeholders mapped to the default currency.
 
 Exit criteria:
@@ -298,18 +298,18 @@ Goal: expose multi-currency safely without breaking existing addons.
 
 Files likely involved:
 
-- `src/main/java/dev/alexisbinh/simpleeco/api/SimpleEcoApi.java`
-- `src/main/java/dev/alexisbinh/simpleeco/api/SimpleEcoApiImpl.java`
-- `src/main/java/dev/alexisbinh/simpleeco/api/AccountSnapshot.java`
-- `src/main/java/dev/alexisbinh/simpleeco/api/CurrencyInfo.java`
-- `src/main/java/dev/alexisbinh/simpleeco/api/EconomyRulesSnapshot.java`
-- new API files under `src/main/java/dev/alexisbinh/simpleeco/api/`
-- `src/test/java/dev/alexisbinh/simpleeco/api/SimpleEcoApiImplTest.java`
+- `src/main/java/dev/alexisbinh/openeco/api/OpenEcoApi.java`
+- `src/main/java/dev/alexisbinh/openeco/api/OpenEcoApiImpl.java`
+- `src/main/java/dev/alexisbinh/openeco/api/AccountSnapshot.java`
+- `src/main/java/dev/alexisbinh/openeco/api/CurrencyInfo.java`
+- `src/main/java/dev/alexisbinh/openeco/api/EconomyRulesSnapshot.java`
+- new API files under `src/main/java/dev/alexisbinh/openeco/api/`
+- `src/test/java/dev/alexisbinh/openeco/api/OpenEcoApiImplTest.java`
 
 Tasks:
 
-1. Keep `SimpleEcoApi` semantics bound to the default currency.
-2. Introduce `SimpleEcoMultiCurrencyApi` and register it with `ServicesManager` alongside the old API.
+1. Keep `OpenEcoApi` semantics bound to the default currency.
+2. Introduce `OpenEcoMultiCurrencyApi` and register it with `ServicesManager` alongside the old API.
 3. Add currency-aware snapshots and result types where needed.
 4. Ensure `getRules()` on the old API still returns the default currency rules.
 5. Add an explicit currency catalog accessor on the new API.
@@ -325,13 +325,13 @@ Goal: wire the new currency model into integration points without breaking serve
 
 Files likely involved:
 
-- `src/main/java/dev/alexisbinh/simpleeco/economy/SimpleEcoEconomyProvider.java`
-- `src/main/java/dev/alexisbinh/simpleeco/economy/SimpleEcoLegacyEconomyProvider.java`
-- `src/main/java/dev/alexisbinh/simpleeco/SimpleEcoPlugin.java`
-- `src/main/java/dev/alexisbinh/simpleeco/command/BalanceCommand.java`
-- `src/main/java/dev/alexisbinh/simpleeco/command/PayCommand.java`
-- `src/main/java/dev/alexisbinh/simpleeco/command/EcoCommand.java`
-- tests under `src/test/java/dev/alexisbinh/simpleeco/economy/`
+- `src/main/java/dev/alexisbinh/openeco/economy/OpenEcoEconomyProvider.java`
+- `src/main/java/dev/alexisbinh/openeco/economy/OpenEcoLegacyEconomyProvider.java`
+- `src/main/java/dev/alexisbinh/openeco/OpenEcoPlugin.java`
+- `src/main/java/dev/alexisbinh/openeco/command/BalanceCommand.java`
+- `src/main/java/dev/alexisbinh/openeco/command/PayCommand.java`
+- `src/main/java/dev/alexisbinh/openeco/command/EcoCommand.java`
+- tests under `src/test/java/dev/alexisbinh/openeco/economy/`
 
 Tasks:
 
@@ -360,10 +360,10 @@ Goal: make extension points currency-aware and update the bundled addon.
 
 Files likely involved:
 
-- `src/main/java/dev/alexisbinh/simpleeco/event/BalanceChangeEvent.java`
-- `src/main/java/dev/alexisbinh/simpleeco/event/BalanceChangedEvent.java`
-- `src/main/java/dev/alexisbinh/simpleeco/event/PayEvent.java`
-- `src/main/java/dev/alexisbinh/simpleeco/event/PayCompletedEvent.java`
+- `src/main/java/dev/alexisbinh/openeco/event/BalanceChangeEvent.java`
+- `src/main/java/dev/alexisbinh/openeco/event/BalanceChangedEvent.java`
+- `src/main/java/dev/alexisbinh/openeco/event/PayEvent.java`
+- `src/main/java/dev/alexisbinh/openeco/event/PayCompletedEvent.java`
 - `enhancements-addon/src/main/java/**`
 - `enhancements-addon/src/test/java/**`
 
@@ -433,8 +433,8 @@ Add or update tests for:
    - old history formatting still works for default currency
 
 5. API compatibility
-   - `SimpleEcoApi` keeps returning default-currency results
-   - `SimpleEcoMultiCurrencyApi` exposes non-default currencies correctly
+   - `OpenEcoApi` keeps returning default-currency results
+   - `OpenEcoMultiCurrencyApi` exposes non-default currencies correctly
 
 6. Vault compatibility
    - Vault v1 remains default-currency only

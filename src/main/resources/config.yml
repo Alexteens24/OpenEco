@@ -1,9 +1,9 @@
 currencies:
   # Preferred multi-currency config. Existing servers may keep the legacy
   # currency.* block; SimpleEco still reads it for backwards compatibility.
-  default: simpleeco
+  default: openeco
   definitions:
-    simpleeco:
+    openeco:
       name-singular: "Dollar"
       name-plural: "Dollars"
       # Number of decimal places (0-8)
@@ -15,7 +15,7 @@ currencies:
 
 # Legacy single-currency format is still accepted during the migration window.
 # currency:
-#   id: "simpleeco"
+#   id: "openeco"
 #   name-singular: "Dollar"
 #   name-plural: "Dollars"
 #   decimal-digits: 2

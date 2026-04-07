@@ -30,7 +30,7 @@ dependencies {
 }
 
 tasks.jar {
-    archiveBaseName.set("SimpleEcoEnhancements")
+    archiveBaseName.set("OpenEcoEnhancements")
 }
 
 tasks.compileJava {

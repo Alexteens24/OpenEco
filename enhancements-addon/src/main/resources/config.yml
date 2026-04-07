@@ -1,4 +1,4 @@
-# SimpleEcoEnhancements — default config
+# OpenEcoEnhancements — default config
 
 # ── Interest ─────────────────────────────────────────────────────────────────
 interest:
@@ -12,7 +12,7 @@ interest:
   # How often interest is credited, in seconds.
   # Default: 3600 (every hour).
   interval-seconds: 3600
-  # Optional currency id. Leave blank to use SimpleEco's default currency.
+  # Optional currency id. Leave blank to use OpenEco's default currency.
   currency: ""
 
   # Minimum balance required to receive interest.
@@ -51,11 +51,11 @@ perm-cap:
 
   # List of permission → cap pairs.
   # All matching permissions are considered and the highest matching cap is used.
-  # Players without any matching permission fall back to SimpleEco's per-currency max-balance.
+  # Players without any matching permission fall back to OpenEco's per-currency max-balance.
   tiers:
-    - permission: simpleeco.cap.vip
+    - permission: openeco.cap.vip
       cap: 500000
-    - permission: simpleeco.cap.mvp
+    - permission: openeco.cap.mvp
       cap: 2000000
 
 # ── Currency Exchange ─────────────────────────────────────────────────────────
@@ -71,11 +71,11 @@ exchange:
   # Each entry defines how much of the 'to' currency is given per 1 unit of 'from'.
   # Rates are NOT automatically reversible — add both directions explicitly if needed.
   rates:
-    - from: simpleeco
+    - from: openeco
       to: gems
       rate: 10.0
     # - from: gems
-    #   to: simpleeco
+    #   to: openeco
     #   rate: 0.09
 
   messages:
