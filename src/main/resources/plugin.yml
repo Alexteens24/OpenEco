@@ -19,6 +19,9 @@ depend:
 softdepend:
   - PlaceholderAPI
 
+channels:
+  - openeco:sync
+
 load-before:
   - ShopGUIPlus
 

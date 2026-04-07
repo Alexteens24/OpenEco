@@ -3,6 +3,7 @@ package dev.alexisbinh.openeco;
 import dev.alexisbinh.openeco.api.OpenEcoApi;
 import dev.alexisbinh.openeco.api.OpenEcoApiImpl;
 import dev.alexisbinh.openeco.command.*;
+import dev.alexisbinh.openeco.crossserver.CrossServerMessenger;
 import dev.alexisbinh.openeco.economy.OpenEcoEconomyProvider;
 import dev.alexisbinh.openeco.economy.OpenEcoLegacyEconomyProvider;
 import dev.alexisbinh.openeco.listener.PlayerConnectionListener;
@@ -117,7 +118,12 @@ public class OpenEcoPlugin extends JavaPlugin {
 
         // ── Listener ──────────────────────────────────────────────────────────
         getServer().getPluginManager().registerEvents(
-            new PlayerConnectionListener(service, messages, getLogger()), this);
+            new PlayerConnectionListener(service, messages, getLogger(), this), this);
+
+        // ── Cross-server plugin messaging channel ─────────────────────────────
+        if (service.isCrossServerEnabled()) {
+            new CrossServerMessenger(this, service, getLogger()).register();
+        }
 
         // ── PlaceholderAPI ────────────────────────────────────────────────────
         if (getServer().getPluginManager().getPlugin("PlaceholderAPI") != null) {

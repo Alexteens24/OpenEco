@@ -4,8 +4,12 @@ import dev.alexisbinh.openeco.Messages;
 import dev.alexisbinh.openeco.service.AccountService;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.player.AsyncPlayerPreLoginEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.UUID;
 import java.util.logging.Logger;
@@ -15,11 +19,20 @@ public class PlayerConnectionListener implements Listener {
     private final AccountService service;
     private final Messages messages;
     private final Logger log;
+    private final JavaPlugin plugin;
 
-    public PlayerConnectionListener(AccountService service, Messages messages, Logger log) {
+    public PlayerConnectionListener(AccountService service, Messages messages, Logger log, JavaPlugin plugin) {
         this.service = service;
         this.messages = messages;
         this.log = log;
+        this.plugin = plugin;
+    }
+
+    /** Cross-server: re-read account from DB before the player finishes connecting. */
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onPreLogin(AsyncPlayerPreLoginEvent event) {
+        if (!service.isCrossServerEnabled()) return;
+        service.refreshAccount(event.getUniqueId());
     }
 
     @EventHandler
@@ -84,5 +97,13 @@ public class PlayerConnectionListener implements Listener {
                 messages.send(event.getPlayer(), "account-sync-failed");
             }
         }
+    }
+
+    /** Cross-server: flush account to DB when the player disconnects (before joining another server). */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onQuit(PlayerQuitEvent event) {
+        if (!service.isCrossServerEnabled()) return;
+        UUID uuid = event.getPlayer().getUniqueId();
+        plugin.getServer().getAsyncScheduler().runNow(plugin, task -> service.flushAccount(uuid));
     }
 }

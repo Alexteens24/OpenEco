@@ -77,6 +77,21 @@ history:
   # Transactions older than this will be deleted automatically once per day.
   retention-days: -1
 
+cross-server:
+  # Enable cross-server balance synchronisation for networks running multiple backend servers
+  # behind a Velocity or BungeeCord proxy that share the same remote database
+  # (MySQL / MariaDB / PostgreSQL).
+  #
+  # When enabled:
+  #   - Each player's account is written to the database immediately on quit.
+  #   - Each player's account is re-read from the database before they finish joining.
+  #   - The openeco:sync plugin messaging channel is registered so the optional
+  #     openeco-proxy Velocity addon can trigger targeted flush/refresh requests.
+  #
+  # Requires a restart to take effect after toggling.
+  # Do NOT enable this on single-server setups — it adds unnecessary DB round-trips.
+  enabled: false
+
 messages:
   no-permission: "<red>You don't have permission to do that."
   console-player-only: "<red>Console must specify a player name."

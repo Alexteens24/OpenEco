@@ -605,6 +605,12 @@ class AccountServicePersistenceIntegrationTest {
         }
 
         @Override
+        public java.util.Optional<AccountRecord> loadAccount(UUID id) {
+            return lastUpsertedRecords.stream().filter(r -> r.getId().equals(id)).findFirst()
+                    .map(AccountRecord::snapshot);
+        }
+
+        @Override
         public synchronized void upsertBatch(Collection<AccountRecord> records) {
             lastUpsertedRecords = records.stream()
                     .map(AccountRecord::snapshot)

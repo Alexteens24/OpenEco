@@ -39,7 +39,7 @@ class PlayerConnectionListenerTest {
 
     @BeforeEach
     void setUp() {
-        listener = new PlayerConnectionListener(service, new Messages(testConfig()), Logger.getLogger("listener-test"));
+        listener = new PlayerConnectionListener(service, new Messages(testConfig()), Logger.getLogger("listener-test"), null);
         when(event.getPlayer()).thenReturn(player);
     }
 

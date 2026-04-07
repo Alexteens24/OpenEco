@@ -63,6 +63,7 @@ public class AccountService {
     private final EventDispatcher eventDispatcher;
     private final EconomyOperations economyOperations;
     private volatile EconomyConfigSnapshot config;
+    private volatile boolean crossServerEnabled;
 
     // Pay cooldown tracker
     private final ConcurrentHashMap<UUID, Long> lastPayTime = new ConcurrentHashMap<>();
@@ -97,6 +98,11 @@ public class AccountService {
         this.config = updated;
         syncConfiguredCurrencies(updated);
         leaderboardCache.setCacheTtlMs(updated.balTopCacheTtlMs());
+        this.crossServerEnabled = config.getBoolean("cross-server.enabled", false);
+    }
+
+    public boolean isCrossServerEnabled() {
+        return crossServerEnabled;
     }
 
     // ── Startup ─────────────────────────────────────────────────────────────
@@ -628,6 +634,52 @@ public class AccountService {
                     if (live != null) live.markDirty();
                 }
             }
+        }
+    }
+
+    /**
+     * Immediately flushes a single account to the database.
+     * Intended for cross-server use: call async before the player disconnects.
+     */
+    public void flushAccount(UUID id) {
+        AccountRecord live = accountRegistry.getLiveRecord(id);
+        if (live == null) return;
+        AccountRecord snap;
+        synchronized (live) {
+            if (!live.isDirty()) return;
+            snap = live.snapshot();
+            live.clearDirty();
+        }
+        try {
+            repository.upsertBatch(List.of(snap));
+        } catch (SQLException e) {
+            log.warning("Cross-server flush failed for " + id + ": " + e.getMessage());
+            live.markDirty();
+        }
+    }
+
+    /**
+     * Re-reads a single account from the database and updates the in-memory record.
+     * Intended for cross-server use: call async when a player connects from another server.
+     */
+    public void refreshAccount(UUID id) {
+        AccountRecord live = accountRegistry.getLiveRecord(id);
+        if (live == null) return;
+        try {
+            Optional<AccountRecord> fresh = repository.loadAccount(id);
+            if (fresh.isEmpty()) return;
+            AccountRecord freshRecord = fresh.get();
+            synchronized (live) {
+                if (!accountRegistry.isLive(id, live)) return;
+                for (Map.Entry<String, BigDecimal> entry : freshRecord.getBalancesSnapshot().entrySet()) {
+                    live.setBalance(entry.getKey(), entry.getValue());
+                }
+                live.setFrozen(freshRecord.isFrozen());
+                live.clearDirty();
+            }
+            invalidateBalTopCache();
+        } catch (SQLException e) {
+            log.warning("Cross-server refresh failed for " + id + ": " + e.getMessage());
         }
     }
 

@@ -11,3 +11,7 @@ if (file("stress-addon").exists()) {
 if (file("enhancements-addon").exists()) {
 	include("enhancements-addon")
 }
+
+if (file("proxy-addon").exists()) {
+	include("proxy-addon")
+}

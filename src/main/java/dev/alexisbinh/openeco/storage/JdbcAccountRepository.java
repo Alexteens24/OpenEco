@@ -15,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 public class JdbcAccountRepository implements AccountRepository {
@@ -212,8 +213,67 @@ public class JdbcAccountRepository implements AccountRepository {
     }
 
     @Override
+    public Optional<AccountRecord> loadAccount(UUID id) throws SQLException {
+        try (Connection conn = dataSource.getConnection()) {
+            PersistedAccountRow account = null;
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "SELECT name,created_at,updated_at,frozen FROM accounts WHERE id=?")) {
+                ps.setString(1, id.toString());
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        account = new PersistedAccountRow(
+                                rs.getString("name"),
+                                rs.getLong("created_at"),
+                                rs.getLong("updated_at"),
+                                rs.getBoolean("frozen"));
+                    }
+                }
+            }
+            if (account == null) return Optional.empty();
+
+            Map<String, PersistedBalanceRow> balanceRows = new LinkedHashMap<>();
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "SELECT currency_id,balance,updated_at FROM account_balances WHERE account_id=?")) {
+                ps.setString(1, id.toString());
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        String currencyId = normalizePersistedCurrencyId(rs.getString("currency_id"));
+                        PersistedBalanceRow candidate = new PersistedBalanceRow(
+                                currencyId,
+                                rs.getBigDecimal("balance"),
+                                rs.getLong("updated_at"));
+                        String lookupKey = normalizeCurrencyLookupKey(currencyId);
+                        PersistedBalanceRow existing = balanceRows.get(lookupKey);
+                        if (existing == null || candidate.updatedAt() >= existing.updatedAt()) {
+                            balanceRows.put(lookupKey, candidate);
+                        }
+                    }
+                }
+            }
+
+            Map<String, BigDecimal> balances = new LinkedHashMap<>();
+            for (PersistedBalanceRow row : balanceRows.values()) {
+                balances.put(row.currencyId(), row.balance());
+            }
+            if (balances.isEmpty()) {
+                balances.put(defaultCurrencyId, BigDecimal.ZERO);
+            }
+
+            AccountRecord record = new AccountRecord(
+                    id,
+                    account.name(),
+                    defaultCurrencyId,
+                    balances,
+                    account.createdAt(),
+                    account.updatedAt());
+            record.setFrozen(account.frozen());
+            record.clearDirty();
+            return Optional.of(record);
+        }
+    }
+
+    @Override
     public void upsertBatch(Collection<AccountRecord> records) throws SQLException {
-        if (records.isEmpty()) return;
         try (Connection conn = dataSource.getConnection()) {
             conn.setAutoCommit(false);
             try (PreparedStatement accountPs = conn.prepareStatement(dialect.upsertSql());
