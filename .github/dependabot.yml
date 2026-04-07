@@ -26,3 +26,6 @@ updates:
         group-by: "dependency-name"
     ignore:
       - dependency-name: "io.papermc.paper:paper-api"
+      - dependency-name: "com.velocitypowered:velocity-api"
+        update-types:
+          - "version-update:semver-major"
