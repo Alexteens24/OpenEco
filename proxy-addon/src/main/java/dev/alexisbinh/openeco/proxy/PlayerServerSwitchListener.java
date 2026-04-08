@@ -90,10 +90,10 @@ public class PlayerServerSwitchListener {
     @Subscribe
     public void onPluginMessage(PluginMessageEvent event) {
         if (!event.getIdentifier().equals(CHANNEL)) return;
-        if (!(event.getSource() instanceof ServerConnection)) return;
-
-        // Prevent the message from being forwarded to the player's client.
+        // Block all messages on this channel regardless of source — prevents a modded
+        // client from injecting flush/refresh commands directly to the backend.
         event.setResult(PluginMessageEvent.ForwardResult.handled());
+        if (!(event.getSource() instanceof ServerConnection)) return;
 
         String msg = new String(event.getData(), StandardCharsets.UTF_8).trim();
         if (msg.startsWith("flushed ")) {

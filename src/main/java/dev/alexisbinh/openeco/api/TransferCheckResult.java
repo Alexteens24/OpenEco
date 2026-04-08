@@ -18,6 +18,7 @@ public record TransferCheckResult(Status status, BigDecimal amount) {
         INVALID_AMOUNT,
         INSUFFICIENT_FUNDS,
         BALANCE_LIMIT,
-        SELF_TRANSFER
+        SELF_TRANSFER,
+        FROZEN
     }
 }

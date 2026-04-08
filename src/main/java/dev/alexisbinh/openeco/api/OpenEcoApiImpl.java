@@ -698,7 +698,11 @@ public final class OpenEcoApiImpl implements OpenEcoApi {
     }
 
     private static BigDecimal requireAmount(BigDecimal amount) {
-        return Objects.requireNonNull(amount, "amount");
+        Objects.requireNonNull(amount, "amount");
+        if (amount.precision() > 30 || Math.abs(amount.scale()) > 18) {
+            throw new IllegalArgumentException("amount scale or precision is out of supported range");
+        }
+        return amount;
     }
 
     private String requireKnownCurrency(String currencyId) {

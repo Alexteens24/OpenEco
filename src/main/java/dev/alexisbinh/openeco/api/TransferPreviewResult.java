@@ -25,7 +25,8 @@ public record TransferPreviewResult(
         BALANCE_LIMIT,
         TOO_LOW,
         INVALID_AMOUNT,
-        SELF_TRANSFER
+        SELF_TRANSFER,
+        FROZEN
     }
 
     public boolean isAllowed() {
