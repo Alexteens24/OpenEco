@@ -36,7 +36,6 @@ public class OpenEcoEconomyProvider implements Economy {
     // ── Format ────────────────────────────────────────────────────────────────
 
     @Override
-    @SuppressWarnings("deprecation")
     public String format(BigDecimal amount) {
         return service.format(amount);
     }
@@ -47,7 +46,6 @@ public class OpenEcoEconomyProvider implements Economy {
     }
 
     @Override
-    @SuppressWarnings("deprecation")
     public String format(BigDecimal amount, String currency) {
         return service.format(amount, currency);
     }
@@ -87,7 +85,6 @@ public class OpenEcoEconomyProvider implements Economy {
     // ── Account management ────────────────────────────────────────────────────
 
     @Override
-    @SuppressWarnings("deprecation")
     public boolean createAccount(UUID accountID, String name) {
         return service.createAccount(accountID, name);
     }
@@ -98,7 +95,6 @@ public class OpenEcoEconomyProvider implements Economy {
     }
 
     @Override
-    @SuppressWarnings("deprecation")
     public boolean createAccount(UUID accountID, String name, String worldName) {
         return service.createAccount(accountID, name);
     }
@@ -156,19 +152,16 @@ public class OpenEcoEconomyProvider implements Economy {
     // ── Balance ───────────────────────────────────────────────────────────────
 
     @Override
-    @SuppressWarnings("deprecation")
     public BigDecimal getBalance(String pluginName, UUID accountID) {
         return service.getBalance(accountID);
     }
 
     @Override
-    @SuppressWarnings("deprecation")
     public BigDecimal getBalance(String pluginName, UUID accountID, String world) {
         return service.getBalance(accountID);
     }
 
     @Override
-    @SuppressWarnings("deprecation")
     public BigDecimal getBalance(String pluginName, UUID accountID, String world, String currency) {
         return service.hasCurrency(currency) ? service.getBalance(accountID, currency) : BigDecimal.ZERO;
     }

@@ -44,7 +44,7 @@ dependencies {
     compileOnly("com.mysql:mysql-connector-j:9.6.0") {
         exclude(group = "com.google.protobuf") // only needed for X Protocol (mysqlx://), not standard JDBC
     }
-    compileOnly("org.mariadb.jdbc:mariadb-java-client:3.5.8")
+    compileOnly("org.mariadb.jdbc:mariadb-java-client:3.5.7")
     compileOnly("org.postgresql:postgresql:42.7.10")
 
     testImplementation(platform("org.junit:junit-bom:6.0.3"))
@@ -56,7 +56,7 @@ dependencies {
     testImplementation("com.zaxxer:HikariCP:7.0.2")
     testRuntimeOnly("org.bstats:bstats-bukkit:3.2.1")
     testRuntimeOnly("com.mysql:mysql-connector-j:9.6.0")
-    testRuntimeOnly("org.mariadb.jdbc:mariadb-java-client:3.5.8")
+    testRuntimeOnly("org.mariadb.jdbc:mariadb-java-client:3.5.7")
     testRuntimeOnly("org.postgresql:postgresql:42.7.10")
     testRuntimeOnly("com.h2database:h2:2.4.240")
     testRuntimeOnly("org.xerial:sqlite-jdbc:3.51.3.0")
