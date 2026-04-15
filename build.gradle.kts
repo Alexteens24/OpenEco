@@ -36,7 +36,7 @@ repositories {
 dependencies {
     compileOnly("io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT")
     compileOnly("net.cfh.vault:VaultUnlocked:2.19.0")
-    compileOnly("me.clip:placeholderapi:2.11.6")
+    compileOnly("me.clip:placeholderapi:2.12.2")
     compileOnly("org.xerial:sqlite-jdbc:3.51.3.0")
     compileOnly("com.h2database:h2:2.4.240")
     compileOnly("org.bstats:bstats-bukkit:3.2.1")
@@ -52,7 +52,7 @@ dependencies {
     testImplementation("org.mockito:mockito-junit-jupiter:5.23.0")
     testImplementation("io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT")
     testImplementation("net.cfh.vault:VaultUnlocked:2.19.0")
-    testImplementation("me.clip:placeholderapi:2.11.6")
+    testImplementation("me.clip:placeholderapi:2.12.2")
     testImplementation("com.zaxxer:HikariCP:7.0.2")
     testRuntimeOnly("org.bstats:bstats-bukkit:3.2.1")
     testRuntimeOnly("com.mysql:mysql-connector-j:9.6.0")
