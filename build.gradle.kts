@@ -47,7 +47,7 @@ dependencies {
     compileOnly("org.mariadb.jdbc:mariadb-java-client:3.5.8")
     compileOnly("org.postgresql:postgresql:42.7.10")
 
-    testImplementation(platform("org.junit:junit-bom:5.12.2"))
+    testImplementation(platform("org.junit:junit-bom:6.0.3"))
     testImplementation("org.junit.jupiter:junit-jupiter-api")
     testImplementation("org.mockito:mockito-junit-jupiter:5.23.0")
     testImplementation("io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT")
