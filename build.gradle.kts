@@ -1,7 +1,7 @@
 import org.gradle.api.artifacts.ComponentMetadataContext
 import org.gradle.api.artifacts.ComponentMetadataRule
 import org.gradle.api.attributes.java.TargetJvmVersion
-import com.gradleup.shadow.tasks.ShadowJar
+import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 
 // VaultUnlocked 2.19.0 module metadata declares jvmCompatibility=25 — patch it back to 21
 abstract class VaultJvmFix : ComponentMetadataRule {
