@@ -62,6 +62,9 @@ This mode is for player handoff between backends. It is not a real-time distribu
 | `/eco set <player> <amount> [currency]` | Set balance | `openeco.command.eco.set` |
 | `/eco reset <player> [currency]` | Reset to starting balance | `openeco.command.eco.reset` |
 | `/eco delete <player>` | Delete an account and that account's history | `openeco.command.eco.delete` |
+| `/eco freeze <player>` | Freeze an account | `openeco.command.eco.freeze` |
+| `/eco unfreeze <player>` | Unfreeze an account | `openeco.command.eco.unfreeze` |
+| `/eco rename <player> <newname>` | Rename an account display name | `openeco.command.eco.rename` |
 | `/eco reload` | Reload config and messages | `openeco.command.eco.reload` |
 | `/history [player] [page] [currency]` | View transaction history | `openeco.command.history` |
 
@@ -97,4 +100,4 @@ Output: `build/libs/OpenEco-<version>.jar`
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE).
+This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE).

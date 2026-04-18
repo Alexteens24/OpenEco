@@ -306,6 +306,7 @@ It evaluates:
 
 - account existence
 - self-transfer
+- frozen account state
 - sender balance
 - recipient max balance
 - pay cooldown

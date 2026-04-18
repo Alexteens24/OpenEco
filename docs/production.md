@@ -15,7 +15,8 @@ Use OpenEco when you want a single-server-first economy for Paper or Folia, with
 - Real-time distributed balance replication across every backend.
 - Multiple live backends mutating the same account at the same time.
 - Network mode on SQLite or H2.
-- Shared accounts or multi-currency beyond the current feature set.
+- Shared accounts.
+- Advanced per-currency policy controls beyond the current feature set (for example per-currency cooldown or tax rules).
 
 ## Before You Launch
 
