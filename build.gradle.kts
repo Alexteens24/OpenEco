@@ -55,7 +55,7 @@ dependencies {
     compileOnly("io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT")
     compileOnly("net.cfh.vault:VaultUnlocked:2.19.1")
     compileOnly("me.clip:placeholderapi:2.12.2")
-    compileOnly("org.xerial:sqlite-jdbc:3.51.3.0")
+    compileOnly("org.xerial:sqlite-jdbc:3.53.0.0")
     compileOnly("com.h2database:h2:2.4.240")
     implementation("org.bstats:bstats-bukkit:3.2.1")
     compileOnly("com.zaxxer:HikariCP:7.0.2")
@@ -76,7 +76,7 @@ dependencies {
     testRuntimeOnly("org.mariadb.jdbc:mariadb-java-client:3.5.7")
     testRuntimeOnly("org.postgresql:postgresql:42.7.10")
     testRuntimeOnly("com.h2database:h2:2.4.240")
-    testRuntimeOnly("org.xerial:sqlite-jdbc:3.51.3.0")
+    testRuntimeOnly("org.xerial:sqlite-jdbc:3.53.0.0")
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
