@@ -21,6 +21,7 @@ import dev.alexisbinh.openeco.model.AccountRecord;
 import java.sql.SQLException;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -29,6 +30,10 @@ public interface AccountRepository extends TransactionRepository {
     List<AccountRecord> loadAll() throws SQLException;
 
     Optional<AccountRecord> loadAccount(UUID id) throws SQLException;
+
+    Optional<AccountRecord> loadAccountByName(String name) throws SQLException;
+
+    Map<UUID, String> loadUUIDNameMap() throws SQLException;
 
     void upsertBatch(Collection<AccountRecord> records) throws SQLException;
 

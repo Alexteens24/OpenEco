@@ -245,47 +245,100 @@ public class JdbcAccountRepository implements AccountRepository {
                     }
                 }
             }
-            if (account == null) return Optional.empty();
+            if (account == null) {
+                return Optional.empty();
+            }
+            return Optional.of(buildRecord(conn, id, account));
+        }
+    }
 
-            Map<String, PersistedBalanceRow> balanceRows = new LinkedHashMap<>();
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "SELECT currency_id,balance,updated_at FROM account_balances WHERE account_id=?")) {
-                ps.setString(1, id.toString());
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        String currencyId = normalizePersistedCurrencyId(rs.getString("currency_id"));
-                        PersistedBalanceRow candidate = new PersistedBalanceRow(
-                                currencyId,
-                                rs.getBigDecimal("balance"),
-                                rs.getLong("updated_at"));
-                        String lookupKey = normalizeCurrencyLookupKey(currencyId);
-                        PersistedBalanceRow existing = balanceRows.get(lookupKey);
-                        if (existing == null || candidate.updatedAt() >= existing.updatedAt()) {
-                            balanceRows.put(lookupKey, candidate);
-                        }
+    @Override
+    public Optional<AccountRecord> loadAccountByName(String name) throws SQLException {
+        if (name == null) {
+            return Optional.empty();
+        }
+        String trimmed = name.trim();
+        if (trimmed.isEmpty()) {
+            return Optional.empty();
+        }
+
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT id,name,created_at,updated_at,frozen FROM accounts"
+                             + " WHERE LOWER(name)=? ORDER BY updated_at DESC LIMIT 1")) {
+            ps.setString(1, normalizeNameLookupKey(trimmed));
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                UUID id = UUID.fromString(rs.getString("id"));
+                PersistedAccountRow account = new PersistedAccountRow(
+                        rs.getString("name"),
+                        rs.getLong("created_at"),
+                        rs.getLong("updated_at"),
+                        rs.getBoolean("frozen"));
+                return Optional.of(buildRecord(conn, id, account));
+            }
+        }
+    }
+
+    @Override
+    public Map<UUID, String> loadUUIDNameMap() throws SQLException {
+        Map<UUID, String> result = new LinkedHashMap<>();
+        try (Connection conn = dataSource.getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT id,name FROM accounts")) {
+            while (rs.next()) {
+                result.put(UUID.fromString(rs.getString("id")), rs.getString("name"));
+            }
+        }
+        return result;
+    }
+
+    private AccountRecord buildRecord(Connection conn, UUID id, PersistedAccountRow account) throws SQLException {
+        Map<String, BigDecimal> balances = loadBalances(conn, id);
+        if (balances.isEmpty()) {
+            balances.put(defaultCurrencyId, BigDecimal.ZERO);
+        }
+
+        AccountRecord record = new AccountRecord(
+                id,
+                account.name(),
+                defaultCurrencyId,
+                balances,
+                account.createdAt(),
+                account.updatedAt());
+        record.setFrozen(account.frozen());
+        record.clearDirty();
+        return record;
+    }
+
+    private Map<String, BigDecimal> loadBalances(Connection conn, UUID accountId) throws SQLException {
+        Map<String, PersistedBalanceRow> balanceRows = new LinkedHashMap<>();
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT currency_id,balance,updated_at FROM account_balances WHERE account_id=?")) {
+            ps.setString(1, accountId.toString());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String currencyId = normalizePersistedCurrencyId(rs.getString("currency_id"));
+                    PersistedBalanceRow candidate = new PersistedBalanceRow(
+                            currencyId,
+                            rs.getBigDecimal("balance"),
+                            rs.getLong("updated_at"));
+                    String lookupKey = normalizeCurrencyLookupKey(currencyId);
+                    PersistedBalanceRow existing = balanceRows.get(lookupKey);
+                    if (existing == null || candidate.updatedAt() >= existing.updatedAt()) {
+                        balanceRows.put(lookupKey, candidate);
                     }
                 }
             }
-
-            Map<String, BigDecimal> balances = new LinkedHashMap<>();
-            for (PersistedBalanceRow row : balanceRows.values()) {
-                balances.put(row.currencyId(), row.balance());
-            }
-            if (balances.isEmpty()) {
-                balances.put(defaultCurrencyId, BigDecimal.ZERO);
-            }
-
-            AccountRecord record = new AccountRecord(
-                    id,
-                    account.name(),
-                    defaultCurrencyId,
-                    balances,
-                    account.createdAt(),
-                    account.updatedAt());
-            record.setFrozen(account.frozen());
-            record.clearDirty();
-            return Optional.of(record);
         }
+
+        Map<String, BigDecimal> balances = new LinkedHashMap<>();
+        for (PersistedBalanceRow row : balanceRows.values()) {
+            balances.put(row.currencyId(), row.balance());
+        }
+        return balances;
     }
 
     @Override
@@ -583,6 +636,10 @@ public class JdbcAccountRepository implements AccountRepository {
 
     private static String normalizeCurrencyLookupKey(String currencyId) {
         return currencyId.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static String normalizeNameLookupKey(String name) {
+        return name.trim().toLowerCase(Locale.ROOT);
     }
 
     private static long resolvePersistedTimestamp(Connection conn, UUID targetId, long requestedTimestamp) throws SQLException {

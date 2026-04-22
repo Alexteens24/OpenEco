@@ -33,6 +33,7 @@ import java.math.RoundingMode;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 final class EconomyOperations {
@@ -42,17 +43,20 @@ final class EconomyOperations {
     private final Map<UUID, Long> lastPayTime;
     private final Consumer<TransactionEntry> transactionLogger;
     private final EventDispatcher eventDispatcher;
+    private final Function<UUID, AccountRecord> accountLoader;
 
     EconomyOperations(AccountRegistry accountRegistry,
                       Supplier<EconomyConfigSnapshot> configSupplier,
                       Map<UUID, Long> lastPayTime,
                       Consumer<TransactionEntry> transactionLogger,
-                      EventDispatcher eventDispatcher) {
+                      EventDispatcher eventDispatcher,
+                      Function<UUID, AccountRecord> accountLoader) {
         this.accountRegistry = accountRegistry;
         this.configSupplier = configSupplier;
         this.lastPayTime = lastPayTime;
         this.transactionLogger = transactionLogger;
         this.eventDispatcher = eventDispatcher;
+        this.accountLoader = accountLoader;
     }
 
     BalanceCheckResult canDeposit(UUID id, BigDecimal amount) {
@@ -71,7 +75,7 @@ final class EconomyOperations {
             return new BalanceCheckResult(BalanceCheckResult.Status.INVALID_AMOUNT, scaled, BigDecimal.ZERO, BigDecimal.ZERO);
         }
 
-        AccountRecord record = accountRegistry.getLiveRecord(id);
+        AccountRecord record = requireRecord(id);
         if (record == null) {
             return new BalanceCheckResult(BalanceCheckResult.Status.ACCOUNT_NOT_FOUND, scaled, BigDecimal.ZERO, BigDecimal.ZERO);
         }
@@ -109,7 +113,7 @@ final class EconomyOperations {
             return new BalanceCheckResult(BalanceCheckResult.Status.INVALID_AMOUNT, scaled, BigDecimal.ZERO, BigDecimal.ZERO);
         }
 
-        AccountRecord record = accountRegistry.getLiveRecord(id);
+        AccountRecord record = requireRecord(id);
         if (record == null) {
             return new BalanceCheckResult(BalanceCheckResult.Status.ACCOUNT_NOT_FOUND, scaled, BigDecimal.ZERO, BigDecimal.ZERO);
         }
@@ -145,7 +149,7 @@ final class EconomyOperations {
             return failure(scaled, BigDecimal.ZERO, "Amount must be positive");
         }
 
-        AccountRecord record = accountRegistry.getLiveRecord(id);
+        AccountRecord record = requireRecord(id);
         if (record == null) {
             return failure(scaled, BigDecimal.ZERO, "Account not found");
         }
@@ -216,7 +220,7 @@ final class EconomyOperations {
             return failure(scaled, BigDecimal.ZERO, "Amount must be positive");
         }
 
-        AccountRecord record = accountRegistry.getLiveRecord(id);
+        AccountRecord record = requireRecord(id);
         if (record == null) {
             return failure(scaled, BigDecimal.ZERO, "Account not found");
         }
@@ -285,7 +289,7 @@ final class EconomyOperations {
             return failure(BigDecimal.ZERO, BigDecimal.ZERO, "Unknown currency");
         }
 
-        AccountRecord record = accountRegistry.getLiveRecord(id);
+        AccountRecord record = requireRecord(id);
         if (record == null) {
             return failure(amount, BigDecimal.ZERO, "Account not found");
         }
@@ -350,7 +354,7 @@ final class EconomyOperations {
             return failure(BigDecimal.ZERO, BigDecimal.ZERO, "Unknown currency");
         }
 
-        AccountRecord record = accountRegistry.getLiveRecord(id);
+        AccountRecord record = requireRecord(id);
         if (record == null) {
             return failure(BigDecimal.ZERO, BigDecimal.ZERO, "Account not found");
         }
@@ -416,8 +420,8 @@ final class EconomyOperations {
             return new TransferCheckResult(TransferCheckResult.Status.SELF_TRANSFER, scaled);
         }
 
-        AccountRecord fromRecord = accountRegistry.getLiveRecord(fromId);
-        AccountRecord toRecord = accountRegistry.getLiveRecord(toId);
+        AccountRecord fromRecord = requireRecord(fromId);
+        AccountRecord toRecord = requireRecord(toId);
         if (fromRecord == null || toRecord == null) {
             return new TransferCheckResult(TransferCheckResult.Status.ACCOUNT_NOT_FOUND, scaled);
         }
@@ -515,8 +519,8 @@ final class EconomyOperations {
                     minimumAmount);
         }
 
-        AccountRecord fromRecord = accountRegistry.getLiveRecord(fromId);
-        AccountRecord toRecord = accountRegistry.getLiveRecord(toId);
+        AccountRecord fromRecord = requireRecord(fromId);
+        AccountRecord toRecord = requireRecord(toId);
         if (fromRecord == null || toRecord == null) {
             return new TransferPreviewResult(
                     TransferPreviewResult.Status.ACCOUNT_NOT_FOUND,
@@ -621,8 +625,8 @@ final class EconomyOperations {
             return PayResult.tooLow(minimumAmount);
         }
 
-        AccountRecord fromRecord = accountRegistry.getLiveRecord(fromId);
-        AccountRecord toRecord = accountRegistry.getLiveRecord(toId);
+        AccountRecord fromRecord = requireRecord(fromId);
+        AccountRecord toRecord = requireRecord(toId);
         if (fromRecord == null || toRecord == null) {
             return PayResult.accountNotFound();
         }
@@ -708,6 +712,14 @@ final class EconomyOperations {
 
     private static CurrencyDefinition resolveCurrency(EconomyConfigSnapshot config, String currencyId) {
         return config.currencies().find(currencyId).orElse(null);
+    }
+
+    private AccountRecord requireRecord(UUID id) {
+        AccountRecord record = accountRegistry.getLiveRecord(id);
+        if (record != null) {
+            return record;
+        }
+        return accountLoader.apply(id);
     }
 
     private String defaultCurrencyId() {

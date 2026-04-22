@@ -33,7 +33,9 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -77,6 +79,71 @@ class AccountServicePersistenceIntegrationTest {
             assertEquals(0, reader.countTransactions(accountId));
 
             reader.shutdown();
+        } finally {
+            repository.close();
+        }
+    }
+
+    @Test
+    void lazyLoadResolvesExistingAccountsWithoutStartupPreload() throws Exception {
+        JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "lazy-load-lookup-test");
+        try {
+            UUID accountId = UUID.randomUUID();
+            AccountService writer = newService(repository);
+            assertTrue(writer.createAccount(accountId, "Alice"));
+            assertTrue(writer.deposit(accountId, new BigDecimal("7.50")).transactionSuccess());
+            writer.shutdown();
+
+            AccountService lazyReader = newServiceWithConfig(repository, lazyConfig(0.0, -1));
+
+            assertTrue(lazyReader.hasAccount(accountId));
+            assertEquals(0, new BigDecimal("12.50").compareTo(lazyReader.getBalance(accountId)));
+            assertTrue(lazyReader.findByName("Alice").isPresent());
+            assertEquals("Alice", lazyReader.getUUIDNameMap().get(accountId));
+            assertTrue(lazyReader.getAccountNames().contains("Alice"));
+
+            lazyReader.shutdown();
+        } finally {
+            repository.close();
+        }
+    }
+
+    @Test
+    void lazyLoadSupportsMutationsAgainstPreviouslyUnloadedAccounts() throws Exception {
+        JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "lazy-load-mutation-test");
+        try {
+            UUID accountId = UUID.randomUUID();
+            AccountService writer = newService(repository);
+            assertTrue(writer.createAccount(accountId, "Alice"));
+            writer.shutdown();
+
+            AccountService lazyService = newServiceWithConfig(repository, lazyConfig(0.0, -1));
+            assertTrue(lazyService.deposit(accountId, new BigDecimal("2.00")).transactionSuccess());
+            lazyService.shutdown();
+
+            AccountService reader = newService(repository);
+            reader.loadAll();
+            assertEquals(0, new BigDecimal("7.00").compareTo(reader.getBalance(accountId)));
+            reader.shutdown();
+        } finally {
+            repository.close();
+        }
+    }
+
+    @Test
+    void lazyLoadCreateStillRejectsPersistedNameCollisions() throws Exception {
+        JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "lazy-load-name-conflict-test");
+        try {
+            UUID existingId = UUID.randomUUID();
+            AccountService writer = newService(repository);
+            assertTrue(writer.createAccount(existingId, "Alice"));
+            writer.shutdown();
+
+            AccountService lazyService = newServiceWithConfig(repository, lazyConfig(0.0, -1));
+            AccountService.CreateAccountStatus status = lazyService.createAccountDetailed(UUID.randomUUID(), "Alice");
+
+            assertEquals(AccountService.CreateAccountStatus.NAME_IN_USE, status);
+            lazyService.shutdown();
         } finally {
             repository.close();
         }
@@ -632,6 +699,7 @@ class AccountServicePersistenceIntegrationTest {
 
     private static YamlConfiguration testConfig(double taxPercent, int retentionDays) {
         YamlConfiguration config = new YamlConfiguration();
+        config.set("accounts.load-strategy", "eager");
         config.set("currency.id", "openeco");
         config.set("currency.name-singular", "Dollar");
         config.set("currency.name-plural", "Dollars");
@@ -643,6 +711,12 @@ class AccountServicePersistenceIntegrationTest {
         config.set("pay.min-amount", 0.01);
         config.set("baltop.cache-ttl-seconds", 30);
         config.set("history.retention-days", retentionDays);
+        return config;
+    }
+
+    private static YamlConfiguration lazyConfig(double taxPercent, int retentionDays) {
+        YamlConfiguration config = testConfig(taxPercent, retentionDays);
+        config.set("accounts.load-strategy", "lazy");
         return config;
     }
 
@@ -689,6 +763,30 @@ class AccountServicePersistenceIntegrationTest {
         public java.util.Optional<AccountRecord> loadAccount(UUID id) {
             return lastUpsertedRecords.stream().filter(r -> r.getId().equals(id)).findFirst()
                     .map(AccountRecord::snapshot);
+        }
+
+        @Override
+        public synchronized java.util.Optional<AccountRecord> loadAccountByName(String name) {
+            if (name == null) {
+                return java.util.Optional.empty();
+            }
+            String normalized = name.trim().toLowerCase(java.util.Locale.ROOT);
+            if (normalized.isEmpty()) {
+                return java.util.Optional.empty();
+            }
+            return lastUpsertedRecords.stream()
+                    .filter(r -> r.getLastKnownName().toLowerCase(java.util.Locale.ROOT).equals(normalized))
+                    .findFirst()
+                    .map(AccountRecord::snapshot);
+        }
+
+        @Override
+        public synchronized Map<UUID, String> loadUUIDNameMap() {
+            Map<UUID, String> map = new HashMap<>();
+            for (AccountRecord record : lastUpsertedRecords) {
+                map.put(record.getId(), record.getLastKnownName());
+            }
+            return map;
         }
 
         @Override

@@ -74,6 +74,7 @@ This mode is for player handoff between backends. It is not a real-time distribu
 
 - OpenEco is meant for one server with local storage.
 - Network mode is opt-in and meant for player handoff over a shared remote database, not for general multi-writer sharing.
+- `accounts.load-strategy` controls startup behavior: `eager` preloads all accounts, `lazy` loads on first access.
 - New configs should use `currencies.default` and `currencies.definitions.*`; the legacy `currency.*` block is still read for backward compatibility.
 - SQLite companion files such as `economy.db-wal` and `economy.db-shm` are normal while the server is running.
 - Balance data is flushed periodically and on normal shutdown.

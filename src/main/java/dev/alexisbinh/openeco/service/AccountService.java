@@ -37,6 +37,8 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -79,6 +81,7 @@ public class AccountService {
     private final EconomyOperations economyOperations;
     private volatile EconomyConfigSnapshot config;
     private volatile boolean crossServerEnabled;
+    private volatile boolean lazyAccountLoadingEnabled;
 
     // Pay cooldown tracker
     private final ConcurrentHashMap<UUID, Long> lastPayTime = new ConcurrentHashMap<>();
@@ -98,7 +101,8 @@ public class AccountService {
                 () -> this.config,
                 lastPayTime,
                 this::logTransaction,
-                eventDispatcher);
+            eventDispatcher,
+            this::getOrLoadLiveRecord);
         readConfig(config);
     }
 
@@ -111,6 +115,15 @@ public class AccountService {
     private void readConfig(FileConfiguration config) {
         EconomyConfigSnapshot updated = EconomyConfigSnapshot.from(config);
         this.config = updated;
+        String loadStrategy = config.getString("accounts.load-strategy", "eager");
+        if (loadStrategy == null) {
+            loadStrategy = "eager";
+        }
+        if (!loadStrategy.equalsIgnoreCase("eager") && !loadStrategy.equalsIgnoreCase("lazy")) {
+            log.warning("Unknown accounts.load-strategy '" + loadStrategy + "'. Falling back to 'eager'.");
+            loadStrategy = "eager";
+        }
+        this.lazyAccountLoadingEnabled = loadStrategy.equalsIgnoreCase("lazy");
         syncConfiguredCurrencies(updated);
         leaderboardCache.setCacheTtlMs(updated.balTopCacheTtlMs());
         this.crossServerEnabled = config.getBoolean("cross-server.enabled", false);
@@ -120,9 +133,17 @@ public class AccountService {
         return crossServerEnabled;
     }
 
+    public boolean isLazyAccountLoadingEnabled() {
+        return lazyAccountLoadingEnabled;
+    }
+
     // ── Startup ─────────────────────────────────────────────────────────────
 
     public void loadAll() throws SQLException {
+        if (lazyAccountLoadingEnabled) {
+            log.info("Account lazy-loading enabled; skipping startup preload.");
+            return;
+        }
         List<AccountRecord> records = repository.loadAll();
         validateLoadedNames(records);
         accountRegistry.loadAll(records);
@@ -133,15 +154,44 @@ public class AccountService {
     // ── Account management ───────────────────────────────────────────────────
 
     public boolean hasAccount(UUID id) {
-        return accountRegistry.hasAccount(id);
+        return getOrLoadLiveRecord(id) != null;
     }
 
     public Optional<AccountRecord> getAccount(UUID id) {
-        return accountRegistry.getSnapshot(id);
+        Optional<AccountRecord> snapshot = accountRegistry.getSnapshot(id);
+        if (snapshot.isPresent()) {
+            return snapshot;
+        }
+
+        AccountRecord record = getOrLoadLiveRecord(id);
+        if (record == null) {
+            return Optional.empty();
+        }
+        synchronized (record) {
+            return Optional.of(record.snapshot());
+        }
     }
 
     public Optional<AccountRecord> findByName(String name) {
-        return accountRegistry.findSnapshotByName(name);
+        Optional<AccountRecord> snapshot = accountRegistry.findSnapshotByName(name);
+        if (snapshot.isPresent() || !lazyAccountLoadingEnabled) {
+            return snapshot;
+        }
+
+        Optional<AccountRecord> persisted = loadPersistedAccountByName(name);
+        if (persisted.isEmpty()) {
+            return Optional.empty();
+        }
+
+        synchronized (persistenceLock) {
+            AccountRecord live = attachLoadedRecord(persisted.get());
+            if (live == null) {
+                return accountRegistry.findSnapshotByName(name);
+            }
+            synchronized (live) {
+                return Optional.of(live.snapshot());
+            }
+        }
     }
 
     /** Creates an account if it doesn't exist yet. Returns true if created. */
@@ -158,8 +208,10 @@ public class AccountService {
         AccountCreateEvent createdEvent;
 
         synchronized (persistenceLock) {
-            if (accountRegistry.hasAccount(id)) return CreateAccountStatus.ALREADY_EXISTS;
-            if (accountRegistry.isNameClaimedByAnother(id, validatedName)) {
+            if (getOrLoadLiveRecord(id) != null) {
+                return CreateAccountStatus.ALREADY_EXISTS;
+            }
+            if (isNameClaimedByAnotherIncludingPersistence(id, validatedName)) {
                 return CreateAccountStatus.NAME_IN_USE;
             }
             EconomyConfigSnapshot currentConfig = config;
@@ -202,7 +254,7 @@ public class AccountService {
         AccountRenameEvent event;
 
         synchronized (persistenceLock) {
-            AccountRecord record = accountRegistry.getLiveRecord(id);
+            AccountRecord record = getOrLoadLiveRecord(id);
             if (record == null) return RenameAccountStatus.NOT_FOUND;
 
             synchronized (record) {
@@ -215,7 +267,7 @@ public class AccountService {
                     return RenameAccountStatus.UNCHANGED;
                 }
 
-                if (accountRegistry.isNameClaimedByAnother(id, validatedName)) {
+                if (isNameClaimedByAnotherIncludingPersistence(id, validatedName)) {
                     return RenameAccountStatus.NAME_IN_USE;
                 }
 
@@ -229,7 +281,7 @@ public class AccountService {
         }
 
         synchronized (persistenceLock) {
-            AccountRecord record = accountRegistry.getLiveRecord(id);
+            AccountRecord record = getOrLoadLiveRecord(id);
             if (record == null) return RenameAccountStatus.NOT_FOUND;
 
             synchronized (record) {
@@ -242,7 +294,7 @@ public class AccountService {
                     return RenameAccountStatus.UNCHANGED;
                 }
 
-                if (accountRegistry.isNameClaimedByAnother(id, validatedName)) {
+                if (isNameClaimedByAnotherIncludingPersistence(id, validatedName)) {
                     return RenameAccountStatus.NAME_IN_USE;
                 }
 
@@ -264,7 +316,7 @@ public class AccountService {
         AccountDeleteEvent event;
 
         synchronized (persistenceLock) {
-            AccountRecord record = accountRegistry.getLiveRecord(id);
+            AccountRecord record = getOrLoadLiveRecord(id);
             if (record == null) return DeleteAccountStatus.NOT_FOUND;
 
             synchronized (record) {
@@ -281,7 +333,7 @@ public class AccountService {
         }
 
         synchronized (persistenceLock) {
-            AccountRecord record = accountRegistry.getLiveRecord(id);
+            AccountRecord record = getOrLoadLiveRecord(id);
             if (record == null) return DeleteAccountStatus.NOT_FOUND;
             Long previousPayTime;
 
@@ -315,11 +367,22 @@ public class AccountService {
     }
 
     public Map<UUID, String> getUUIDNameMap() {
-        return accountRegistry.getUUIDNameMap();
+        if (!lazyAccountLoadingEnabled) {
+            return accountRegistry.getUUIDNameMap();
+        }
+
+        Map<UUID, String> merged = new HashMap<>();
+        try {
+            merged.putAll(repository.loadUUIDNameMap());
+        } catch (SQLException e) {
+            log.warning("Failed to load UUID-name map from repository: " + e.getMessage());
+        }
+        merged.putAll(accountRegistry.getUUIDNameMap());
+        return Collections.unmodifiableMap(merged);
     }
 
     public List<String> getAccountNames() {
-        return accountRegistry.getAccountNames();
+        return new ArrayList<>(getUUIDNameMap().values());
     }
 
     // ── Balance operations ───────────────────────────────────────────────────
@@ -330,7 +393,7 @@ public class AccountService {
 
     public BigDecimal getBalance(UUID id, String currencyId) {
         String resolvedCurrencyId = resolveCurrencyIdOrFallback(currencyId);
-        AccountRecord record = accountRegistry.getLiveRecord(id);
+        AccountRecord record = getOrLoadLiveRecord(id);
         return record == null ? BigDecimal.ZERO : record.getBalance(resolvedCurrencyId);
     }
 
@@ -353,7 +416,7 @@ public class AccountService {
             return false;
         }
 
-        AccountRecord record = accountRegistry.getLiveRecord(id);
+        AccountRecord record = getOrLoadLiveRecord(id);
         if (record == null) return false;
         return record.getBalance(currency.id()).compareTo(scaled) >= 0;
     }
@@ -500,7 +563,11 @@ public class AccountService {
     }
 
     public List<AccountRecord> getBalTopSnapshot(String currencyId) {
-        return leaderboardCache.getSnapshot(resolveCurrencyIdOrFallback(currencyId), accountRegistry.liveRecords());
+        String resolvedCurrencyId = resolveCurrencyIdOrFallback(currencyId);
+        if (!lazyAccountLoadingEnabled) {
+            return leaderboardCache.getSnapshot(resolvedCurrencyId, accountRegistry.liveRecords());
+        }
+        return leaderboardCache.getSnapshot(resolvedCurrencyId, collectLeaderboardRecords());
     }
 
     public int getRankOf(UUID accountId) {
@@ -520,7 +587,7 @@ public class AccountService {
     // ── Account freeze ────────────────────────────────────────────────────────
 
     public boolean freezeAccount(UUID id) {
-        AccountRecord record = accountRegistry.getLiveRecord(id);
+        AccountRecord record = getOrLoadLiveRecord(id);
         if (record == null) return false;
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) return false;
@@ -530,7 +597,7 @@ public class AccountService {
     }
 
     public boolean unfreezeAccount(UUID id) {
-        AccountRecord record = accountRegistry.getLiveRecord(id);
+        AccountRecord record = getOrLoadLiveRecord(id);
         if (record == null) return false;
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) return false;
@@ -540,7 +607,7 @@ public class AccountService {
     }
 
     public boolean isFrozen(UUID id) {
-        AccountRecord record = accountRegistry.getLiveRecord(id);
+        AccountRecord record = getOrLoadLiveRecord(id);
         return record != null && record.isFrozen();
     }
 
@@ -718,6 +785,99 @@ public class AccountService {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private @Nullable AccountRecord getOrLoadLiveRecord(UUID id) {
+        AccountRecord live = accountRegistry.getLiveRecord(id);
+        if (live != null || !lazyAccountLoadingEnabled) {
+            return live;
+        }
+
+        synchronized (persistenceLock) {
+            live = accountRegistry.getLiveRecord(id);
+            if (live != null) {
+                return live;
+            }
+
+            Optional<AccountRecord> persisted = loadPersistedAccount(id);
+            if (persisted.isEmpty()) {
+                return null;
+            }
+            return attachLoadedRecord(persisted.get());
+        }
+    }
+
+    private Optional<AccountRecord> loadPersistedAccount(UUID id) {
+        try {
+            Optional<AccountRecord> record = repository.loadAccount(id);
+            record.ifPresent(value -> alignLoadedRecordCurrencies(value, config));
+            return record;
+        } catch (SQLException e) {
+            log.warning("Failed to lazy-load account " + id + ": " + e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    private Optional<AccountRecord> loadPersistedAccountByName(String name) {
+        try {
+            Optional<AccountRecord> record = repository.loadAccountByName(name);
+            record.ifPresent(value -> alignLoadedRecordCurrencies(value, config));
+            return record;
+        } catch (SQLException e) {
+            log.warning("Failed to lazy-load account by name '" + name + "': " + e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    private @Nullable AccountRecord attachLoadedRecord(AccountRecord record) {
+        if (!accountRegistry.replace(record)) {
+            return accountRegistry.getLiveRecord(record.getId());
+        }
+        return accountRegistry.getLiveRecord(record.getId());
+    }
+
+    private boolean isNameClaimedByAnotherIncludingPersistence(UUID id, String name) {
+        if (accountRegistry.isNameClaimedByAnother(id, name)) {
+            return true;
+        }
+        if (!lazyAccountLoadingEnabled) {
+            return false;
+        }
+
+        Optional<AccountRecord> persisted = loadPersistedAccountByName(name);
+        if (persisted.isEmpty()) {
+            return false;
+        }
+        AccountRecord persistedRecord = persisted.get();
+        if (!persistedRecord.getId().equals(id)) {
+            return true;
+        }
+
+        if (accountRegistry.getLiveRecord(id) == null) {
+            attachLoadedRecord(persistedRecord);
+        }
+        return false;
+    }
+
+    private Collection<AccountRecord> collectLeaderboardRecords() {
+        Map<UUID, AccountRecord> merged = new HashMap<>();
+        try {
+            List<AccountRecord> persisted = repository.loadAll();
+            for (AccountRecord record : persisted) {
+                alignLoadedRecordCurrencies(record, config);
+                merged.put(record.getId(), record);
+            }
+        } catch (SQLException e) {
+            log.warning("Failed to load persisted accounts for leaderboard snapshot: " + e.getMessage());
+        }
+
+        for (AccountRecord live : accountRegistry.liveRecords()) {
+            synchronized (live) {
+                merged.put(live.getId(), live.snapshot());
+            }
+        }
+        return merged.values();
+    }
+
     private void logTransaction(TransactionEntry entry) {
         transactionHistoryService.log(entry);
     }

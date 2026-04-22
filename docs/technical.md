@@ -6,6 +6,11 @@ This file is for owners who want the operational details behind the plugin.
 
 OpenEco keeps account data in memory and writes it through JDBC in the background.
 
+Account bootstrap strategy is configurable with `accounts.load-strategy`:
+
+- `eager` (default) loads all account rows at startup.
+- `lazy` defers account loads until first access and falls back to repository lookups for UUID/name map and account resolution.
+
 Hot path callers include:
 
 - player commands
@@ -13,7 +18,9 @@ Hot path callers include:
 - VaultUnlocked v2 plugins
 - addons using the OpenEco API
 
-Balance reads and writes do not need a database round trip. Dirty account snapshots are flushed on the autosave interval and on normal shutdown.
+In eager mode, balance reads and writes do not need a database round trip after startup preload.
+In lazy mode, first access to a missing account may trigger a one-time repository load before normal in-memory behavior takes over.
+Dirty account snapshots are flushed on the autosave interval and on normal shutdown.
 
 Transaction history is written on a dedicated single-thread executor.
 Before a dirty balance batch is persisted, OpenEco waits for older queued history writes so persisted balances do not outrun their recorded audit trail.

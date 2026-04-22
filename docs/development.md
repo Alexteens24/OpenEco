@@ -38,7 +38,7 @@ For the public addon-facing contract, read [Addon API](api.md) alongside this fi
 1. Save default config.
 2. Resolve storage backend and database filename.
 3. Open `JdbcAccountRepository` and create schema if needed.
-4. Create `AccountService` and load all accounts into memory.
+4. Create `AccountService` and initialize account loading strategy.
 5. Load message templates.
 6. Register the public `OpenEcoApi` service.
 7. Register VaultUnlocked v2 and legacy Vault v1 providers.
@@ -55,7 +55,9 @@ If storage open or initial account load fails, the plugin disables itself early.
 
 OpenEco is an in-memory economy with a single-JVM authority and JDBC persistence.
 
-- All account rows are loaded into memory at startup.
+- Account bootstrap strategy is configurable:
+	- `accounts.load-strategy: eager` loads all account rows at startup.
+	- `accounts.load-strategy: lazy` loads rows on first access and uses repository fallbacks for lookups.
 - Live account state is held inside `AccountRegistry`.
 - Normal reads and writes do not round-trip to the database.
 - Dirty account rows are flushed in batches on the autosave interval and on clean shutdown.

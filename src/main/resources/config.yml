@@ -68,6 +68,12 @@ storage:
     password: ""
     pool-size: 10
 
+accounts:
+  # Account bootstrap strategy:
+  # - eager: load all account rows into memory on startup (current default behavior)
+  # - lazy: defer account loads until first access, with repository fallback for lookups
+  load-strategy: eager
+
 # Seconds between automatic background saves (values <= 0 are clamped to 1)
 # Lower values reduce worst-case data loss after a crash but increase write pressure.
 autosave-interval: 30

@@ -77,6 +77,43 @@ class JdbcAccountRepositoryIntegrationTest {
     }
 
     @Test
+    void loadAccountByNameFindsRowsCaseInsensitively() throws Exception {
+        JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "load-by-name-test");
+        try {
+            UUID accountId = UUID.randomUUID();
+            repository.upsertBatch(List.of(new AccountRecord(accountId, "Alice", new BigDecimal("10.00"), 100L, 200L)));
+
+            AccountRecord loaded = repository.loadAccountByName("aLiCe").orElseThrow();
+
+            assertEquals(accountId, loaded.getId());
+            assertEquals("Alice", loaded.getLastKnownName());
+            assertEquals(0, new BigDecimal("10.00").compareTo(loaded.getBalance()));
+        } finally {
+            repository.close();
+        }
+    }
+
+    @Test
+    void loadUuidNameMapReturnsPersistedAccountNames() throws Exception {
+        JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "uuid-name-map-test");
+        try {
+            UUID aliceId = UUID.randomUUID();
+            UUID bobId = UUID.randomUUID();
+            repository.upsertBatch(List.of(
+                    new AccountRecord(aliceId, "Alice", BigDecimal.ZERO, 1L, 1L),
+                    new AccountRecord(bobId, "Bob", BigDecimal.ZERO, 1L, 1L)));
+
+            var map = repository.loadUUIDNameMap();
+
+            assertEquals(2, map.size());
+            assertEquals("Alice", map.get(aliceId));
+            assertEquals("Bob", map.get(bobId));
+        } finally {
+            repository.close();
+        }
+    }
+
+    @Test
     void pruneTransactionsDeletesEntriesOlderThanCutoff() throws Exception {
         JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "prune-test");
         try {

@@ -157,8 +157,9 @@ public class OpenEcoPlugin extends JavaPlugin {
             getLogger().warning("bStats metrics disabled: " + ex.getMessage());
         }
 
+        String loadStrategy = service.isLazyAccountLoadingEnabled() ? "lazy" : "eager";
         getLogger().info("openeco enabled. Backend: " + dialect.name().toLowerCase()
-                + " | Accounts loaded: true");
+            + " | Account load strategy: " + loadStrategy);
     }
 
     public void reloadSettings() {
