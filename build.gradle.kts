@@ -59,7 +59,7 @@ dependencies {
     compileOnly("com.h2database:h2:2.4.240")
     implementation("org.bstats:bstats-bukkit:3.2.1")
     compileOnly("com.zaxxer:HikariCP:7.0.2")
-    compileOnly("com.mysql:mysql-connector-j:9.6.0") {
+    compileOnly("com.mysql:mysql-connector-j:9.7.0") {
         exclude(group = "com.google.protobuf") // only needed for X Protocol (mysqlx://), not standard JDBC
     }
     compileOnly("org.mariadb.jdbc:mariadb-java-client:3.5.8")
@@ -72,7 +72,7 @@ dependencies {
     testImplementation("net.cfh.vault:VaultUnlocked:2.19.1")
     testImplementation("me.clip:placeholderapi:2.12.2")
     testImplementation("com.zaxxer:HikariCP:7.0.2")
-    testRuntimeOnly("com.mysql:mysql-connector-j:9.6.0")
+    testRuntimeOnly("com.mysql:mysql-connector-j:9.7.0")
     testRuntimeOnly("org.mariadb.jdbc:mariadb-java-client:3.5.8")
     testRuntimeOnly("org.postgresql:postgresql:42.7.10")
     testRuntimeOnly("com.h2database:h2:2.4.240")
