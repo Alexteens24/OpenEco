@@ -103,6 +103,13 @@ Notes:
 - Leave `source-folder` and `source-file` empty to read from the active local database.
 - See [Migration Guide](migration.md) for the full workflow.
 
+Remote backend troubleshooting:
+
+- MySQL 8 defaults to `caching_sha2_password`. OpenEco enables `allowPublicKeyRetrieval` for local/non-TLS setups. For production, prefer TLS (`useSSL=true` on the server side) instead of relying on RSA key retrieval over plain connections.
+- Use MySQL 8.0.13+ for remote storage. Older MySQL versions do not support the functional name index OpenEco creates for case-insensitive lookups.
+- MariaDB keeps the older `VALUES()` upsert syntax because MariaDB does not yet support MySQL's `AS alias` upsert form.
+- Ensure the database server uses a UTF-8 charset (`utf8mb4` on MySQL/MariaDB). OpenEco requests `UTF-8` on the JDBC connection.
+
 ## Cross-Server Handoff
 
 ```yaml
