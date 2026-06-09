@@ -25,11 +25,10 @@ import dev.alexisbinh.openeco.economy.OpenEcoLegacyEconomyProvider;
 import dev.alexisbinh.openeco.listener.PlayerConnectionListener;
 import dev.alexisbinh.openeco.placeholder.OpenEcoPlaceholderExpansion;
 import dev.alexisbinh.openeco.service.AccountService;
-import com.zaxxer.hikari.HikariConfig;
-import com.zaxxer.hikari.HikariDataSource;
 import dev.alexisbinh.openeco.storage.AccountRepository;
 import dev.alexisbinh.openeco.storage.DatabaseDialect;
 import dev.alexisbinh.openeco.storage.JdbcAccountRepository;
+import dev.alexisbinh.openeco.storage.RemoteStorageDataSource;
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import net.milkbowl.vault2.economy.Economy;
 import org.bstats.bukkit.Metrics;
@@ -135,6 +134,9 @@ public class OpenEcoPlugin extends JavaPlugin {
         HistoryCommand history = new HistoryCommand(service, this, messages);
         getCommand("history").setExecutor(history);
         getCommand("history").setTabCompleter(history);
+        StorageCommand storage = new StorageCommand(this, service);
+        getCommand("openecostorage").setExecutor(storage);
+        getCommand("openecostorage").setTabCompleter(storage);
 
         // ── Listener ──────────────────────────────────────────────────────────
         getServer().getPluginManager().registerEvents(
@@ -182,35 +184,15 @@ public class OpenEcoPlugin extends JavaPlugin {
         restartPruneTask();
     }
 
-    private HikariDataSource buildRemoteDataSource(DatabaseDialect dialect) {
-        String section = dialect.name().toLowerCase(java.util.Locale.ROOT);
-        String host = getConfig().getString("storage." + section + ".host", "localhost");
-        int defaultPort = (dialect == DatabaseDialect.POSTGRESQL) ? 5432 : 3306;
-        int port = getConfig().getInt("storage." + section + ".port", defaultPort);
-        String database = getConfig().getString("storage." + section + ".database", "openeco");
-        String username = getConfig().getString("storage." + section + ".username", "root");
-        String password = getConfig().getString("storage." + section + ".password", "");
-        int poolSize = getConfig().getInt("storage." + section + ".pool-size", 10);
-
-        HikariConfig cfg = new HikariConfig();
-        cfg.setJdbcUrl(switch (dialect) {
-            case MYSQL    -> "jdbc:mysql://" + host + ":" + port + "/" + database
-                           + "?useSSL=false&serverTimezone=UTC&characterEncoding=utf8&allowReconnect=true";
-            case MARIADB  -> "jdbc:mariadb://" + host + ":" + port + "/" + database
-                           + "?characterEncoding=utf8";
-            case POSTGRESQL -> "jdbc:postgresql://" + host + ":" + port + "/" + database;
-            default -> throw new IllegalStateException("Unexpected remote dialect: " + dialect);
-        });
-        cfg.setUsername(username);
-        cfg.setPassword(password);
-        cfg.setMaximumPoolSize(poolSize);
-        cfg.setMinimumIdle(Math.min(2, poolSize));
-        cfg.setConnectionTimeout(10_000);
-        cfg.setPoolName("OpenEco-" + dialect.name());
-        return new HikariDataSource(cfg);
+    private com.zaxxer.hikari.HikariDataSource buildRemoteDataSource(DatabaseDialect dialect) {
+        return RemoteStorageDataSource.create(dialect, getConfig());
     }
 
-    private String resolveDefaultCurrencyId() {
+    public AccountRepository getRepository() {
+        return repository;
+    }
+
+    public String resolveDefaultCurrencyId() {
         String configured = getConfig().getString("currencies.default");
         if (configured == null || configured.isBlank()) {
             configured = getConfig().getString("currency.id", "openeco");

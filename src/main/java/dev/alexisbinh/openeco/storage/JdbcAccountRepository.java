@@ -420,6 +420,98 @@ public class JdbcAccountRepository implements AccountRepository {
         dataSource.close();
     }
 
+    public DatabaseDialect dialect() {
+        return dialect;
+    }
+
+    public int countAccounts() throws SQLException {
+        try (Connection conn = dataSource.getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM accounts")) {
+            return rs.next() ? rs.getInt(1) : 0;
+        }
+    }
+
+    public int countTransactions() throws SQLException {
+        try (Connection conn = dataSource.getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM transactions")) {
+            return rs.next() ? rs.getInt(1) : 0;
+        }
+    }
+
+    public void clearAllData() throws SQLException {
+        try (Connection conn = dataSource.getConnection()) {
+            conn.setAutoCommit(false);
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute("DELETE FROM transactions");
+                stmt.execute("DELETE FROM account_balances");
+                stmt.execute("DELETE FROM accounts");
+                conn.commit();
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        }
+    }
+
+    public List<TransactionEntry> loadTransactions(int limit, long offset) throws SQLException {
+        String sql = "SELECT type,counterpart_id,target_id,amount,balance_before,balance_after,ts,source,note,currency_id "
+                + "FROM transactions ORDER BY ts ASC LIMIT ? OFFSET ?";
+        List<TransactionEntry> result = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, limit);
+            ps.setLong(2, offset);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    result.add(mapRow(rs));
+                }
+            }
+        }
+        return result;
+    }
+
+    public void insertTransactionsBatch(List<TransactionEntry> entries) throws SQLException {
+        if (entries.isEmpty()) {
+            return;
+        }
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "INSERT INTO transactions(type,counterpart_id,target_id,amount,balance_before,balance_after,ts,source,note,currency_id) "
+                             + "VALUES(?,?,?,?,?,?,?,?,?,?)")) {
+            for (TransactionEntry entry : entries) {
+                ps.setString(1, entry.getType().name());
+                if (entry.getCounterpartId() != null) {
+                    ps.setString(2, entry.getCounterpartId().toString());
+                } else {
+                    ps.setNull(2, Types.VARCHAR);
+                }
+                ps.setString(3, entry.getTargetId().toString());
+                ps.setBigDecimal(4, entry.getAmount());
+                ps.setBigDecimal(5, entry.getBalanceBefore());
+                ps.setBigDecimal(6, entry.getBalanceAfter());
+                ps.setLong(7, entry.getTimestamp());
+                if (entry.getSource() != null) {
+                    ps.setString(8, entry.getSource());
+                } else {
+                    ps.setNull(8, Types.VARCHAR);
+                }
+                if (entry.getNote() != null) {
+                    ps.setString(9, entry.getNote());
+                } else {
+                    ps.setNull(9, Types.VARCHAR);
+                }
+                ps.setString(10, normalizePersistedCurrencyId(
+                        entry.getCurrencyId() != null ? entry.getCurrencyId() : defaultCurrencyId));
+                ps.addBatch();
+            }
+            ps.executeBatch();
+        }
+    }
+
     // ── TransactionRepository ─────────────────────────────────────────────────
 
     @Override

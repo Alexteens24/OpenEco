@@ -11,3 +11,9 @@ stress-addon/
 *.db-*
 *.mv.db
 *.trace.db
+
+# Local Paper server + manual migration smoke tests (not for CI)
+.test-server/
+
+src/test/java/dev/alexisbinh/openeco/storage/SeedTestServerAccounts.java
+src/test/java/dev/alexisbinh/openeco/storage/MigrateTestServerToMysql.java

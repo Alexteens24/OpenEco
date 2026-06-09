@@ -63,6 +63,10 @@ commands:
     description: View transaction history
     usage: /history [self|player] [page] [currency]
     aliases: [txhistory, ecohistory]
+  openecostorage:
+    description: Migrate OpenEco storage from sqlite/h2 to mysql/mariadb/postgresql
+    usage: /openecostorage <list|scan|migrate> [target] [--dry-run] [--overwrite]
+    aliases: [ecostorage, openecodb]
 
 permissions:
   openeco.admin:
@@ -78,8 +82,12 @@ permissions:
       openeco.command.eco.unfreeze: true
       openeco.command.eco.rename: true
       openeco.command.eco.reload: true
+      openeco.command.storage: true
       openeco.command.balance.others: true
       openeco.command.history.others: true
+  openeco.command.storage:
+    description: Migrate OpenEco storage between backends
+    default: op
   openeco.command.balance:
     description: Check own balance
     default: true

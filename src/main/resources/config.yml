@@ -68,6 +68,12 @@ storage:
     username: postgres
     password: ""
     pool-size: 10
+  migration:
+    # Optional local backup source when the server already runs on a remote backend.
+    # Leave source-folder and source-file empty to migrate from the active local database.
+    source-type: sqlite
+    source-folder: ""
+    source-file: ""
 
 accounts:
   # Account bootstrap strategy:
