@@ -14,24 +14,23 @@
  * limitations under the License.
  */
 
-plugins {
-	id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
-}
+package dev.alexisbinh.openeco.migrator.source;
 
-rootProject.name = "OpenEco"
+import org.bukkit.plugin.java.JavaPlugin;
 
-if (file("stress-addon").exists()) {
-	include("stress-addon")
-}
+import java.nio.file.Path;
+import java.util.Map;
 
-if (file("enhancements-addon").exists()) {
-	include("enhancements-addon")
-}
+public record MigrationContext(
+        JavaPlugin plugin,
+        Path pluginsFolder,
+        Map<String, String> pathOverrides) {
 
-if (file("proxy-addon").exists()) {
-	include("proxy-addon")
-}
-
-if (file("migrator-addon").exists()) {
-	include("migrator-addon")
+    public Path resolveOverride(String key, Path defaultPath) {
+        String override = pathOverrides.get(key);
+        if (override == null || override.isBlank()) {
+            return defaultPath;
+        }
+        return Path.of(override);
+    }
 }

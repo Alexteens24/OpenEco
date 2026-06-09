@@ -14,24 +14,10 @@
  * limitations under the License.
  */
 
-plugins {
-	id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
-}
+package dev.alexisbinh.openeco.migrator.model;
 
-rootProject.name = "OpenEco"
+import java.math.BigDecimal;
+import java.util.UUID;
 
-if (file("stress-addon").exists()) {
-	include("stress-addon")
-}
-
-if (file("enhancements-addon").exists()) {
-	include("enhancements-addon")
-}
-
-if (file("proxy-addon").exists()) {
-	include("proxy-addon")
-}
-
-if (file("migrator-addon").exists()) {
-	include("migrator-addon")
+public record ForeignAccount(UUID id, String name, BigDecimal balance) {
 }

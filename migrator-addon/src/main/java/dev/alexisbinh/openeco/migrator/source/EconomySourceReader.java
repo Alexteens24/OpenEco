@@ -14,24 +14,22 @@
  * limitations under the License.
  */
 
-plugins {
-	id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
-}
+package dev.alexisbinh.openeco.migrator.source;
 
-rootProject.name = "OpenEco"
+import dev.alexisbinh.openeco.migrator.model.ForeignAccount;
+import dev.alexisbinh.openeco.migrator.model.MigrationSource;
 
-if (file("stress-addon").exists()) {
-	include("stress-addon")
-}
+import java.io.IOException;
+import java.util.List;
 
-if (file("enhancements-addon").exists()) {
-	include("enhancements-addon")
-}
+public interface EconomySourceReader {
 
-if (file("proxy-addon").exists()) {
-	include("proxy-addon")
-}
+    MigrationSource source();
 
-if (file("migrator-addon").exists()) {
-	include("migrator-addon")
+    /** Human-readable location that will be scanned. */
+    String describeLocation(MigrationContext context);
+
+    boolean isAvailable(MigrationContext context);
+
+    List<ForeignAccount> read(MigrationContext context) throws IOException;
 }
