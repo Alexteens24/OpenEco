@@ -30,6 +30,6 @@ Permission: `openeco.migrator.admin`
 
 ## Supported sources
 
-`essentials`, `cmi`, `liteeco`, `xconomy`, `boseconomy`, `vault`
+`essentials`, `cmi`, `liteeco`, `xconomy`, `boseconomy`, `tne`, `playerpoints`, `vault`
 
 Full details, limitations, and workflows: [Migration Guide](../docs/migration.md).

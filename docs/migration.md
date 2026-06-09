@@ -47,9 +47,11 @@ Permission: `openeco.migrator.admin` (default: op)
 | `liteeco` | LiteEco | `plugins/LiteEco/database.db` |
 | `xconomy` | XConomy | `plugins/XConomy/playerdata/.../data.db` |
 | `boseconomy` | BOSEconomy7 | SQLite under `plugins/BOSEconomy/` (`accounts.db`, etc.) |
+| `tne` | TheNewEconomy | YAML `accounts/*.yml` or SQLite (`tne_accounts`, `tne_holdings`) |
+| `playerpoints` | PlayerPoints | SQLite (`pp_points`, etc.) or legacy `storage.yml` |
 | `vault` | Any Vault economy | Active Vault provider (see limitations below) |
 
-Alias examples: `ess`, `essentialsx`, `lite`, `xcon`, `bose`.
+Alias examples: `ess`, `essentialsx`, `lite`, `xcon`, `bose`, `theneweconomy`, `pp`.
 
 ### Addon config
 
@@ -63,6 +65,10 @@ paths:
   cmi-database: ""
   liteeco-database: ""
   xconomy-database: ""
+  tne-data: ""
+  tne-database: ""
+  playerpoints-data: ""
+  playerpoints-database: ""
 ```
 
 - `target-currency` must match a currency id in OpenEco's `currencies.definitions`.
@@ -84,10 +90,12 @@ Use `--overwrite` only when you intentionally replace balances for accounts that
 
 ### Limitations
 
-- **File/database readers** (Essentials, CMI, LiteEco, XConomy, BOSEconomy) work while OpenEco is already active. They read from disk; the old plugin does not need to be running.
+- **File/database readers** (Essentials, CMI, LiteEco, XConomy, BOSEconomy, TNE, PlayerPoints) work while OpenEco is already active. They read from disk; the old plugin does not need to be running.
 - **Vault** only works when the *source* economy is still registered as the Vault provider and is **not** OpenEco. After switching to OpenEco, use a file/database source instead.
 - **MySQL-backed CMI / XConomy / LiteEco** on remote hosts are not imported directly; copy or export the SQLite file locally first, or use a file-based source.
-- **TNE, PlayerPoints**, and other plugins are not supported yet.
+- **TNE multi-currency** accounts are merged into OpenEco's single target currency (VIRTUAL holdings are preferred; otherwise all holdings are summed).
+- **PlayerPoints** legacy tables that store usernames instead of UUIDs are skipped (use the modern SQLite export or `storage.yml` with UUID keys).
+- **MySQL-backed TNE / PlayerPoints** on remote hosts are not imported directly; copy the SQLite file locally first.
 
 ---
 

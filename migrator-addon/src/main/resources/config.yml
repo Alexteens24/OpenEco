@@ -21,3 +21,7 @@ paths:
   cmi-database: ""
   liteeco-database: ""
   xconomy-database: ""
+  tne-data: ""
+  tne-database: ""
+  playerpoints-data: ""
+  playerpoints-database: ""

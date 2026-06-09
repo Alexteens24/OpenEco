@@ -96,6 +96,83 @@ public final class MigrationTestSupport {
         return db;
     }
 
+    public static void createTneYamlAccount(Path pluginsDir, UUID id, String name, String balance) throws Exception {
+        Path accounts = pluginsDir.resolve("TheNewEconomy").resolve("accounts");
+        accounts.toFile().mkdirs();
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.set("Info.ID", id.toString());
+        yaml.set("Info.Name", name);
+        yaml.set("Info.Type", "player");
+        yaml.set("Holdings.Main Server.world."
+                + UUID.randomUUID() + ".VIRTUAL", balance);
+        yaml.save(accounts.resolve(id + ".yml").toFile());
+    }
+
+    public static Path createTneDatabase(Path pluginsDir, UUID id, String name, double balance) throws Exception {
+        Path db = pluginsDir.resolve("TheNewEconomy").resolve("database.db");
+        db.getParent().toFile().mkdirs();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + db);
+             Statement stmt = conn.createStatement()) {
+            stmt.execute("""
+                    CREATE TABLE tne_accounts (
+                        uid TEXT PRIMARY KEY,
+                        username TEXT NOT NULL,
+                        account_type TEXT NOT NULL,
+                        created TEXT NOT NULL,
+                        pin TEXT,
+                        status TEXT
+                    )
+                    """);
+            stmt.execute("""
+                    CREATE TABLE tne_holdings (
+                        uid TEXT NOT NULL,
+                        server TEXT NOT NULL,
+                        region TEXT NOT NULL,
+                        currency TEXT NOT NULL,
+                        holdings_type TEXT NOT NULL,
+                        holdings REAL NOT NULL
+                    )
+                    """);
+            stmt.execute("INSERT INTO tne_accounts (uid, username, account_type, created) VALUES ('"
+                    + id + "', '" + name + "', 'player', '2020-01-01')");
+            stmt.execute("INSERT INTO tne_holdings (uid, server, region, currency, holdings_type, holdings) VALUES ('"
+                    + id + "', 'Main', 'world', '" + UUID.randomUUID() + "', 'VIRTUAL', " + balance + ")");
+        }
+        return db;
+    }
+
+    public static Path createPlayerPointsDatabase(Path pluginsDir, UUID id, String name, int points) throws Exception {
+        Path db = pluginsDir.resolve("PlayerPoints").resolve("database.db");
+        db.getParent().toFile().mkdirs();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + db);
+             Statement stmt = conn.createStatement()) {
+            stmt.execute("""
+                    CREATE TABLE pp_points (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        uuid TEXT NOT NULL UNIQUE,
+                        points INTEGER NOT NULL
+                    )
+                    """);
+            stmt.execute("""
+                    CREATE TABLE pp_username_cache (
+                        uuid TEXT NOT NULL UNIQUE,
+                        username TEXT NOT NULL
+                    )
+                    """);
+            stmt.execute("INSERT INTO pp_points (uuid, points) VALUES ('" + id + "', " + points + ")");
+            stmt.execute("INSERT INTO pp_username_cache (uuid, username) VALUES ('" + id + "', '" + name + "')");
+        }
+        return db;
+    }
+
+    public static void createPlayerPointsLegacyStorage(Path pluginsDir, UUID id, int points) throws Exception {
+        Path folder = pluginsDir.resolve("PlayerPoints");
+        folder.toFile().mkdirs();
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.set("Points." + id, points);
+        yaml.save(folder.resolve("storage.yml").toFile());
+    }
+
     public static Path createCmiDatabase(Path pluginsDir, UUID id, String name, double balance) throws Exception {
         Path db = pluginsDir.resolve("CMI").resolve("cmi.sqlite.db");
         db.getParent().toFile().mkdirs();

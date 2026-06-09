@@ -29,7 +29,9 @@ public enum MigrationSource {
     LITECO("LiteEco", "LiteEco SQLite database (plugins/LiteEco/database.db)"),
     XCONOMY("XConomy", "XConomy SQLite data (plugins/XConomy/playerdata/...)"),
     VAULT("Vault", "Active Vault economy provider (source plugin must still be hooked)"),
-    BOSECONOMY("BOSEconomy7", "BOSEconomy SQLite (plugins/BOSEconomy/*.db)");
+    BOSECONOMY("BOSEconomy7", "BOSEconomy SQLite (plugins/BOSEconomy/*.db)"),
+    TNE("TheNewEconomy", "TNE YAML accounts or SQLite (plugins/TheNewEconomy/...)"),
+    PLAYERPOINTS("PlayerPoints", "PlayerPoints SQLite or legacy storage.yml");
 
     private final String displayName;
     private final String description;
@@ -63,6 +65,8 @@ public enum MigrationSource {
             case "lite_eco", "lite" -> Optional.of(LITECO);
             case "xcon", "x_conomy" -> Optional.of(XCONOMY);
             case "bose", "boseconomy" -> Optional.of(BOSECONOMY);
+            case "tne", "theneweconomy", "the_new_economy", "neweconomy" -> Optional.of(TNE);
+            case "playerpoints", "pp", "points" -> Optional.of(PLAYERPOINTS);
             default -> Optional.empty();
         };
     }

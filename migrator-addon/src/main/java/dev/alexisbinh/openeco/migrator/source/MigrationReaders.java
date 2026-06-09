@@ -34,6 +34,8 @@ public final class MigrationReaders {
         register(new XConomyDatabaseReader());
         register(new VaultEconomyReader());
         register(new BoseEconomyDatabaseReader());
+        register(new TneEconomyReader());
+        register(new PlayerPointsReader());
     }
 
     private MigrationReaders() {

@@ -85,6 +85,66 @@ class EconomySourceReaderTest {
     }
 
     @Test
+    void tneReaderLoadsYamlAccounts() throws Exception {
+        UUID id = UUID.randomUUID();
+        Path plugins = tempDir.resolve("plugins");
+        MigrationTestSupport.createTneYamlAccount(plugins, id, "Banker", "350.25");
+
+        TneEconomyReader reader = new TneEconomyReader();
+        MigrationContext context = MigrationTestSupport.context(plugins);
+        List<ForeignAccount> accounts = reader.read(context);
+
+        assertEquals(1, accounts.size());
+        assertEquals(id, accounts.getFirst().id());
+        assertEquals("Banker", accounts.getFirst().name());
+        assertEquals(0, new BigDecimal("350.25").compareTo(accounts.getFirst().balance()));
+    }
+
+    @Test
+    void tneReaderLoadsSqliteAccounts() throws Exception {
+        UUID id = UUID.randomUUID();
+        Path plugins = tempDir.resolve("plugins");
+        MigrationTestSupport.createTneDatabase(plugins, id, "Trader", 120.50);
+
+        TneEconomyReader reader = new TneEconomyReader();
+        MigrationContext context = MigrationTestSupport.context(plugins);
+        List<ForeignAccount> accounts = reader.read(context);
+
+        assertEquals(1, accounts.size());
+        assertEquals(0, new BigDecimal("120.50").compareTo(accounts.getFirst().balance()));
+    }
+
+    @Test
+    void playerPointsReaderLoadsSqliteAccounts() throws Exception {
+        UUID id = UUID.randomUUID();
+        Path plugins = tempDir.resolve("plugins");
+        MigrationTestSupport.createPlayerPointsDatabase(plugins, id, "Collector", 5000);
+
+        PlayerPointsReader reader = new PlayerPointsReader();
+        MigrationContext context = MigrationTestSupport.context(plugins);
+        List<ForeignAccount> accounts = reader.read(context);
+
+        assertEquals(1, accounts.size());
+        assertEquals("Collector", accounts.getFirst().name());
+        assertEquals(0, new BigDecimal("5000").compareTo(accounts.getFirst().balance()));
+    }
+
+    @Test
+    void playerPointsReaderLoadsLegacyYaml() throws Exception {
+        UUID id = UUID.randomUUID();
+        Path plugins = tempDir.resolve("plugins");
+        MigrationTestSupport.createPlayerPointsLegacyStorage(plugins, id, 250);
+
+        PlayerPointsReader reader = new PlayerPointsReader();
+        MigrationContext context = MigrationTestSupport.context(plugins);
+        List<ForeignAccount> accounts = reader.read(context);
+
+        assertEquals(1, accounts.size());
+        assertEquals(id, accounts.getFirst().id());
+        assertEquals(0, new BigDecimal("250").compareTo(accounts.getFirst().balance()));
+    }
+
+    @Test
     void cmiReaderLoadsSqliteAccounts() throws Exception {
         UUID id = UUID.randomUUID();
         Path plugins = tempDir.resolve("plugins");

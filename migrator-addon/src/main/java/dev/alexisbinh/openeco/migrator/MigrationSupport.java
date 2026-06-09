@@ -30,6 +30,10 @@ final class MigrationSupport {
                 "essentials-userdata", plugin.getConfig().getString("paths.essentials-userdata", ""),
                 "cmi-database", plugin.getConfig().getString("paths.cmi-database", ""),
                 "liteeco-database", plugin.getConfig().getString("paths.liteeco-database", ""),
-                "xconomy-database", plugin.getConfig().getString("paths.xconomy-database", ""));
+                "xconomy-database", plugin.getConfig().getString("paths.xconomy-database", ""),
+                "tne-data", plugin.getConfig().getString("paths.tne-data", ""),
+                "tne-database", plugin.getConfig().getString("paths.tne-database", ""),
+                "playerpoints-data", plugin.getConfig().getString("paths.playerpoints-data", ""),
+                "playerpoints-database", plugin.getConfig().getString("paths.playerpoints-database", ""));
     }
 }
