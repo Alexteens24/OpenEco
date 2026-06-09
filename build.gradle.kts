@@ -36,7 +36,7 @@ plugins {
 }
 
 group = "dev.alexisbinh"
-version = "1.4.2"
+version = "1.4.3"
 
 java {
     toolchain {
