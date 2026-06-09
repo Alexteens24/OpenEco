@@ -17,7 +17,6 @@
 package dev.alexisbinh.openeco.command;
 
 import dev.alexisbinh.openeco.OpenEcoPlugin;
-import dev.alexisbinh.openeco.api.EconomyMigrationBridge;
 import dev.alexisbinh.openeco.service.AccountService;
 import dev.alexisbinh.openeco.storage.DatabaseDialect;
 import dev.alexisbinh.openeco.storage.JdbcAccountRepository;
@@ -28,7 +27,6 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
-import org.bukkit.plugin.RegisteredServiceProvider;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -82,8 +80,7 @@ public final class MigrateCommand implements CommandExecutor, TabCompleter {
             return handleStorage(sender, source, scan, dryRun, overwrite);
         }
 
-        EconomyMigrationBridge bridge = economyBridge();
-        if (bridge == null) {
+        if (!EconomyMigrationInvoker.isAvailable()) {
             sender.sendMessage("§cEconomy plugin import requires the §fOpenEcoMigrator §caddon.");
             sender.sendMessage("§7Storage migration: §f/" + label + " sqlitetomysql §7or §f/" + label + " mysqltosqlite");
             return true;
@@ -91,13 +88,13 @@ public final class MigrateCommand implements CommandExecutor, TabCompleter {
 
         try {
             if (scan) {
-                bridge.scan(sender, source);
+                EconomyMigrationInvoker.scan(sender, source);
             } else {
-                bridge.migrate(sender, source, dryRun, overwrite);
+                EconomyMigrationInvoker.migrate(sender, source, dryRun, overwrite);
             }
-        } catch (Exception e) {
-            sender.sendMessage("§cMigration failed: " + e.getMessage());
-            plugin.getLogger().warning("Economy migration failed: " + e.getMessage());
+        } catch (ReflectiveOperationException e) {
+            sender.sendMessage("§cMigration failed: " + rootMessage(e));
+            plugin.getLogger().warning("Economy migration failed: " + rootMessage(e));
         }
         return true;
     }
@@ -237,10 +234,12 @@ public final class MigrateCommand implements CommandExecutor, TabCompleter {
         }
     }
 
-    private static EconomyMigrationBridge economyBridge() {
-        RegisteredServiceProvider<EconomyMigrationBridge> rsp =
-                org.bukkit.Bukkit.getServicesManager().getRegistration(EconomyMigrationBridge.class);
-        return rsp == null ? null : rsp.getProvider();
+    private static String rootMessage(Throwable throwable) {
+        Throwable cause = throwable;
+        while (cause.getCause() != null) {
+            cause = cause.getCause();
+        }
+        return cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage();
     }
 
     private static boolean hasFlag(String[] args, String flag) {
@@ -261,9 +260,12 @@ public final class MigrateCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage("§6/" + label + " <source> [flags]");
         sender.sendMessage("§7Flags: §f--scan §7preview, §f--dry-run §7preview import, §f--overwrite §7replace target data");
         sender.sendMessage("§7Storage: §fsqlitetomysql§7, §fmysqltosqlite");
-        EconomyMigrationBridge bridge = economyBridge();
-        if (bridge != null) {
-            bridge.sendSourceList(sender);
+        if (EconomyMigrationInvoker.isAvailable()) {
+            try {
+                EconomyMigrationInvoker.sendSourceList(sender);
+            } catch (ReflectiveOperationException ignored) {
+                sender.sendMessage("§7Economy sources: §8(OpenEcoMigrator failed to list sources)");
+            }
         } else {
             sender.sendMessage("§7Economy sources: §8(install OpenEcoMigrator addon)");
         }
@@ -278,9 +280,8 @@ public final class MigrateCommand implements CommandExecutor, TabCompleter {
         }
         if (args.length == 1) {
             List<String> options = new ArrayList<>(STORAGE_SOURCES);
-            EconomyMigrationBridge bridge = economyBridge();
-            if (bridge != null) {
-                options.addAll(bridge.sourceIds());
+            if (EconomyMigrationInvoker.isAvailable()) {
+                options.addAll(EconomyMigrationInvoker.sourceIds());
             }
             return filterPrefix(options, args[0]);
         }

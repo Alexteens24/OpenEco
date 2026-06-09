@@ -21,7 +21,7 @@ authors:
   - alexisbinh
 
 depend:
-  - OpenEco
+  - openeco
 
 permissions:
   openeco.migrator.admin:
