@@ -195,9 +195,10 @@ public class OpenEcoPlugin extends JavaPlugin {
         HikariConfig cfg = new HikariConfig();
         cfg.setJdbcUrl(switch (dialect) {
             case MYSQL    -> "jdbc:mysql://" + host + ":" + port + "/" + database
-                           + "?useSSL=false&serverTimezone=UTC&characterEncoding=utf8&allowReconnect=true";
+                           + "?useUnicode=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=UTC"
+                           + "&allowPublicKeyRetrieval=true";
             case MARIADB  -> "jdbc:mariadb://" + host + ":" + port + "/" + database
-                           + "?characterEncoding=utf8";
+                           + "?useUnicode=true&characterEncoding=UTF-8&allowPublicKeyRetrieval=true";
             case POSTGRESQL -> "jdbc:postgresql://" + host + ":" + port + "/" + database;
             default -> throw new IllegalStateException("Unexpected remote dialect: " + dialect);
         });

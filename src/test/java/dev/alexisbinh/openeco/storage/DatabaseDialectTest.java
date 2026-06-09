@@ -23,12 +23,29 @@ import static org.junit.jupiter.api.Assertions.*;
 class DatabaseDialectTest {
 
     @Test
-    void mysqlAndMariaDbDoNotUseCreateIndexIfNotExists() {
-        for (DatabaseDialect dialect : new DatabaseDialect[] {DatabaseDialect.MYSQL, DatabaseDialect.MARIADB}) {
-            assertFalse(dialect.supportsCreateIndexIfNotExists(), dialect.name());
-            assertFalse(dialect.createNameIndexSql().toUpperCase().contains("IF NOT EXISTS"), dialect.name());
-            assertFalse(dialect.createTransactionIndexSql().toUpperCase().contains("IF NOT EXISTS"), dialect.name());
-        }
+    void mysqlDoesNotUseCreateIndexIfNotExists() {
+        DatabaseDialect dialect = DatabaseDialect.MYSQL;
+        assertFalse(dialect.supportsCreateIndexIfNotExists());
+        assertFalse(dialect.createNameIndexSql().toUpperCase().contains("IF NOT EXISTS"));
+        assertFalse(dialect.createTransactionIndexSql().toUpperCase().contains("IF NOT EXISTS"));
+        assertEquals("idx_accounts_name_lower", dialect.accountsNameIndexName());
+        assertTrue(dialect.createNameIndexSql().contains("LOWER(name)"));
+    }
+
+    @Test
+    void mysqlUsesRowAliasUpsertSyntax() {
+        String upsert = DatabaseDialect.MYSQL.upsertSql().toUpperCase();
+        assertTrue(upsert.contains(" AS NEW "));
+        assertFalse(upsert.contains("VALUES(NAME)"));
+    }
+
+    @Test
+    void mariadbKeepsValuesUpsertAndSupportsCreateIndexIfNotExists() {
+        DatabaseDialect dialect = DatabaseDialect.MARIADB;
+        assertTrue(dialect.supportsCreateIndexIfNotExists());
+        assertTrue(dialect.createNameIndexSql().toUpperCase().contains("IF NOT EXISTS"));
+        assertTrue(dialect.createTransactionIndexSql().toUpperCase().contains("IF NOT EXISTS"));
+        assertTrue(dialect.upsertSql().toUpperCase().contains("VALUES(NAME)"));
     }
 
     @Test

@@ -76,21 +76,21 @@ public enum DatabaseDialect {
 
         @Override
         public String upsertSql() {
-            return "INSERT INTO accounts(id,name,balance,created_at,updated_at,frozen) VALUES(?,?,?,?,?,?) "
+            return "INSERT INTO accounts(id,name,balance,created_at,updated_at,frozen) VALUES(?,?,?,?,?,?) AS new "
                  + "ON DUPLICATE KEY UPDATE "
-                 + "name=VALUES(name), balance=VALUES(balance), updated_at=VALUES(updated_at), frozen=VALUES(frozen)";
+                 + "name=new.name, balance=new.balance, updated_at=new.updated_at, frozen=new.frozen";
         }
 
         @Override
         public String balanceUpsertSql() {
-            return "INSERT INTO account_balances(account_id,currency_id,balance,updated_at) VALUES(?,?,?,?) "
+            return "INSERT INTO account_balances(account_id,currency_id,balance,updated_at) VALUES(?,?,?,?) AS new "
                  + "ON DUPLICATE KEY UPDATE "
-                 + "balance=VALUES(balance), updated_at=VALUES(updated_at)";
+                 + "balance=new.balance, updated_at=new.updated_at";
         }
 
         @Override
         public String createNameIndexSql() {
-            return "CREATE INDEX idx_accounts_name ON accounts(name)";
+            return "CREATE INDEX idx_accounts_name_lower ON accounts ((LOWER(name)))";
         }
 
         @Override
@@ -100,11 +100,6 @@ public enum DatabaseDialect {
     },
 
     MARIADB {
-        @Override
-        public String createTransactionIndexSql() {
-            return "CREATE INDEX idx_tx_target_ts ON transactions(target_id, ts DESC)";
-        }
-
         @Override
         public String upsertSql() {
             return "INSERT INTO accounts(id,name,balance,created_at,updated_at,frozen) VALUES(?,?,?,?,?,?) "
@@ -121,12 +116,7 @@ public enum DatabaseDialect {
 
         @Override
         public String createNameIndexSql() {
-            return "CREATE INDEX idx_accounts_name ON accounts(name)";
-        }
-
-        @Override
-        public boolean supportsCreateIndexIfNotExists() {
-            return false;
+            return "CREATE INDEX IF NOT EXISTS idx_accounts_name ON accounts(name)";
         }
     },
 
@@ -163,7 +153,7 @@ public enum DatabaseDialect {
 
     public String accountsNameIndexName() {
         return switch (this) {
-            case SQLITE, POSTGRESQL -> "idx_accounts_name_lower";
+            case SQLITE, POSTGRESQL, MYSQL -> "idx_accounts_name_lower";
             default -> "idx_accounts_name";
         };
     }
