@@ -70,6 +70,11 @@ public enum DatabaseDialect {
 
     MYSQL {
         @Override
+        public String createTransactionIndexSql() {
+            return "CREATE INDEX idx_tx_target_ts ON transactions(target_id, ts DESC)";
+        }
+
+        @Override
         public String upsertSql() {
             return "INSERT INTO accounts(id,name,balance,created_at,updated_at,frozen) VALUES(?,?,?,?,?,?) "
                  + "ON DUPLICATE KEY UPDATE "
@@ -85,12 +90,22 @@ public enum DatabaseDialect {
 
         @Override
         public String createNameIndexSql() {
-            return "CREATE INDEX IF NOT EXISTS idx_accounts_name ON accounts(name)";
+            return "CREATE INDEX idx_accounts_name ON accounts(name)";
+        }
+
+        @Override
+        public boolean supportsCreateIndexIfNotExists() {
+            return false;
         }
     },
 
     MARIADB {
         @Override
+        public String createTransactionIndexSql() {
+            return "CREATE INDEX idx_tx_target_ts ON transactions(target_id, ts DESC)";
+        }
+
+        @Override
         public String upsertSql() {
             return "INSERT INTO accounts(id,name,balance,created_at,updated_at,frozen) VALUES(?,?,?,?,?,?) "
                  + "ON DUPLICATE KEY UPDATE "
@@ -106,7 +121,12 @@ public enum DatabaseDialect {
 
         @Override
         public String createNameIndexSql() {
-            return "CREATE INDEX IF NOT EXISTS idx_accounts_name ON accounts(name)";
+            return "CREATE INDEX idx_accounts_name ON accounts(name)";
+        }
+
+        @Override
+        public boolean supportsCreateIndexIfNotExists() {
+            return false;
         }
     },
 
@@ -136,6 +156,21 @@ public enum DatabaseDialect {
     public abstract String balanceUpsertSql();
 
     public abstract String createNameIndexSql();
+
+    public String createTransactionIndexSql() {
+        return "CREATE INDEX IF NOT EXISTS idx_tx_target_ts ON transactions(target_id, ts DESC)";
+    }
+
+    public String accountsNameIndexName() {
+        return switch (this) {
+            case SQLITE, POSTGRESQL -> "idx_accounts_name_lower";
+            default -> "idx_accounts_name";
+        };
+    }
+
+    public boolean supportsCreateIndexIfNotExists() {
+        return true;
+    }
 
     /**
      * Returns the JDBC URL for local file-based backends (SQLite, H2).

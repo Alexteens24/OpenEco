@@ -95,7 +95,8 @@ public class JdbcAccountRepository implements AccountRepository {
                         updated_at BIGINT        NOT NULL
                     )
                     """);
-                stmt.execute(dialect.createNameIndexSql());
+                createIndexIfMissing(conn, stmt, "accounts", dialect.accountsNameIndexName(),
+                        dialect.createNameIndexSql());
                 stmt.execute("""
                     CREATE TABLE IF NOT EXISTS account_balances (
                         account_id  VARCHAR(36)   NOT NULL,
@@ -121,7 +122,8 @@ public class JdbcAccountRepository implements AccountRepository {
                 ensureColumn(conn, stmt, "transactions", "currency_id",
                         "VARCHAR(32) NOT NULL DEFAULT '" + sqlLiteral(defaultCurrencyId) + "'");
                 ensureColumn(conn, stmt, "accounts", "frozen", "BOOLEAN NOT NULL DEFAULT FALSE");
-                stmt.execute("CREATE INDEX IF NOT EXISTS idx_tx_target_ts ON transactions(target_id, ts DESC)");
+                createIndexIfMissing(conn, stmt, "transactions", "idx_tx_target_ts",
+                        dialect.createTransactionIndexSql());
                 backfillDefaultBalances(conn);
                 backfillTransactionCurrencies(conn);
                 conn.commit();
@@ -132,6 +134,33 @@ public class JdbcAccountRepository implements AccountRepository {
                 conn.setAutoCommit(true);
             }
         }
+    }
+
+    private void createIndexIfMissing(Connection conn, Statement stmt, String tableName,
+                                      String indexName, String createIndexSql) throws SQLException {
+        if (!dialect.supportsCreateIndexIfNotExists() && indexExists(conn, tableName, indexName)) {
+            return;
+        }
+        stmt.execute(createIndexSql);
+    }
+
+    private boolean indexExists(Connection conn, String tableName, String indexName) throws SQLException {
+        DatabaseMetaData metaData = conn.getMetaData();
+        return hasIndex(metaData, tableName, indexName)
+                || hasIndex(metaData, tableName.toUpperCase(Locale.ROOT), indexName.toUpperCase(Locale.ROOT))
+                || hasIndex(metaData, tableName.toLowerCase(Locale.ROOT), indexName.toLowerCase(Locale.ROOT));
+    }
+
+    private static boolean hasIndex(DatabaseMetaData metaData, String tableName, String indexName) throws SQLException {
+        try (ResultSet rs = metaData.getIndexInfo(null, null, tableName, false, false)) {
+            while (rs.next()) {
+                String found = rs.getString("INDEX_NAME");
+                if (found != null && found.equalsIgnoreCase(indexName)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private void ensureColumn(Connection conn, Statement stmt, String tableName,
