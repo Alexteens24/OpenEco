@@ -17,4 +17,6 @@
 | `openeco.command.eco.unfreeze` | op | Unfreeze an account |
 | `openeco.command.eco.rename` | op | Rename an account's display name |
 | `openeco.command.eco.reload` | op | Reload config and messages |
+| `openeco.command.storage` | op | Migrate OpenEco storage between backends (`/openecostorage`) |
+| `openeco.migrator.admin` | op | Use OpenEcoMigrator commands (`/openemomigrate`; addon) |
 | `openeco.admin` | op | Grants all admin permissions above |

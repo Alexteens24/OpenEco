@@ -39,7 +39,7 @@ currencies:
 
 storage:
   # Backend to use: sqlite, h2, mysql, mariadb, or postgresql
-  # Changing backend or file name does not migrate existing data automatically.
+  # Changing backend or file name does not move data by itself; use /openecostorage migrate (see docs/migration.md).
   type: sqlite
   sqlite:
     file: economy.db

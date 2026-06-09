@@ -68,15 +68,29 @@ Use MySQL, MariaDB, or PostgreSQL only when you need one shared database for bac
 
 ### Backend Changes
 
-Changing `storage.type` or changing the configured database file name does not move old data.
+Changing `storage.type` or the configured database file name does not move old data automatically.
 
-Safe process:
+**Local → remote (SQLite/H2 → MySQL/MariaDB/PostgreSQL):**
+
+1. Back up `plugins/openeco/`.
+2. Configure the target block (`storage.mysql`, etc.).
+3. While still on `storage.type: sqlite` (or `h2`), run `/openecostorage scan <target>` then `/openecostorage migrate <target>`.
+4. Change `storage.type` to the target backend.
+5. Restart and verify balances and history.
+
+See [Migration Guide](migration.md) for details, `--dry-run`, and `--overwrite`.
+
+**Manual / other cases:**
 
 1. Stop the server.
-2. Back up `plugins/OpenEco/`.
-3. Move or copy the old database yourself.
+2. Back up `plugins/openeco/`.
+3. Move or copy the database with your own tools.
 4. Change config.
-5. Start the server and verify balances and history before reopening.
+5. Start the server and verify before reopening.
+
+### Switching From Another Economy Plugin
+
+Install the **OpenEcoMigrator** addon and use `/openemomigrate` to import balances from EssentialsX, CMI, LiteEco, XConomy, BOSEconomy, or Vault. See [Migration Guide](migration.md).
 
 ## Recommended Starting Values
 

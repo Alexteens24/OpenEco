@@ -17,9 +17,13 @@ What it does:
 
 What it does not do:
 
-- Automatic migration between storage backends or file names.
 - Real-time distributed balance broadcasts to every backend server.
 - Safe simultaneous writes to the same account from multiple live backends without controlled player handoff.
+
+Migration (admin tools, not automatic):
+
+- **OpenEcoMigrator** addon — import balances from EssentialsX, CMI, LiteEco, XConomy, BOSEconomy, or Vault.
+- **`/openecostorage`** — copy OpenEco data from SQLite/H2 into MySQL, MariaDB, or PostgreSQL.
 
 ## Requirements
 
@@ -34,9 +38,9 @@ OpenEco depends on runtime plugin name `Vault`, which is provided by both Vault 
 
 1. Put `OpenEco-<version>.jar` in `plugins/`.
 2. Install Vault (legacy) or VaultUnlocked.
-3. Start the server once to generate `plugins/OpenEco/config.yml`.
+3. Start the server once to generate `plugins/openeco/config.yml`.
 4. Stop the server and review the config.
-5. Back up `plugins/OpenEco/` before opening the server.
+5. Back up `plugins/openeco/` before opening the server.
 6. Start the server again and verify `/balance`, `/baltop`, and `/history`.
 
 ## Network Mode
@@ -67,8 +71,11 @@ This mode is for player handoff between backends. It is not a real-time distribu
 | `/eco rename <player> <newname>` | Rename an account display name | `openeco.command.eco.rename` |
 | `/eco reload` | Reload config and messages | `openeco.command.eco.reload` |
 | `/history [player] [page] [currency]` | View transaction history | `openeco.command.history` |
+| `/openecostorage <list\|scan\|migrate> [target]` | Migrate local DB to MySQL/MariaDB/PostgreSQL | `openeco.command.storage` |
 
 `openeco.admin` grants all admin permissions.
+
+**OpenEcoMigrator addon:** `/openemomigrate list|scan|run` — see [Migration Guide](docs/migration.md).
 
 ## Owner Notes
 
@@ -83,6 +90,7 @@ This mode is for player handoff between backends. It is not a real-time distribu
 
 ## Guides
 
+- [Migration Guide](docs/migration.md)
 - [Production Guide](docs/production.md)
 - [Developer Guide](docs/development.md)
 - [Configuration](docs/configuration.md)
