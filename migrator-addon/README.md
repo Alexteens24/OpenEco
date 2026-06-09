@@ -2,7 +2,7 @@
 
 Addon for [OpenEco](../README.md) that imports player balances from other economy plugins.
 
-Requires **OpenEco** on the same server.
+Requires **OpenEco** on the same server. Registers economy sources with `/openecomigrate`.
 
 ## Build
 
@@ -20,16 +20,14 @@ Output: `migrator-addon/build/libs/OpenEcoMigrator-<version>.jar`
 
 ## Commands
 
-| Command | Description |
-|---|---|
-| `/openemomigrate list` | Supported sources |
-| `/openemomigrate scan <source>` | Preview account count and total balance |
-| `/openemomigrate run <source> [--dry-run] [--overwrite]` | Import into OpenEco |
+All migration commands are on the main plugin:
+
+```
+/openecomigrate <source> [--scan] [--dry-run] [--overwrite]
+```
+
+Economy sources: `essentials`, `cmi`, `liteeco`, `xconomy`, `boseconomy`, `tne`, `playerpoints`, `vault`
 
 Permission: `openeco.migrator.admin`
 
-## Supported sources
-
-`essentials`, `cmi`, `liteeco`, `xconomy`, `boseconomy`, `tne`, `playerpoints`, `vault`
-
-Full details, limitations, and workflows: [Migration Guide](../docs/migration.md).
+Full details: [Migration Guide](../docs/migration.md).

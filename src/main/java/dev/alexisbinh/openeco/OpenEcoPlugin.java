@@ -134,9 +134,9 @@ public class OpenEcoPlugin extends JavaPlugin {
         HistoryCommand history = new HistoryCommand(service, this, messages);
         getCommand("history").setExecutor(history);
         getCommand("history").setTabCompleter(history);
-        StorageCommand storage = new StorageCommand(this, service);
-        getCommand("openecostorage").setExecutor(storage);
-        getCommand("openecostorage").setTabCompleter(storage);
+        MigrateCommand migrate = new MigrateCommand(this, service);
+        getCommand("openecomigrate").setExecutor(migrate);
+        getCommand("openecomigrate").setTabCompleter(migrate);
 
         // ── Listener ──────────────────────────────────────────────────────────
         getServer().getPluginManager().registerEvents(

@@ -85,7 +85,7 @@ Notes:
 - `sqlite` and `h2` are local file backends under `plugins/openeco/`.
 - `mysql`, `mariadb`, and `postgresql` are remote JDBC backends.
 - `sqlite` is the default.
-- Changing `storage.type` or the configured file name does not move data by itself. Use `/openecostorage migrate` or follow [Migration Guide](migration.md).
+- Changing `storage.type` or the configured file name does not move data by itself. Use `/openecomigrate sqlitetomysql` or follow [Migration Guide](migration.md).
 
 ### Storage migration settings
 
@@ -99,7 +99,7 @@ storage:
 
 Notes:
 
-- Used by `/openecostorage` when importing from a local backup while the server already runs on a remote backend.
+- Used by `/openecomigrate sqlitetomysql` when importing from a local backup while the server already runs on a remote backend.
 - Leave `source-folder` and `source-file` empty to read from the active local database.
 - See [Migration Guide](migration.md) for the full workflow.
 

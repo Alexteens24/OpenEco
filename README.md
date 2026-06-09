@@ -23,7 +23,7 @@ What it does not do:
 Migration (admin tools, not automatic):
 
 - **OpenEcoMigrator** addon — import balances from EssentialsX, CMI, LiteEco, XConomy, BOSEconomy, or Vault.
-- **`/openecostorage`** — copy OpenEco data from SQLite/H2 into MySQL, MariaDB, or PostgreSQL.
+- **`/openecomigrate`** — import from other economy plugins or migrate storage (`sqlitetomysql` / `mysqltosqlite`).
 
 ## Requirements
 
@@ -71,11 +71,11 @@ This mode is for player handoff between backends. It is not a real-time distribu
 | `/eco rename <player> <newname>` | Rename an account display name | `openeco.command.eco.rename` |
 | `/eco reload` | Reload config and messages | `openeco.command.eco.reload` |
 | `/history [player] [page] [currency]` | View transaction history | `openeco.command.history` |
-| `/openecostorage <list\|scan\|migrate> [target]` | Migrate local DB to MySQL/MariaDB/PostgreSQL | `openeco.command.storage` |
+| `/openecomigrate <source> [flags]` | Import economy data or migrate storage | `openeco.migrator.admin` |
 
 `openeco.admin` grants all admin permissions.
 
-**OpenEcoMigrator addon:** `/openemomigrate list|scan|run` — see [Migration Guide](docs/migration.md).
+**OpenEcoMigrator addon** adds economy plugin sources to `/openecomigrate` — see [Migration Guide](docs/migration.md).
 
 ## Owner Notes
 

@@ -1,170 +1,113 @@
 # Migration Guide
 
-OpenEco supports two migration paths:
+OpenEco uses one admin command for every migration path:
 
-1. **Economy plugin import** — move player balances from another economy plugin into OpenEco (`OpenEcoMigrator` addon).
-2. **Storage backend import** — copy OpenEco's own data from a local SQLite/H2 file into MySQL, MariaDB, or PostgreSQL (built into the main plugin).
+```
+/openecomigrate <source> [--scan] [--dry-run] [--overwrite]
+```
 
-Both are admin-only, maintenance-window operations. Back up before you run them.
+Permission: `openeco.migrator.admin` (default: op)
+
+**Economy plugin import** needs the **OpenEcoMigrator** addon. **Storage migration** is built into the main OpenEco jar.
+
+Back up before you run anything. Prefer maintenance mode.
 
 ## Before You Start
 
 1. Stop player traffic or put the server in maintenance mode.
 2. Back up `plugins/openeco/` (and any source plugin folders you import from).
-3. Run `scan`, then `run` with `--dry-run`, then `run` without flags.
+3. Run `--scan`, then `--dry-run`, then the command without flags.
 4. Spot-check balances and `/history` for a few players before reopening.
 
 ---
 
-## Economy Plugin Import (OpenEcoMigrator)
+## Economy plugin import
 
-Install **OpenEco** and **OpenEcoMigrator** together. The migrator is a separate jar built from the `migrator-addon` module:
+Install **OpenEco** and **OpenEcoMigrator** together:
 
 ```bash
 ./gradlew shadowJar :migrator-addon:jar
 ```
 
-Copy `build/libs/OpenEco-<version>.jar` and `migrator-addon/build/libs/OpenEcoMigrator-<version>.jar` into `plugins/`.
+Copy both jars into `plugins/`.
 
-### Commands
+### Usage
 
 | Command | Description |
 |---|---|
-| `/openemomigrate list` | List supported sources and auto-detect status |
-| `/openemomigrate scan <source>` | Count accounts and total balance |
-| `/openemomigrate run <source> [--dry-run] [--overwrite]` | Import into OpenEco |
+| `/openecomigrate` | Show help and list sources |
+| `/openecomigrate <source> --scan` | Count accounts and total balance |
+| `/openecomigrate <source> --dry-run` | Preview import without writing |
+| `/openecomigrate <source>` | Import into OpenEco |
+| `/openecomigrate <source> --overwrite` | Replace existing OpenEco balances |
 
-Aliases: `/oemigrate`, `/ecoimport`
+### Supported economy sources
 
-Permission: `openeco.migrator.admin` (default: op)
-
-### Supported sources
-
-| Source ID | Plugin | Data location |
+| Source | Plugin | Data location |
 |---|---|---|
-| `essentials` | EssentialsX | `plugins/Essentials/userdata/*.yml` (`money`, `last-account-name`) |
-| `cmi` | CMI | SQLite `users` / `CMI_users` table under `plugins/CMI/` |
+| `essentials` | EssentialsX | `plugins/Essentials/userdata/*.yml` |
+| `cmi` | CMI | SQLite under `plugins/CMI/` |
 | `liteeco` | LiteEco | `plugins/LiteEco/database.db` |
 | `xconomy` | XConomy | `plugins/XConomy/playerdata/.../data.db` |
-| `boseconomy` | BOSEconomy7 | SQLite under `plugins/BOSEconomy/` (`accounts.db`, etc.) |
-| `tne` | TheNewEconomy | YAML `accounts/*.yml` or SQLite (`tne_accounts`, `tne_holdings`) |
-| `playerpoints` | PlayerPoints | SQLite (`pp_points`, etc.) or legacy `storage.yml` |
-| `vault` | Any Vault economy | Active Vault provider (see limitations below) |
+| `boseconomy` | BOSEconomy7 | SQLite under `plugins/BOSEconomy/` |
+| `tne` | TheNewEconomy | YAML `accounts/*.yml` or SQLite |
+| `playerpoints` | PlayerPoints | SQLite or legacy `storage.yml` |
+| `vault` | Any Vault economy | Active Vault provider (see limitations) |
 
-Alias examples: `ess`, `essentialsx`, `lite`, `xcon`, `bose`, `theneweconomy`, `pp`.
+Alias examples: `ess`, `lite`, `xcon`, `bose`, `theneweconomy`, `pp`.
 
 ### Addon config
 
-File: `plugins/OpenEcoMigrator/config.yml`
+File: `plugins/OpenEcoMigrator/config.yml` — `target-currency` and optional `paths.*` overrides.
 
-```yaml
-target-currency: openeco
-
-paths:
-  essentials-userdata: ""
-  cmi-database: ""
-  liteeco-database: ""
-  xconomy-database: ""
-  tne-data: ""
-  tne-database: ""
-  playerpoints-data: ""
-  playerpoints-database: ""
-```
-
-- `target-currency` must match a currency id in OpenEco's `currencies.definitions`.
-- Leave path overrides empty to auto-detect under `plugins/`.
-
-### Recommended workflow
+### Example workflow
 
 ```
-1. Install OpenEco + OpenEcoMigrator; keep the old economy plugin installed until import succeeds.
-2. /openemomigrate list
-3. /openemomigrate scan essentials
-4. /openemomigrate run essentials --dry-run
-5. /openemomigrate run essentials
-6. Verify /balance for several players.
-7. Disable or remove the old economy plugin; ensure OpenEco is the Vault provider.
+/openecomigrate essentials --scan
+/openecomigrate essentials --dry-run
+/openecomigrate essentials
 ```
-
-Use `--overwrite` only when you intentionally replace balances for accounts that already exist in OpenEco.
 
 ### Limitations
 
-- **File/database readers** (Essentials, CMI, LiteEco, XConomy, BOSEconomy, TNE, PlayerPoints) work while OpenEco is already active. They read from disk; the old plugin does not need to be running.
-- **Vault** only works when the *source* economy is still registered as the Vault provider and is **not** OpenEco. After switching to OpenEco, use a file/database source instead.
-- **MySQL-backed CMI / XConomy / LiteEco** on remote hosts are not imported directly; copy or export the SQLite file locally first, or use a file-based source.
-- **TNE multi-currency** accounts are merged into OpenEco's single target currency (VIRTUAL holdings are preferred; otherwise all holdings are summed).
-- **PlayerPoints** legacy tables that store usernames instead of UUIDs are skipped (use the modern SQLite export or `storage.yml` with UUID keys).
-- **MySQL-backed TNE / PlayerPoints** on remote hosts are not imported directly; copy the SQLite file locally first.
+- File/database readers work while OpenEco is active; the old plugin does not need to run.
+- **Vault** only works when the source economy is still the active Vault provider.
+- Remote MySQL data for CMI / XConomy / LiteEco / TNE / PlayerPoints: copy the SQLite file locally first.
+- **TNE multi-currency** is merged into one OpenEco currency (VIRTUAL holdings preferred).
+- **PlayerPoints** legacy username-only rows are skipped.
 
 ---
 
-## Storage Backend Import (`/openecostorage`)
+## Storage backend migration
 
-Built into the main OpenEco jar. Copies `accounts`, `account_balances`, and `transactions` from the active local database (or a backup file) into a remote JDBC backend.
+Built into OpenEco. Uses `storage.mysql` connection settings in `plugins/openeco/config.yml`.
 
-### Commands
+### Usage
 
 | Command | Description |
 |---|---|
-| `/openecostorage list` | Show supported source and target backends |
-| `/openecostorage scan <mysql\|mariadb\|postgresql>` | Count rows in source and target |
-| `/openecostorage migrate <target> [--dry-run] [--overwrite]` | Copy data into the remote database |
+| `/openecomigrate sqlitetomysql --scan` | Count rows in local SQLite and remote MySQL |
+| `/openecomigrate sqlitetomysql --dry-run` | Preview copy to MySQL |
+| `/openecomigrate sqlitetomysql --overwrite` | Copy data into MySQL |
+| `/openecomigrate mysqltosqlite --scan` | Count rows when exporting MySQL to local file |
+| `/openecomigrate mysqltosqlite --overwrite` | Copy MySQL data into local SQLite |
 
-Aliases: `/ecostorage`, `/openecodb`
+After `sqlitetomysql`, set `storage.type: mysql` and restart. After `mysqltosqlite`, set `storage.type: sqlite` and restart.
 
-Permission: `openeco.command.storage` (default: op; included in `openeco.admin`)
-
-### Config
-
-Remote connection settings use the existing `storage.mysql`, `storage.mariadb`, and `storage.postgresql` blocks in `plugins/openeco/config.yml`.
-
-Optional backup source (when the server already runs on a remote backend):
+Optional backup source when the server already runs on MySQL:
 
 ```yaml
 storage:
   migration:
-    source-type: sqlite    # sqlite or h2
-    source-folder: ""      # empty = plugins/openeco/
-    source-file: ""        # empty = active sqlite/h2 file from storage.sqlite.file / storage.h2.file
+    source-type: sqlite
+    source-folder: ""
+    source-file: ""
 ```
-
-### Recommended workflow (SQLite → MySQL)
-
-```
-1. Back up plugins/openeco/.
-2. Configure storage.mysql.* (host, port, database, credentials).
-3. Keep storage.type: sqlite while migrating.
-4. /openecostorage scan mysql
-5. /openecostorage migrate mysql --dry-run
-6. /openecostorage migrate mysql --overwrite   # if the target DB already has test data
-7. Change storage.type: mysql in config.yml.
-8. Restart the server.
-9. Verify balances and /history.
-```
-
-Use `--overwrite` when the target database already contains OpenEco tables with data. Without it, migration aborts if the target is non-empty.
-
-### What gets copied
-
-- All account rows (UUID, name, balances per currency, frozen flag, timestamps).
-- All transaction history rows.
-
-### Limitations
-
-- Source must be **sqlite** or **h2** (active backend or `storage.migration` backup path).
-- Target must be **mysql**, **mariadb**, or **postgresql**.
-- Does not migrate from remote-to-remote or local-to-local; use database tools for those cases.
-- Run while the server is up; the command flushes dirty balances before reading the source. Prefer low traffic.
-- After migration, you must change `storage.type` and **restart**; `/eco reload` is not enough.
 
 ---
 
-## Combining Both Migrations
+## Typical server cutover
 
-Typical server switch:
-
-1. Import balances from the old economy plugin with **OpenEcoMigrator** (OpenEco on SQLite).
-2. Move OpenEco storage to MySQL/MariaDB/PostgreSQL with **`/openecostorage`** if you need a shared remote database for proxy handoff.
-
-Do not run both importers against the same accounts unless you understand the overwrite behavior.
+1. Import economy data with `/openecomigrate <plugin>`.
+2. Move storage with `/openecomigrate sqlitetomysql` if you need a shared remote database.
+3. Switch Vault to OpenEco and remove the old economy plugin.

@@ -95,7 +95,7 @@ public class JdbcAccountRepository implements AccountRepository {
                         updated_at BIGINT        NOT NULL
                     )
                     """);
-                stmt.execute(dialect.createNameIndexSql());
+                ensureIndex(stmt, dialect.createNameIndexSql());
                 stmt.execute("""
                     CREATE TABLE IF NOT EXISTS account_balances (
                         account_id  VARCHAR(36)   NOT NULL,
@@ -121,7 +121,7 @@ public class JdbcAccountRepository implements AccountRepository {
                 ensureColumn(conn, stmt, "transactions", "currency_id",
                         "VARCHAR(32) NOT NULL DEFAULT '" + sqlLiteral(defaultCurrencyId) + "'");
                 ensureColumn(conn, stmt, "accounts", "frozen", "BOOLEAN NOT NULL DEFAULT FALSE");
-                stmt.execute("CREATE INDEX IF NOT EXISTS idx_tx_target_ts ON transactions(target_id, ts DESC)");
+                ensureIndex(stmt, "CREATE INDEX IF NOT EXISTS idx_tx_target_ts ON transactions(target_id, ts DESC)");
                 backfillDefaultBalances(conn);
                 backfillTransactionCurrencies(conn);
                 conn.commit();
@@ -140,6 +140,27 @@ public class JdbcAccountRepository implements AccountRepository {
             return;
         }
         stmt.execute("ALTER TABLE " + tableName + " ADD COLUMN " + columnName + " " + definition);
+    }
+
+    private void ensureIndex(Statement stmt, String sql) throws SQLException {
+        String executable = sql.replace(" IF NOT EXISTS", "");
+        try {
+            stmt.execute(executable);
+        } catch (SQLException e) {
+            if (!isDuplicateIndexError(e)) {
+                throw e;
+            }
+        }
+    }
+
+    private static boolean isDuplicateIndexError(SQLException e) {
+        if (e.getErrorCode() == 1061) {
+            return true;
+        }
+        String message = e.getMessage();
+        return message != null && (
+                message.contains("already exists")
+                        || message.contains("Duplicate key name"));
     }
 
     private boolean columnExists(Connection conn, String tableName, String columnName) throws SQLException {

@@ -16,6 +16,7 @@
 
 package dev.alexisbinh.openeco.migrator;
 
+import dev.alexisbinh.openeco.api.EconomyMigrationBridge;
 import dev.alexisbinh.openeco.api.OpenEcoApi;
 import dev.alexisbinh.openeco.migrator.source.MigrationContext;
 import org.bukkit.plugin.RegisteredServiceProvider;
@@ -48,14 +49,19 @@ public final class OpenEcoMigratorPlugin extends JavaPlugin {
                 getDataFolder().getParentFile().toPath(),
                 MigrationSupport.pathOverrides(this));
         MigrationEngine engine = new MigrationEngine(api, context, currencyId);
-
-        MigrateCommand command = new MigrateCommand(this, api, engine);
-        var migrateCmd = getCommand("openemomigrate");
-        if (migrateCmd != null) {
-            migrateCmd.setExecutor(command);
-            migrateCmd.setTabCompleter(command);
-        }
+        bridge = new EconomyMigrationBridgeImpl(api, engine, context);
+        getServer().getServicesManager().register(EconomyMigrationBridge.class, bridge, this, org.bukkit.plugin.ServicePriority.Normal);
 
         getLogger().info("OpenEcoMigrator enabled. Target currency: " + currencyId);
+        getLogger().info("Use /openecomigrate <source> on the main OpenEco plugin.");
+    }
+
+    private EconomyMigrationBridge bridge;
+
+    @Override
+    public void onDisable() {
+        if (bridge != null) {
+            getServer().getServicesManager().unregister(EconomyMigrationBridge.class, bridge);
+        }
     }
 }

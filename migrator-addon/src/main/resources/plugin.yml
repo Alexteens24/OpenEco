@@ -23,14 +23,7 @@ authors:
 depend:
   - OpenEco
 
-commands:
-  openemomigrate:
-    description: Import economy data from other plugins into OpenEco.
-    usage: /openemomigrate <list|scan|run> [source] [--dry-run] [--overwrite]
-    permission: openeco.migrator.admin
-    aliases: [oemigrate, ecoimport]
-
 permissions:
   openeco.migrator.admin:
-    description: Use OpenEcoMigrator commands
+    description: Use /openecomigrate economy sources (registered by OpenEco)
     default: op

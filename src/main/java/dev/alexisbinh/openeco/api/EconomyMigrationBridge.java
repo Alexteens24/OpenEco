@@ -1,0 +1,35 @@
+/*
+ * Copyright 2026 alexisbinh
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package dev.alexisbinh.openeco.api;
+
+import org.bukkit.command.CommandSender;
+
+import java.util.List;
+
+/**
+ * Implemented by the OpenEcoMigrator addon. Registered via Bukkit {@code ServicesManager}.
+ */
+public interface EconomyMigrationBridge {
+
+    List<String> sourceIds();
+
+    void sendSourceList(CommandSender sender);
+
+    void scan(CommandSender sender, String sourceId) throws Exception;
+
+    void migrate(CommandSender sender, String sourceId, boolean dryRun, boolean overwrite) throws Exception;
+}

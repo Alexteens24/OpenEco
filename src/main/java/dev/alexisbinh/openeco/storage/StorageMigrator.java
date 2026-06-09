@@ -71,6 +71,22 @@ public final class StorageMigrator {
                 defaultCurrencyId);
     }
 
+    public static JdbcAccountRepository openLocalTarget(
+            FileConfiguration config,
+            File dataFolder,
+            String defaultCurrencyId) throws SQLException {
+        DatabaseDialect dialect = DatabaseDialect.fromConfig(
+                config.getString("storage.migration.target-type", "sqlite"));
+        if (!dialect.isLocal()) {
+            throw new IllegalArgumentException("storage.migration.target-type must be sqlite or h2");
+        }
+        String filename = switch (dialect) {
+            case H2 -> config.getString("storage.h2.file", "economy");
+            default -> config.getString("storage.sqlite.file", "economy.db");
+        };
+        return new JdbcAccountRepository(dialect, dataFolder.getAbsolutePath(), filename, defaultCurrencyId);
+    }
+
     public static StorageMigrationStats scan(JdbcAccountRepository repository) throws SQLException {
         return new StorageMigrationStats(repository.countAccounts(), repository.countTransactions());
     }

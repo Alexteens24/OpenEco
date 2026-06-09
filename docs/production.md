@@ -74,7 +74,7 @@ Changing `storage.type` or the configured database file name does not move old d
 
 1. Back up `plugins/openeco/`.
 2. Configure the target block (`storage.mysql`, etc.).
-3. While still on `storage.type: sqlite` (or `h2`), run `/openecostorage scan <target>` then `/openecostorage migrate <target>`.
+3. While still on `storage.type: sqlite` (or `h2`), run `/openecomigrate sqlitetomysql --scan` then `/openecomigrate sqlitetomysql --overwrite`.
 4. Change `storage.type` to the target backend.
 5. Restart and verify balances and history.
 
@@ -90,7 +90,7 @@ See [Migration Guide](migration.md) for details, `--dry-run`, and `--overwrite`.
 
 ### Switching From Another Economy Plugin
 
-Install the **OpenEcoMigrator** addon and use `/openemomigrate` to import balances from EssentialsX, CMI, LiteEco, XConomy, BOSEconomy, or Vault. See [Migration Guide](migration.md).
+Install the **OpenEcoMigrator** addon and use `/openecomigrate <source>` to import balances from other economy plugins. See [Migration Guide](migration.md).
 
 ## Recommended Starting Values
 
