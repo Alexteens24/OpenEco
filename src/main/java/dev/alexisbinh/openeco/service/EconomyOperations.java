@@ -24,6 +24,7 @@ import dev.alexisbinh.openeco.event.BalanceChangedEvent;
 import dev.alexisbinh.openeco.event.PayCompletedEvent;
 import dev.alexisbinh.openeco.event.PayEvent;
 import dev.alexisbinh.openeco.model.AccountRecord;
+import dev.alexisbinh.openeco.model.DirectTransferResult;
 import dev.alexisbinh.openeco.model.PayResult;
 import dev.alexisbinh.openeco.model.TransactionEntry;
 import dev.alexisbinh.openeco.model.TransactionType;
@@ -587,6 +588,80 @@ final class EconomyOperations {
                         null);
             }
         }
+    }
+
+    DirectTransferResult directTransfer(UUID fromId, UUID toId, BigDecimal rawAmount) {
+        return directTransfer(fromId, toId, defaultCurrencyId(), rawAmount);
+    }
+
+    DirectTransferResult directTransfer(UUID fromId, UUID toId, String currencyId, BigDecimal rawAmount) {
+        EconomyConfigSnapshot currentConfig = configSupplier.get();
+        CurrencyDefinition currency = resolveCurrency(currentConfig, currencyId);
+        if (currency == null) {
+            return DirectTransferResult.failure(DirectTransferResult.Status.UNKNOWN_CURRENCY, BigDecimal.ZERO, "Unknown currency");
+        }
+
+        BigDecimal scaled = scale(rawAmount, currency);
+        if (scaled.compareTo(BigDecimal.ZERO) <= 0) {
+            return DirectTransferResult.failure(DirectTransferResult.Status.INVALID_AMOUNT, scaled, "Amount must be positive");
+        }
+        if (fromId.equals(toId)) {
+            return DirectTransferResult.failure(DirectTransferResult.Status.SELF_TRANSFER, scaled, "Cannot transfer to self");
+        }
+
+        AccountRecord fromRecord = requireRecord(fromId);
+        AccountRecord toRecord = requireRecord(toId);
+        if (fromRecord == null || toRecord == null) {
+            return DirectTransferResult.failure(DirectTransferResult.Status.ACCOUNT_NOT_FOUND, scaled, "Account not found");
+        }
+        if (fromRecord.isFrozen() || toRecord.isFrozen()) {
+            return DirectTransferResult.failure(DirectTransferResult.Status.FROZEN, scaled, "Account is frozen");
+        }
+
+        boolean fromFirst = fromId.compareTo(toId) < 0;
+        AccountRecord first = fromFirst ? fromRecord : toRecord;
+        AccountRecord second = fromFirst ? toRecord : fromRecord;
+        BalanceChangedEvent fromChangedEvent;
+        BalanceChangedEvent toChangedEvent;
+
+        synchronized (first) {
+            synchronized (second) {
+                if (!accountRegistry.isLive(fromId, fromRecord) || !accountRegistry.isLive(toId, toRecord)) {
+                    return DirectTransferResult.failure(DirectTransferResult.Status.ACCOUNT_NOT_FOUND, scaled, "Account not found");
+                }
+                if (fromRecord.isFrozen() || toRecord.isFrozen()) {
+                    return DirectTransferResult.failure(DirectTransferResult.Status.FROZEN, scaled, "Account is frozen");
+                }
+
+                BigDecimal fromBefore = fromRecord.getBalance(currency.id());
+                if (fromBefore.compareTo(scaled) < 0) {
+                    return DirectTransferResult.failure(DirectTransferResult.Status.INSUFFICIENT_FUNDS, scaled, "Insufficient funds");
+                }
+
+                BigDecimal fromAfter = fromBefore.subtract(scaled);
+                BigDecimal toBefore = toRecord.getBalance(currency.id());
+                BigDecimal toAfter = toBefore.add(scaled);
+                if (currency.maxBalance() != null && toAfter.compareTo(currency.maxBalance()) > 0) {
+                    return DirectTransferResult.failure(DirectTransferResult.Status.BALANCE_LIMIT, scaled, "Balance limit reached");
+                }
+
+                fromRecord.setBalance(currency.id(), fromAfter);
+                toRecord.setBalance(currency.id(), toAfter);
+
+                long now = System.currentTimeMillis();
+                transactionLogger.accept(new TransactionEntry(
+                        TransactionType.PAY_SENT, toId, fromId, scaled, fromBefore, fromAfter, now, null, null, currency.id()));
+                transactionLogger.accept(new TransactionEntry(
+                        TransactionType.PAY_RECEIVED, fromId, toId, scaled, toBefore, toAfter, now, null, null, currency.id()));
+                fromChangedEvent = new BalanceChangedEvent(
+                        fromId, fromBefore, fromAfter, BalanceChangeEvent.Reason.PAY_SENT, currency.id());
+                toChangedEvent = new BalanceChangedEvent(
+                        toId, toBefore, toAfter, BalanceChangeEvent.Reason.PAY_RECEIVED, currency.id());
+            }
+        }
+        eventDispatcher.dispatch(fromChangedEvent);
+        eventDispatcher.dispatch(toChangedEvent);
+        return DirectTransferResult.success(scaled, fromChangedEvent.getNewBalance(), toChangedEvent.getNewBalance());
     }
 
     PayResult pay(UUID fromId, UUID toId, BigDecimal rawAmount) {

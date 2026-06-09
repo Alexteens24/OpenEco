@@ -17,9 +17,11 @@
 package dev.alexisbinh.openeco.economy;
 
 import dev.alexisbinh.openeco.api.BalanceCheckResult;
+import dev.alexisbinh.openeco.model.DirectTransferResult;
 import dev.alexisbinh.openeco.service.AccountService;
 import dev.alexisbinh.openeco.service.EconomyOperationResponse;
 import net.milkbowl.vault2.economy.EconomyResponse;
+import net.milkbowl.vault2.economy.MultiEconomyResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -46,6 +48,28 @@ class OpenEcoEconomyProviderTest {
     @BeforeEach
     void setUp() {
         provider = new OpenEcoEconomyProvider(service);
+    }
+
+    @Test
+    void exposesAsyncEconomyForVaultUnlocked220() {
+        assertTrue(provider.supportsAsync());
+        assertTrue(provider.async().isPresent());
+    }
+
+    @Test
+    void transferReturnsBothBalancesOnSuccess() {
+        UUID fromId = UUID.randomUUID();
+        UUID toId = UUID.randomUUID();
+        BigDecimal amount = new BigDecimal("10.00");
+        when(service.directTransfer(fromId, toId, amount)).thenReturn(
+                DirectTransferResult.success(amount, new BigDecimal("40.00"), new BigDecimal("60.00")));
+
+        MultiEconomyResponse response = provider.transfer("shop", fromId, toId, amount);
+
+        assertEquals(EconomyResponse.ResponseType.SUCCESS, response.type);
+        assertEquals(0, amount.compareTo(response.amount));
+        assertEquals(0, new BigDecimal("40.00").compareTo(response.balance(fromId).orElseThrow()));
+        assertEquals(0, new BigDecimal("60.00").compareTo(response.balance(toId).orElseThrow()));
     }
 
     @Test

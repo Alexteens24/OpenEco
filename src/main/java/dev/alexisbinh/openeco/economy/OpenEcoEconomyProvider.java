@@ -17,10 +17,13 @@
 package dev.alexisbinh.openeco.economy;
 
 import dev.alexisbinh.openeco.api.BalanceCheckResult;
+import dev.alexisbinh.openeco.model.DirectTransferResult;
 import dev.alexisbinh.openeco.service.AccountService;
 import dev.alexisbinh.openeco.service.EconomyOperationResponse;
+import net.milkbowl.vault2.economy.AsyncEconomy;
 import net.milkbowl.vault2.economy.Economy;
 import net.milkbowl.vault2.economy.EconomyResponse;
+import net.milkbowl.vault2.economy.MultiEconomyResponse;
 
 import java.math.BigDecimal;
 import java.util.*;
@@ -28,9 +31,16 @@ import java.util.*;
 public class OpenEcoEconomyProvider implements Economy {
 
     private final AccountService service;
+    private final OpenEcoAsyncEconomy async;
 
     public OpenEcoEconomyProvider(AccountService service) {
         this.service = service;
+        this.async = new OpenEcoAsyncEconomy(this);
+    }
+
+    @Override
+    public Optional<AsyncEconomy> async() {
+        return Optional.of(async);
     }
 
     // ── Basic info ────────────────────────────────────────────────────────────
@@ -245,6 +255,24 @@ public class OpenEcoEconomyProvider implements Economy {
         return toV2(service.set(accountID, currency, amount));
     }
 
+    // ── transfer (VaultUnlocked 2.20+) ─────────────────────────────────────────
+
+    @Override
+    public MultiEconomyResponse transfer(String pluginName, UUID from, UUID to, BigDecimal amount) {
+        return toMultiTransfer(service.directTransfer(from, to, amount), from, to);
+    }
+
+    @Override
+    public MultiEconomyResponse transfer(String pluginName, UUID from, UUID to, String worldName, BigDecimal amount) {
+        return transfer(pluginName, from, to, amount);
+    }
+
+    @Override
+    public MultiEconomyResponse transfer(
+            String pluginName, UUID from, UUID to, String worldName, String currency, BigDecimal amount) {
+        return toMultiTransfer(service.directTransfer(from, to, currency, amount), from, to);
+    }
+
     // ── canWithdraw / canDeposit ──────────────────────────────────────────────
 
     @Override
@@ -278,6 +306,21 @@ public class OpenEcoEconomyProvider implements Economy {
     }
 
     // ── Shared accounts (not supported) ──────────────────────────────────────
+
+    private static MultiEconomyResponse toMultiTransfer(DirectTransferResult result, UUID from, UUID to) {
+        if (result.isSuccess()) {
+            MultiEconomyResponse response = new MultiEconomyResponse(
+                    result.amount(), EconomyResponse.ResponseType.SUCCESS, "");
+            response.addBalance(from, result.fromBalance());
+            response.addBalance(to, result.toBalance());
+            return response;
+        }
+        EconomyResponse.ResponseType type = switch (result.status()) {
+            case UNKNOWN_CURRENCY -> EconomyResponse.ResponseType.FAILURE;
+            default -> EconomyResponse.ResponseType.FAILURE;
+        };
+        return new MultiEconomyResponse(result.amount(), type, result.message());
+    }
 
     private static EconomyResponse toVaultResponse(BalanceCheckResult result) {
         if (result.isAllowed()) {

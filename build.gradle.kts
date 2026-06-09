@@ -19,7 +19,7 @@ import org.gradle.api.artifacts.ComponentMetadataRule
 import org.gradle.api.attributes.java.TargetJvmVersion
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 
-// VaultUnlocked 2.19.0 module metadata declares jvmCompatibility=25 — patch it back to 21
+// VaultUnlocked 2.20.0 module metadata declares jvmCompatibility=25 — patch it back to 21
 abstract class VaultJvmFix : ComponentMetadataRule {
     override fun execute(ctx: ComponentMetadataContext) {
         ctx.details.allVariants {
@@ -53,7 +53,7 @@ repositories {
 
 dependencies {
     compileOnly("io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT")
-    compileOnly("net.cfh.vault:VaultUnlocked:2.19.1")
+    compileOnly("net.milkbowl.vault:VaultUnlockedAPI:2.20")
     compileOnly("me.clip:placeholderapi:2.12.2")
     compileOnly("org.xerial:sqlite-jdbc:3.53.1.0")
     compileOnly("com.h2database:h2:2.4.240")
@@ -69,7 +69,7 @@ dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter-api")
     testImplementation("org.mockito:mockito-junit-jupiter:5.23.0")
     testImplementation("io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT")
-    testImplementation("net.cfh.vault:VaultUnlocked:2.19.1")
+    testImplementation("net.milkbowl.vault:VaultUnlockedAPI:2.20")
     testImplementation("me.clip:placeholderapi:2.12.2")
     testImplementation("com.zaxxer:HikariCP:7.0.2")
     testRuntimeOnly("com.mysql:mysql-connector-j:9.7.0")
@@ -81,7 +81,7 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
     components {
-        withModule<VaultJvmFix>("net.cfh.vault:VaultUnlocked")
+        withModule<VaultJvmFix>("net.milkbowl.vault:VaultUnlockedAPI")
     }
 }
 

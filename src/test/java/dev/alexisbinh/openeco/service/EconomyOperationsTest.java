@@ -24,6 +24,7 @@ import dev.alexisbinh.openeco.event.BalanceChangedEvent;
 import dev.alexisbinh.openeco.event.PayEvent;
 import dev.alexisbinh.openeco.event.PayCompletedEvent;
 import dev.alexisbinh.openeco.model.AccountRecord;
+import dev.alexisbinh.openeco.model.DirectTransferResult;
 import dev.alexisbinh.openeco.model.PayResult;
 import dev.alexisbinh.openeco.model.TransactionEntry;
 import dev.alexisbinh.openeco.model.TransactionType;
@@ -543,6 +544,22 @@ class EconomyOperationsTest {
 
         assertEquals(TransferPreviewResult.Status.FROZEN, result.status());
         assertTrue(logged.isEmpty());
+    }
+
+    @Test
+    void directTransfer_bypassesPayTaxAndCooldown() {
+        config = configWith(10.0, 60, null, 2, 0.10);
+        ConcurrentHashMap<UUID, Long> cooldownMap = new ConcurrentHashMap<>();
+        cooldownMap.put(aliceId, System.currentTimeMillis());
+        ops = new EconomyOperations(registry, () -> config, cooldownMap, logged::add, event -> { }, registry::getLiveRecord);
+
+        DirectTransferResult result = ops.directTransfer(aliceId, bobId, new BigDecimal("0.05"));
+
+        assertTrue(result.isSuccess());
+        assertEquals(0, new BigDecimal("9.95").compareTo(registry.getLiveRecord(aliceId).getBalance()));
+        assertEquals(0, new BigDecimal("5.05").compareTo(registry.getLiveRecord(bobId).getBalance()));
+        assertEquals(2, logged.size());
+        assertTrue(dispatchedEvents.stream().noneMatch(PayEvent.class::isInstance));
     }
 
     // ── canDeposit / canWithdraw ───────────────────────────────────────────────

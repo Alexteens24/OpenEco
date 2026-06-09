@@ -24,6 +24,7 @@ import dev.alexisbinh.openeco.event.AccountDeletedEvent;
 import dev.alexisbinh.openeco.event.AccountRenameEvent;
 import dev.alexisbinh.openeco.event.AccountRenamedEvent;
 import dev.alexisbinh.openeco.model.AccountRecord;
+import dev.alexisbinh.openeco.model.DirectTransferResult;
 import dev.alexisbinh.openeco.model.PayResult;
 import dev.alexisbinh.openeco.model.TransactionEntry;
 import dev.alexisbinh.openeco.model.TransactionType;
@@ -479,6 +480,15 @@ public class AccountService {
 
     public PayResult pay(UUID fromId, UUID toId, String currencyId, BigDecimal rawAmount) {
         return economyOperations.pay(fromId, toId, currencyId, rawAmount);
+    }
+
+    /** Atomic peer transfer without pay cooldown, tax, or cancellable pay events. */
+    public DirectTransferResult directTransfer(UUID fromId, UUID toId, BigDecimal rawAmount) {
+        return directTransfer(fromId, toId, config.currencyId(), rawAmount);
+    }
+
+    public DirectTransferResult directTransfer(UUID fromId, UUID toId, String currencyId, BigDecimal rawAmount) {
+        return economyOperations.directTransfer(fromId, toId, currencyId, rawAmount);
     }
 
     public TransferCheckResult canTransfer(UUID fromId, UUID toId, BigDecimal amount) {
