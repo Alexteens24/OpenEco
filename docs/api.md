@@ -40,11 +40,11 @@ repositories {
 }
 
 dependencies {
-    compileOnly("com.github.Alexteens24:OpenEco:api:v1.4.4")
+    compileOnly("com.github.Alexteens24:api:v1.4.5")
 }
 ```
 
-Use a release tag such as `v1.4.4`, or a commit hash for snapshots.
+Use a release tag such as `v1.4.5`, or a commit hash for snapshots.
 
 Paper API remains a separate `compileOnly` dependency.
 

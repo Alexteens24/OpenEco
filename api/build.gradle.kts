@@ -19,8 +19,8 @@ plugins {
     `maven-publish`
 }
 
-group = "dev.alexisbinh"
-version = rootProject.version
+group = findProperty("group")?.toString() ?: "dev.alexisbinh"
+version = findProperty("version")?.toString() ?: rootProject.version.toString()
 
 java {
     toolchain {
@@ -43,7 +43,7 @@ publishing {
         create<MavenPublication>("maven") {
             from(components["java"])
             groupId = project.group.toString()
-            artifactId = "openeco-api"
+            artifactId = "api"
             version = project.version.toString()
         }
     }
