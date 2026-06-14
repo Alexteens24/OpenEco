@@ -43,7 +43,11 @@ publishing {
         create<MavenPublication>("maven") {
             from(components["java"])
             groupId = project.group.toString()
-            artifactId = "api"
+            artifactId = if (project.group.toString().startsWith("com.github.")) {
+                "OpenEco"
+            } else {
+                "openeco-api"
+            }
             version = project.version.toString()
         }
     }

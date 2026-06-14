@@ -37,7 +37,7 @@ plugins {
 }
 
 group = "dev.alexisbinh"
-version = "1.4.5"
+version = "1.4.6"
 
 java {
     toolchain {
@@ -112,6 +112,12 @@ tasks.named<ShadowJar>("shadowJar") {
 
 tasks.assemble {
     dependsOn(tasks.named("shadowJar"))
+}
+
+if (providers.environmentVariable("JITPACK").orNull == "true") {
+    tasks.named<Jar>("jar") { enabled = false }
+    tasks.named<ShadowJar>("shadowJar") { enabled = false }
+    tasks.named("assemble") { enabled = false }
 }
 
 tasks.processResources {
