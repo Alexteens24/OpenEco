@@ -28,6 +28,26 @@ What this API is not:
 Methods without a `currencyId` parameter are the default-currency compatibility layer.
 Currency-aware overloads target the named currency directly.
 
+## Maven Dependency
+
+Published on [JitPack](https://jitpack.io/#Alexteens24/OpenEco).
+
+Gradle (`build.gradle.kts`):
+
+```kotlin
+repositories {
+    maven("https://jitpack.io")
+}
+
+dependencies {
+    compileOnly("com.github.Alexteens24:OpenEco:api:v1.4.4")
+}
+```
+
+Use a release tag such as `v1.4.4`, or a commit hash for snapshots.
+
+Paper API remains a separate `compileOnly` dependency.
+
 ## Getting The Service
 
 Add OpenEco as a dependency in `plugin.yml`:

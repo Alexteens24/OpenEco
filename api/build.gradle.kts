@@ -15,25 +15,36 @@
  */
 
 plugins {
-	id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
+    `java-library`
+    `maven-publish`
 }
 
-rootProject.name = "OpenEco"
+group = "dev.alexisbinh"
+version = rootProject.version
 
-include("api")
-
-if (file("stress-addon").exists()) {
-	include("stress-addon")
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    withJavadocJar()
+    withSourcesJar()
 }
 
-if (file("enhancements-addon").exists()) {
-	include("enhancements-addon")
+repositories {
+    mavenCentral()
 }
 
-if (file("proxy-addon").exists()) {
-	include("proxy-addon")
+dependencies {
+    compileOnly("org.jetbrains:annotations:26.0.2")
 }
 
-if (file("migrator-addon").exists()) {
-	include("migrator-addon")
+publishing {
+    publications {
+        create<MavenPublication>("maven") {
+            from(components["java"])
+            groupId = project.group.toString()
+            artifactId = "openeco-api"
+            version = project.version.toString()
+        }
+    }
 }

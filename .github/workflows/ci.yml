@@ -62,7 +62,7 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Build project and addons
-        run: ./gradlew --no-daemon build :enhancements-addon:build :proxy-addon:build
+        run: ./gradlew --no-daemon build :api:build :enhancements-addon:build :proxy-addon:build
 
       - name: Upload plugin jars
         if: success()

@@ -32,11 +32,12 @@ abstract class VaultJvmFix : ComponentMetadataRule {
 
 plugins {
     java
+    `java-library`
     id("com.gradleup.shadow") version "9.4.2"
 }
 
 group = "dev.alexisbinh"
-version = "1.4.3"
+version = "1.4.4"
 
 java {
     toolchain {
@@ -52,6 +53,7 @@ repositories {
 }
 
 dependencies {
+    api(project(":api"))
     compileOnly("io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT")
     compileOnly("net.milkbowl.vault:VaultUnlockedAPI:2.20")
     compileOnly("me.clip:placeholderapi:2.12.2")
