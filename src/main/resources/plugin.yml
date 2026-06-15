@@ -24,7 +24,7 @@ provides:
   - OpenEco
 
 libraries:
-  - com.zaxxer:HikariCP:7.0.2
+  - com.zaxxer:HikariCP:7.1.0
   - org.xerial:sqlite-jdbc:3.51.3.0
   - com.h2database:h2:2.4.240
   - com.mysql:mysql-connector-j:9.6.0

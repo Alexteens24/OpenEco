@@ -60,7 +60,7 @@ dependencies {
     compileOnly("org.xerial:sqlite-jdbc:3.53.2.0")
     compileOnly("com.h2database:h2:2.4.240")
     implementation("org.bstats:bstats-bukkit:3.2.1")
-    compileOnly("com.zaxxer:HikariCP:7.0.2")
+    compileOnly("com.zaxxer:HikariCP:7.1.0")
     compileOnly("com.mysql:mysql-connector-j:9.7.0") {
         exclude(group = "com.google.protobuf") // only needed for X Protocol (mysqlx://), not standard JDBC
     }
@@ -73,7 +73,7 @@ dependencies {
     testImplementation("io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT")
     testImplementation("net.milkbowl.vault:VaultUnlockedAPI:2.20")
     testImplementation("me.clip:placeholderapi:2.12.2")
-    testImplementation("com.zaxxer:HikariCP:7.0.2")
+    testImplementation("com.zaxxer:HikariCP:7.1.0")
     testRuntimeOnly("com.mysql:mysql-connector-j:9.7.0")
     testRuntimeOnly("org.mariadb.jdbc:mariadb-java-client:3.5.9")
     testRuntimeOnly("org.postgresql:postgresql:42.7.11")
