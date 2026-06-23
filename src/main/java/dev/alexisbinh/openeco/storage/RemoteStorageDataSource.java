@@ -57,6 +57,16 @@ public final class RemoteStorageDataSource {
         cfg.setMinimumIdle(Math.min(2, poolSize));
         cfg.setConnectionTimeout(10_000);
         cfg.setPoolName("OpenEco-" + dialect.name());
+        cfg.setDriverClassName(driverClassName(dialect));
         return new HikariDataSource(cfg);
+    }
+
+    static String driverClassName(DatabaseDialect dialect) {
+        return switch (dialect) {
+            case MYSQL -> "com.mysql.cj.jdbc.Driver";
+            case MARIADB -> "org.mariadb.jdbc.Driver";
+            case POSTGRESQL -> "org.postgresql.Driver";
+            default -> throw new IllegalStateException("Unexpected remote dialect: " + dialect);
+        };
     }
 }
