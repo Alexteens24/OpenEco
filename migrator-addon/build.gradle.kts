@@ -44,7 +44,7 @@ dependencies {
     testImplementation("org.mockito:mockito-junit-jupiter:5.23.0")
     testImplementation("io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT")
     testImplementation("org.xerial:sqlite-jdbc:3.53.2.0")
-    testImplementation("com.zaxxer:HikariCP:7.0.2")
+    testImplementation("com.zaxxer:HikariCP:7.1.0")
     testRuntimeOnly("com.h2database:h2:2.4.240")
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
