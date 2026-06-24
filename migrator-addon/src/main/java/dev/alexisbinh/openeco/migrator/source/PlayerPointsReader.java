@@ -198,6 +198,7 @@ public final class PlayerPointsReader implements EconomySourceReader {
         }
         Path found = SqliteSupport.firstExistingFile(
                 folder.resolve("database.db"),
+                folder.resolve("playerpoints.db"),
                 folder.resolve("storage.db"),
                 folder.resolve("data.db"));
         if (found == null) {

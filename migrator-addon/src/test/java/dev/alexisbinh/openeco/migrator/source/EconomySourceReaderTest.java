@@ -145,6 +145,32 @@ class EconomySourceReaderTest {
     }
 
     @Test
+    void playerPointsReaderLoadsModernSqliteFileName() throws Exception {
+        UUID id = UUID.randomUUID();
+        Path plugins = tempDir.resolve("plugins");
+        Path db = plugins.resolve("PlayerPoints").resolve("playerpoints.db");
+        db.getParent().toFile().mkdirs();
+        try (java.sql.Connection conn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + db);
+             java.sql.Statement stmt = conn.createStatement()) {
+            stmt.execute("""
+                    CREATE TABLE pp_points (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        uuid TEXT NOT NULL UNIQUE,
+                        points INTEGER NOT NULL
+                    )
+                    """);
+            stmt.execute("INSERT INTO pp_points (uuid, points) VALUES ('" + id + "', 900)");
+        }
+
+        PlayerPointsReader reader = new PlayerPointsReader();
+        MigrationContext context = MigrationTestSupport.context(plugins);
+        List<ForeignAccount> accounts = reader.read(context);
+
+        assertEquals(1, accounts.size());
+        assertEquals(0, new BigDecimal("900").compareTo(accounts.getFirst().balance()));
+    }
+
+    @Test
     void cmiReaderLoadsSqliteAccounts() throws Exception {
         UUID id = UUID.randomUUID();
         Path plugins = tempDir.resolve("plugins");

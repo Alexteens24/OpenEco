@@ -12,14 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
 version: 2
 
 updates:
   - package-ecosystem: "gradle"
     directories:
       - "/"
+      - "/api"
       - "/enhancements-addon"
       - "/proxy-addon"
+      - "/migrator-addon"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -31,15 +35,74 @@ updates:
       include: "scope"
     pull-request-branch-name:
       separator: "-"
+    labels:
+      - dependencies
+      - java
+    cooldown:
+      default-days: 3
+      semver-major-days: 14
     groups:
-      gradle-dependencies:
+      gradle-build-plugins:
+        applies-to: version-updates
+        patterns:
+          - "com.gradleup.shadow"
+          - "org.gradle.toolchains.foojay-resolver-convention"
+        group-by: dependency-name
+      gradle-patch-minor:
+        applies-to: version-updates
         patterns:
           - "*"
         exclude-patterns:
           - "io.papermc.paper:paper-api"
-        group-by: "dependency-name"
+          - "com.velocitypowered:velocity-api"
+          - "net.milkbowl.vault:VaultUnlockedAPI"
+          - "me.clip:placeholderapi"
+        update-types:
+          - "minor"
+          - "patch"
+        group-by: dependency-name
+      gradle-majors:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "io.papermc.paper:paper-api"
+          - "com.velocitypowered:velocity-api"
+          - "net.milkbowl.vault:VaultUnlockedAPI"
+          - "me.clip:placeholderapi"
+        update-types:
+          - "major"
+        group-by: dependency-name
     ignore:
+      # Paper/Velocity API versions are bumped manually with server targets.
       - dependency-name: "io.papermc.paper:paper-api"
       - dependency-name: "com.velocitypowered:velocity-api"
+      # Soft dependencies: allow patch/minor, skip noisy major bumps.
+      - dependency-name: "net.milkbowl.vault:VaultUnlockedAPI"
         update-types:
           - "version-update:semver-major"
+      - dependency-name: "me.clip:placeholderapi"
+        update-types:
+          - "version-update:semver-major"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "Asia/Ho_Chi_Minh"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    pull-request-branch-name:
+      separator: "-"
+    labels:
+      - dependencies
+      - github-actions
+    groups:
+      github-actions:
+        applies-to: version-updates
+        patterns:
+          - "*"
