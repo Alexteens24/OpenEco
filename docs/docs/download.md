@@ -1,6 +1,6 @@
 # Download
 
-<img src="/logo.png" alt="OpenEco" class="showcase-shot" style="max-width: 200px;" />
+<img src="../downloads/openeco-logo.png" alt="OpenEco" class="showcase-shot" style="max-width: 200px;" />
 
 OpenEco releases are published on [GitHub Releases](https://github.com/Alexteens24/OpenEco/releases).
 
