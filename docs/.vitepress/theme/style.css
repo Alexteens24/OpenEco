@@ -1,0 +1,38 @@
+:root {
+  --vp-c-brand-1: #27AE60;
+  --vp-c-brand-2: #2ECC71;
+  --vp-c-brand-3: #58D68D;
+  --vp-c-brand-soft: rgba(46, 204, 113, 0.12);
+
+  --vp-button-brand-bg: #27AE60;
+  --vp-button-brand-hover-bg: #2ECC71;
+  --vp-button-brand-active-bg: #1E8449;
+  --vp-button-brand-text: #ffffff;
+}
+
+.dark {
+  --vp-c-brand-1: #58D68D;
+  --vp-c-brand-2: #7DCEA0;
+  --vp-c-brand-3: #A9DFBF;
+  --vp-c-brand-soft: rgba(88, 214, 141, 0.16);
+
+  --vp-button-brand-bg: #58D68D;
+  --vp-button-brand-hover-bg: #7DCEA0;
+  --vp-button-brand-active-bg: #2ECC71;
+  --vp-button-brand-text: #0f1a14;
+}
+
+.vp-doc a {
+  font-weight: 600;
+}
+
+.showcase-shot {
+  display: block;
+  width: 100%;
+  max-width: 720px;
+  height: auto;
+  margin: 24px auto;
+  border-radius: 14px;
+  border: 1px solid var(--vp-c-border);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+}

@@ -6,101 +6,46 @@ OpenEco is a single-server-first economy plugin for Paper or Folia.
 
 It keeps account state in memory for fast local use, and can optionally do proxy-assisted account handoff sync when you run multiple backend servers against one shared remote database.
 
-What it does:
+**Documentation:** https://alexteens24.github.io/OpenEco/
 
-- Keeps balances in memory for fast reads and writes.
-- Stores data in SQLite, H2, MySQL, MariaDB, or PostgreSQL.
-- Supports multiple named currencies with a configurable default-currency compatibility layer.
-- Exposes Vault v1 and VaultUnlocked v2 economy providers.
-- Supports PlaceholderAPI if it is installed.
-- Offers optional cross-server handoff sync for shared remote databases when paired with the Velocity proxy addon.
+## Features
 
-What it does not do:
-
-- Real-time distributed balance broadcasts to every backend server.
-- Safe simultaneous writes to the same account from multiple live backends without controlled player handoff.
-
-Migration (admin tools, not automatic):
-
-- **OpenEcoMigrator** addon — import balances from EssentialsX, CMI, LiteEco, XConomy, BOSEconomy, or Vault.
-- **`/openecomigrate`** — import from other economy plugins or migrate storage (`sqlitetomysql` / `mysqltosqlite`).
+- In-memory balances with JDBC persistence (SQLite, H2, MySQL, MariaDB, PostgreSQL)
+- Multi-currency support with Vault v1 and VaultUnlocked v2 providers
+- PlaceholderAPI expansion (optional)
+- Transaction history with optional retention pruning
+- Optional cross-server handoff via Velocity proxy addon
 
 ## Requirements
 
-- Paper 1.20.5+ is confirmed to load
-- Folia 1.21+ is the current safe baseline
+- Paper 1.20.5+ or Folia 1.21+
+- Java 21
 - [Vault](https://www.spigotmc.org/resources/vault.34315/) or [VaultUnlocked](https://github.com/TheNewEconomy/VaultUnlocked)
-- [PlaceholderAPI](https://placeholderapi.com/) if you want placeholders
+- [PlaceholderAPI](https://placeholderapi.com/) (optional)
 
-OpenEco depends on runtime plugin name `Vault`, which is provided by both Vault and VaultUnlocked.
+## Quick start
 
-## Install
+1. Download `OpenEco-<version>.jar` from [GitHub Releases](https://github.com/Alexteens24/OpenEco/releases).
+2. Install Vault or VaultUnlocked.
+3. Place the JAR in `plugins/` and start the server once.
+4. Review `plugins/OpenEco/config.yml`, back up, and verify `/balance`, `/baltop`, and `/pay`.
 
-1. Put `OpenEco-<version>.jar` in `plugins/`.
-2. Install Vault (legacy) or VaultUnlocked.
-3. Start the server once to generate `plugins/openeco/config.yml`.
-4. Stop the server and review the config.
-5. Back up `plugins/openeco/` before opening the server.
-6. Start the server again and verify `/balance`, `/baltop`, and `/history`.
+See the [Installation guide](https://alexteens24.github.io/OpenEco/docs/installation) for full setup and network mode.
 
-## Network Mode
+## Documentation
 
-For multi-backend networks:
+| Topic | Link |
+|---|---|
+| Features | [docs/features](https://alexteens24.github.io/OpenEco/docs/features) |
+| Commands | [docs/commands](https://alexteens24.github.io/OpenEco/docs/commands) |
+| Configuration | [docs/configuration](https://alexteens24.github.io/OpenEco/docs/configuration) |
+| Migration | [docs/migration](https://alexteens24.github.io/OpenEco/docs/migration) |
+| Production guide | [docs/production](https://alexteens24.github.io/OpenEco/docs/production) |
+| Addon API | [docs/api](https://alexteens24.github.io/OpenEco/docs/api) |
+| Development | [docs/development](https://alexteens24.github.io/OpenEco/docs/development) |
+| Proxy addon | [proxy-addon/README.md](proxy-addon/README.md) |
 
-1. Use MySQL, MariaDB, or PostgreSQL.
-2. Enable `cross-server.enabled: true` on every backend.
-3. Install the `proxy-addon` jar on Velocity.
-4. Restart the proxy and all backend servers.
-
-This mode is for player handoff between backends. It is not a real-time distributed ledger.
-
-## Commands
-
-| Command | Use | Permission |
-|---|---|---|
-| `/balance [player] [currency]` | Check balance | `openeco.command.balance` |
-| `/baltop [page] [currency]` | View leaderboard | `openeco.command.baltop` |
-| `/pay <player> <amount> [currency]` | Send money | `openeco.command.pay` |
-| `/eco give <player> <amount> [currency]` | Give money | `openeco.command.eco.give` |
-| `/eco take <player> <amount> [currency]` | Take money | `openeco.command.eco.take` |
-| `/eco set <player> <amount> [currency]` | Set balance | `openeco.command.eco.set` |
-| `/eco reset <player> [currency]` | Reset to starting balance | `openeco.command.eco.reset` |
-| `/eco delete <player>` | Delete an account and that account's history | `openeco.command.eco.delete` |
-| `/eco freeze <player>` | Freeze an account | `openeco.command.eco.freeze` |
-| `/eco unfreeze <player>` | Unfreeze an account | `openeco.command.eco.unfreeze` |
-| `/eco rename <player> <newname>` | Rename an account display name | `openeco.command.eco.rename` |
-| `/eco reload` | Reload config and messages | `openeco.command.eco.reload` |
-| `/history [player] [page] [currency]` | View transaction history | `openeco.command.history` |
-| `/openecomigrate <source> [flags]` | Import economy data or migrate storage | `openeco.migrator.admin` |
-
-`openeco.admin` grants all admin permissions.
-
-**OpenEcoMigrator addon** adds economy plugin sources to `/openecomigrate` — see [Migration Guide](docs/migration.md).
-
-## Owner Notes
-
-- OpenEco is meant for one server with local storage.
-- Network mode is opt-in and meant for player handoff over a shared remote database, not for general multi-writer sharing.
-- `accounts.load-strategy` controls startup behavior: `eager` preloads all accounts, `lazy` loads on first access. Treat it as a startup choice and restart after changing it, especially when switching between modes.
-- OpenEco auto-migrates `config.yml` on startup/reload: it adds missing defaults, rewrites legacy `currency.*` into `currencies.*`, and removes the old keys from the saved file.
-- New configs should use `currencies.default` and `currencies.definitions.*`; the legacy `currency.*` block is still read for backward compatibility.
-- SQLite companion files such as `economy.db-wal` and `economy.db-shm` are normal while the server is running.
-- Balance data is flushed periodically and on normal shutdown.
-- History can be kept forever or pruned with `history.retention-days`.
-
-## Guides
-
-- [Migration Guide](docs/migration.md)
-- [Production Guide](docs/production.md)
-- [Developer Guide](docs/development.md)
-- [Configuration](docs/configuration.md)
-- [Permissions](docs/permissions.md)
-- [PlaceholderAPI](docs/placeholders.md)
-- [Addon API](docs/api.md)
-- [Technical Notes](docs/technical.md)
-- [Proxy Addon](proxy-addon/README.md)
-
-## Build From Source
+## Build from source
 
 ```bash
 ./gradlew build

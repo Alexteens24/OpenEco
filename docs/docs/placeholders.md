@@ -1,8 +1,10 @@
-# PlaceholderAPI
+# Placeholders
 
-Install PlaceholderAPI if you want placeholders. OpenEco registers its own expansion automatically.
+Install [PlaceholderAPI](https://placeholderapi.com/) if you want placeholders. OpenEco registers its own expansion automatically when PAPI is present.
 
-## Player Placeholders
+All placeholders without a currency suffix target the **default currency** (`currencies.default`).
+
+## Player placeholders
 
 | Placeholder | Result |
 |---|---|
@@ -18,7 +20,7 @@ Install PlaceholderAPI if you want placeholders. OpenEco registers its own expan
 | `%openeco_currency_plural%` | Plural currency name |
 | `%openeco_currency_plural_<currency>%` | Plural name for the given currency |
 
-## Leaderboard Placeholders
+## Leaderboard placeholders
 
 | Placeholder | Result |
 |---|---|
@@ -35,11 +37,19 @@ Install PlaceholderAPI if you want placeholders. OpenEco registers its own expan
 | `%openeco_top_N_balance_formatted%` | Formatted balance at rank N |
 | `%openeco_top_N_balance_formatted_<currency>%` | Formatted balance at rank N for the given currency |
 
-If a rank does not exist:
+Replace `N` with the desired rank number (1, 2, 3, …).
 
-- `_name` returns `---`
-- other rank fields return `0`
+## Missing ranks
 
-Leaderboard placeholders use the same cache controlled by `baltop.cache-ttl-seconds`.
+When a rank does not exist:
 
-All existing placeholders still target the default currency when no currency suffix is provided.
+- `_name` placeholders return `---`
+- Balance placeholders return `0`
+
+## Cache behavior
+
+Leaderboard placeholders use the same cache as `/baltop`, controlled by `baltop.cache-ttl-seconds` in config. Lower values give fresher leaderboard data at the cost of more sorting work.
+
+::: tip Reload
+Placeholder formatting follows the current currency definitions. After changing `currencies.*`, run `/eco reload` or restart so display names and decimal digits stay in sync.
+:::

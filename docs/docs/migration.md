@@ -1,4 +1,4 @@
-# Migration Guide
+# Migration
 
 OpenEco uses one admin command for every migration path:
 
@@ -8,40 +8,40 @@ OpenEco uses one admin command for every migration path:
 
 Permission: `openeco.migrator.admin` (default: op)
 
-**Economy plugin import** needs the **OpenEcoMigrator** addon. **Storage migration** is built into the main OpenEco jar.
+**Economy plugin import** requires the **OpenEcoMigrator** addon. **Storage migration** is built into the core JAR.
 
-Back up before you run anything. Prefer maintenance mode.
+::: warning Back up first
+Stop player traffic or use maintenance mode. Back up `plugins/OpenEco/` and any source plugin data before running migrations.
+:::
 
-## Before You Start
+## Before you start
 
-1. Stop player traffic or put the server in maintenance mode.
-2. Back up `plugins/openeco/` (and any source plugin folders you import from).
+1. Put the server in maintenance mode.
+2. Back up `plugins/OpenEco/` (and source plugin folders).
 3. Run `--scan`, then `--dry-run`, then the command without flags.
 4. Spot-check balances and `/history` for a few players before reopening.
-
----
 
 ## Economy plugin import
 
 Install **OpenEco** and **OpenEcoMigrator** together:
 
 ```bash
-./gradlew shadowJar :migrator-addon:jar
+./gradlew shadowJar :migrator-addon:shadowJar
 ```
 
-Copy both jars into `plugins/`.
+Copy both JARs into `plugins/`.
 
-### Usage
+### Workflow
 
-| Command | Description |
+| Step | Command |
 |---|---|
-| `/openecomigrate` | Show help and list sources |
-| `/openecomigrate <source> --scan` | Count accounts and total balance |
-| `/openecomigrate <source> --dry-run` | Preview import without writing |
-| `/openecomigrate <source>` | Import into OpenEco |
-| `/openecomigrate <source> --overwrite` | Replace existing OpenEco balances |
+| List sources | `/openecomigrate` |
+| Count accounts | `/openecomigrate <source> --scan` |
+| Preview import | `/openecomigrate <source> --dry-run` |
+| Import | `/openecomigrate <source>` |
+| Overwrite existing | `/openecomigrate <source> --overwrite` |
 
-### Supported economy sources
+### Supported sources
 
 | Source | Plugin | Data location |
 |---|---|---|
@@ -52,7 +52,7 @@ Copy both jars into `plugins/`.
 | `boseconomy` | BOSEconomy7 | SQLite under `plugins/BOSEconomy/` |
 | `tne` | TheNewEconomy | YAML `accounts/*.yml` or SQLite |
 | `playerpoints` | PlayerPoints | SQLite or legacy `storage.yml` |
-| `vault` | Any Vault economy | Active Vault provider (see limitations) |
+| `vault` | Any Vault economy | Active Vault provider |
 
 Alias examples: `ess`, `lite`, `xcon`, `bose`, `theneweconomy`, `pp`.
 
@@ -60,7 +60,7 @@ Alias examples: `ess`, `lite`, `xcon`, `bose`, `theneweconomy`, `pp`.
 
 File: `plugins/OpenEcoMigrator/config.yml` — `target-currency` and optional `paths.*` overrides.
 
-### Example workflow
+### Example
 
 ```
 /openecomigrate essentials --scan
@@ -73,16 +73,12 @@ File: `plugins/OpenEcoMigrator/config.yml` — `target-currency` and optional `p
 - File/database readers work while OpenEco is active; the old plugin does not need to run.
 - **Vault** only works when the source economy is still the active Vault provider.
 - Remote MySQL data for CMI / XConomy / LiteEco / TNE / PlayerPoints: copy the SQLite file locally first.
-- **TNE multi-currency** is merged into one OpenEco currency (VIRTUAL holdings preferred).
+- **TNE multi-currency** merges into one OpenEco currency (VIRTUAL holdings preferred).
 - **PlayerPoints** legacy username-only rows are skipped.
-
----
 
 ## Storage backend migration
 
-Built into OpenEco. Uses `storage.mysql` connection settings in `plugins/openeco/config.yml`.
-
-### Usage
+Built into OpenEco. Uses `storage.mysql` (or mariadb/postgresql) connection settings in config.
 
 | Command | Description |
 |---|---|
@@ -104,10 +100,9 @@ storage:
     source-file: ""
 ```
 
----
-
 ## Typical server cutover
 
 1. Import economy data with `/openecomigrate <plugin>`.
 2. Move storage with `/openecomigrate sqlitetomysql` if you need a shared remote database.
 3. Switch Vault to OpenEco and remove the old economy plugin.
+4. Verify balances, history, and Vault-dependent plugins before reopening.
