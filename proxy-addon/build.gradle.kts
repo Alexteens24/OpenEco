@@ -50,7 +50,9 @@ tasks.withType<JavaCompile> {
 
 tasks.jar {
     // Replace @version@ placeholder in the compiled plugin descriptor
-    filter { line -> line.replace("@version@", version.toString()) }
+    filesMatching("velocity-plugin.json") {
+        filter { line -> line.replace("@version@", version.toString()) }
+    }
 }
 
 tasks.test {
