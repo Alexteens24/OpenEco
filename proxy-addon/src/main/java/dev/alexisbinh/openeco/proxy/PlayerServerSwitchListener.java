@@ -25,6 +25,8 @@ import com.velocitypowered.api.event.player.ServerPreConnectEvent;
 import com.velocitypowered.api.proxy.ServerConnection;
 import com.velocitypowered.api.proxy.messages.ChannelIdentifier;
 import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.slf4j.Logger;
 
 import java.nio.charset.StandardCharsets;
@@ -75,8 +77,12 @@ public class PlayerServerSwitchListener {
         java.util.concurrent.CompletableFuture<Void> flushDone = flushAckTracker.register(uuid)
                 .thenAccept(outcome -> {
                 if (outcome == FlushAckTracker.FlushOutcome.TIMED_OUT) {
-                    logger.warn("Timed out waiting for flush ack from {} for player {}. Proceeding with best-effort sync.",
+                    logger.warn("Timed out waiting for flush ack from {} for player {}. Cancelling server switch to prevent stale data.",
                             currentServer.getServerInfo().getName(), uuid);
+                    event.setResult(ServerPreConnectEvent.ServerResult.denied());
+                    event.getPlayer().sendMessage(Component.text(
+                            "Failed to save your economy data in time. Please try switching servers again.",
+                            NamedTextColor.RED));
                 }
             });
         currentServer.sendPluginMessage(CHANNEL, encode("flush " + uuid));

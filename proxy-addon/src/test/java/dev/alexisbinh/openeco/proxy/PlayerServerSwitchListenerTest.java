@@ -34,6 +34,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -98,7 +100,7 @@ class PlayerServerSwitchListenerTest {
     }
 
     @Test
-    void preConnectTimeoutLogsBestEffortWarning() {
+    void preConnectTimeoutCancelsSwitchAndSendsErrorMessage() {
         when(flushAckTracker.register(playerId)).thenReturn(
                 CompletableFuture.completedFuture(FlushAckTracker.FlushOutcome.TIMED_OUT));
 
@@ -107,9 +109,13 @@ class PlayerServerSwitchListenerTest {
         EventTask task = listener.onServerPreConnect(event);
 
         assertNotNull(task);
-        verify(logger).warn("Timed out waiting for flush ack from {} for player {}. Proceeding with best-effort sync.",
+        verify(logger).warn("Timed out waiting for flush ack from {} for player {}. Cancelling server switch to prevent stale data.",
                 "survival", playerId);
         verify(currentConnection).sendPluginMessage(eq(PlayerServerSwitchListener.CHANNEL), org.mockito.ArgumentMatchers.any(byte[].class));
+        assertEquals(ServerPreConnectEvent.ServerResult.denied(), event.getResult());
+        verify(player).sendMessage(Component.text(
+                "Failed to save your economy data in time. Please try switching servers again.",
+                NamedTextColor.RED));
     }
 
     @Test

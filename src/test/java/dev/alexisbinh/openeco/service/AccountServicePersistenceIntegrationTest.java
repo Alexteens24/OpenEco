@@ -359,6 +359,44 @@ class AccountServicePersistenceIntegrationTest {
     }
 
     @Test
+    void refreshAccountSkipsIfLocalRecordIsDirty() throws Exception {
+        String filename = "cross-server-refresh-dirty-test";
+        UUID accountId = UUID.randomUUID();
+
+        JdbcAccountRepository writerRepository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), filename);
+        JdbcAccountRepository readerRepository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), filename);
+        try {
+            AccountService writer = newService(writerRepository);
+            AccountService reader = newService(readerRepository);
+            writer.loadAll();
+            reader.loadAll();
+
+            assertTrue(writer.createAccount(accountId, "Alice"));
+            writer.flushAccount(accountId);
+
+            reader.refreshAccount(accountId);
+            assertTrue(reader.hasAccount(accountId));
+
+            // Modify Alice's balance in memory on reader without flushing to DB (marks dirty)
+            assertTrue(reader.deposit(accountId, new BigDecimal("10.00")).transactionSuccess());
+            assertTrue(getLiveRecord(reader, accountId).isDirty());
+
+            // Refresh reader — should skip because record is dirty
+            reader.refreshAccount(accountId);
+
+            // Balance should still be the dirty memory balance (15.00), not overwritten by database (5.00)
+            assertEquals(0, new BigDecimal("15.00").compareTo(reader.getBalance(accountId)));
+            assertTrue(getLiveRecord(reader, accountId).isDirty());
+
+            writer.shutdown();
+            reader.shutdown();
+        } finally {
+            writerRepository.close();
+            readerRepository.close();
+        }
+    }
+
+    @Test
     void payRejectsSelfTransferWithoutMutatingBalance() throws Exception {
         JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "self-pay-test");
         try {

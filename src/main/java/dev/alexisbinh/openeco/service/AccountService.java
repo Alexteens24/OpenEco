@@ -778,6 +778,12 @@ public class AccountService {
             alignLoadedRecordCurrencies(freshRecord, config);
 
             synchronized (persistenceLock) {
+                AccountRecord live = accountRegistry.getLiveRecord(id);
+                if (live != null && live.isDirty()) {
+                    log.info("Cross-server refresh skipped for " + id
+                            + " because the in-memory account has unsaved local changes.");
+                    return;
+                }
                 if (!accountRegistry.refreshInPlace(freshRecord)) {
                     log.warning("Cross-server refresh skipped for " + id
                             + " because refreshed account name '" + freshRecord.getLastKnownName()
