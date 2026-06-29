@@ -132,14 +132,28 @@ public class PlayerServerSwitchListener {
     /**
      * When a player fully disconnects from the proxy, ensure a final flush is triggered
      * (guards against a missed {@link ServerPreConnectEvent} during an unexpected disconnect).
+     *
+     * <p>During a proxy shutdown Velocity fires {@link DisconnectEvent} for every online player
+     * <em>after</em> the backend connections have already been closed, so
+     * {@link ServerConnection#sendPluginMessage} will throw {@link IllegalStateException}.
+     * We catch that specific exception and log at {@code DEBUG} level — the backend server
+     * will recover on the player's next login via the DB-authoritative read.</p>
      */
     @Subscribe
     public void onDisconnect(DisconnectEvent event) {
         event.getPlayer().getCurrentServer().ifPresent(conn -> {
             UUID uuid = event.getPlayer().getUniqueId();
-            conn.sendPluginMessage(CHANNEL, encode("flush " + uuid));
-            logger.debug("Sent flush-on-disconnect to {} for player {}",
-                    conn.getServerInfo().getName(), uuid);
+            try {
+                conn.sendPluginMessage(CHANNEL, encode("flush " + uuid));
+                logger.debug("Sent flush-on-disconnect to {} for player {}",
+                        conn.getServerInfo().getName(), uuid);
+            } catch (IllegalStateException e) {
+                // Backend connection already closed (e.g. proxy is shutting down).
+                // The player's balance was already persisted by the last periodic flush
+                // or will be reconciled from the DB on their next login.
+                logger.debug("Skipped flush-on-disconnect for player {} — connection to {} already closed: {}",
+                        uuid, conn.getServerInfo().getName(), e.getMessage());
+            }
         });
     }
 

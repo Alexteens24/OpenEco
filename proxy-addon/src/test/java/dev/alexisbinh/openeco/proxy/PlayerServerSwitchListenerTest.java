@@ -17,6 +17,7 @@
 package dev.alexisbinh.openeco.proxy;
 
 import com.velocitypowered.api.event.EventTask;
+import com.velocitypowered.api.event.connection.DisconnectEvent;
 import com.velocitypowered.api.event.player.ServerPreConnectEvent;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ServerConnection;
@@ -40,7 +41,9 @@ import net.kyori.adventure.text.format.NamedTextColor;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -139,6 +142,47 @@ class PlayerServerSwitchListenerTest {
 
         assertNull(task);
         verify(flushAckTracker, never()).register(playerId);
-        verify(currentConnection, never()).sendPluginMessage(eq(PlayerServerSwitchListener.CHANNEL), org.mockito.ArgumentMatchers.any(byte[].class));
+        verify(currentConnection, never()).sendPluginMessage(eq(PlayerServerSwitchListener.CHANNEL), any(byte[].class));
+    }
+
+    // --- onDisconnect tests ---
+
+    @Test
+    void disconnectSendsFlushToCurrentServer() {
+        DisconnectEvent event = new DisconnectEvent(player, DisconnectEvent.LoginStatus.SUCCESSFUL_LOGIN);
+
+        listener.onDisconnect(event);
+
+        ArgumentCaptor<byte[]> payload = ArgumentCaptor.forClass(byte[].class);
+        verify(currentConnection).sendPluginMessage(eq(PlayerServerSwitchListener.CHANNEL), payload.capture());
+        assertEquals("flush " + playerId, new String(payload.getValue(), StandardCharsets.UTF_8));
+        verify(logger).debug("Sent flush-on-disconnect to {} for player {}", "survival", playerId);
+    }
+
+    @Test
+    void disconnectDuringProxyShutdownDoesNotThrow() {
+        // Simulate the race condition from issue #37: proxy shutdown closes the backend
+        // connection before DisconnectEvent fires, causing sendPluginMessage to throw.
+        doThrow(new IllegalStateException("Not connected to server!"))
+                .when(currentConnection).sendPluginMessage(eq(PlayerServerSwitchListener.CHANNEL), any(byte[].class));
+
+        DisconnectEvent event = new DisconnectEvent(player, DisconnectEvent.LoginStatus.SUCCESSFUL_LOGIN);
+
+        // Must not propagate — the exception is swallowed and logged at DEBUG.
+        listener.onDisconnect(event);
+
+        verify(logger).debug(
+                "Skipped flush-on-disconnect for player {} — connection to {} already closed: {}",
+                playerId, "survival", "Not connected to server!");
+    }
+
+    @Test
+    void disconnectWithNoCurrentServerDoesNothing() {
+        when(player.getCurrentServer()).thenReturn(Optional.empty());
+        DisconnectEvent event = new DisconnectEvent(player, DisconnectEvent.LoginStatus.SUCCESSFUL_LOGIN);
+
+        listener.onDisconnect(event);
+
+        verify(currentConnection, never()).sendPluginMessage(eq(PlayerServerSwitchListener.CHANNEL), any(byte[].class));
     }
 }
