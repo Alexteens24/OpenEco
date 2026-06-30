@@ -78,6 +78,9 @@ OpenEco uses result objects for normal business-rule failures (insufficient fund
 | `ensureAccount(UUID, String)` | `AccountOperationResult` |
 | `renameAccount(UUID, String)` | `AccountOperationResult` |
 | `deleteAccount(UUID)` | `AccountOperationResult` |
+| `freezeAccount(UUID)` | `boolean` (returns `true` if existed and frozen) |
+| `unfreezeAccount(UUID)` | `boolean` (returns `true` if existed and unfrozen) |
+| `isFrozen(UUID)` | `boolean` |
 
 `ensureAccount` creates if missing, returns `UNCHANGED` if the name matches, or attempts rename if different.
 
@@ -87,20 +90,24 @@ OpenEco uses result objects for normal business-rule failures (insufficient fund
 
 | Method | Result |
 |---|---|
-| `getBalance(UUID)` / `getBalance(UUID, String)` | `BigDecimal` |
-| `has(UUID, BigDecimal)` | `boolean` |
-| `canDeposit` / `canWithdraw` | `BalanceCheckResult` |
-| `deposit` / `withdraw` / `setBalance` / `reset` | `BalanceChangeResult` |
+| `getBalance(UUID)` / `getBalance(UUID, currencyId)` | `BigDecimal` |
+| `has(UUID, amount)` / `has(UUID, currencyId, amount)` | `boolean` |
+| `canDeposit(UUID, amount)` / `canDeposit(UUID, currencyId, amount)` | `BalanceCheckResult` |
+| `canWithdraw(UUID, amount)` / `canWithdraw(UUID, currencyId, amount)` | `BalanceCheckResult` |
+| `deposit(UUID, amount)` / `deposit(UUID, currencyId, amount)` | `BalanceChangeResult` |
+| `withdraw(UUID, amount)` / `withdraw(UUID, currencyId, amount)` | `BalanceChangeResult` |
+| `setBalance(UUID, amount)` / `setBalance(UUID, currencyId, amount)` | `BalanceChangeResult` |
+| `reset(UUID)` / `reset(UUID, currencyId)` | `BalanceChangeResult` |
 
 `getBalance` returns `0` when the account does not exist. `CANCELLED` means another plugin cancelled the Bukkit event.
 
 ## Transfers
 
-| Method | Purpose |
-|---|---|
-| `canTransfer` | Balance-level checks only (no cooldown/tax) |
-| `previewTransfer` | Full preflight including cooldown, tax, minimum |
-| `transfer` | Full transfer path with events |
+| Method | Result | Purpose |
+|---|---|---|
+| `canTransfer(fromId, toId, amount)` / `canTransfer(fromId, toId, currencyId, amount)` | `TransferCheckResult` | Balance-level checks only (no cooldown/tax) |
+| `previewTransfer(fromId, toId, amount)` / `previewTransfer(fromId, toId, currencyId, amount)` | `TransferPreviewResult` | Full preflight including cooldown, tax, minimum |
+| `transfer(fromId, toId, amount)` / `transfer(fromId, toId, currencyId, amount)` | `TransferResult` | Full transfer path with events |
 
 `TransferResult` fields: `status`, `sent`, `received`, `tax`, `cooldownRemainingMs`.
 
@@ -108,9 +115,10 @@ OpenEco uses result objects for normal business-rule failures (insufficient fund
 
 | Method | Result |
 |---|---|
-| `getHistory(UUID, page, pageSize)` | `HistoryPage` |
-| `getHistory(UUID, currencyId, page, pageSize, filter)` | `HistoryPage` |
-| `logCustomTransaction(...)` | `void` |
+| `getHistory(UUID, page, pageSize)` / `getHistory(UUID, currencyId, page, pageSize)` | `HistoryPage` |
+| `getHistory(UUID, page, pageSize, filter)` / `getHistory(UUID, currencyId, page, pageSize, filter)` | `HistoryPage` |
+| `logCustomTransaction(UUID, amount, kind)` / `logCustomTransaction(UUID, currencyId, amount, kind)` | `void` |
+| `logCustomTransaction(UUID, amount, kind, metadata)` / `logCustomTransaction(UUID, currencyId, amount, kind, metadata)` | `void` |
 
 `HistoryFilter` supports `kind`, `fromMs`, `toMs`, `currencyId`. Use `logCustomTransaction` to record history without changing balance.
 
@@ -118,9 +126,9 @@ OpenEco uses result objects for normal business-rule failures (insufficient fund
 
 | Method | Result |
 |---|---|
-| `getTopAccounts(limit)` | `List<AccountSnapshot>` |
-| `getTopAccounts(page, pageSize, currencyId)` | `LeaderboardPage` |
-| `getRankOf(UUID)` | `int` (1-based, `-1` if not found) |
+| `getTopAccounts(limit)` / `getTopAccounts(limit, currencyId)` | `List<AccountSnapshot>` |
+| `getTopAccounts(page, pageSize)` / `getTopAccounts(page, pageSize, currencyId)` | `LeaderboardPage` |
+| `getRankOf(UUID)` / `getRankOf(UUID, currencyId)` | `int` (1-based, `-1` if not found) |
 | `getUUIDNameMap()` | `Map<UUID, String>` |
 
 ## Currency and formatting

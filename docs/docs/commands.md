@@ -4,55 +4,55 @@ All core commands are registered in `plugin.yml`. Tab-completion suggests subcom
 
 ## Player commands
 
-<CommandRow commands="/balance" aliases="bal, money" permission="openeco.command.balance">
-Check your balance. With `openeco.command.balance.others`, specify another player. Add an optional currency id as the last argument.
+<CommandRow commands="/balance [player] [currency]" aliases="bal, money" permission="openeco.command.balance">
+Check your or another player's balance. Without `openeco.command.balance.others`, standard players can still check their own balance in another currency using <code>/balance [currency]</code>.
 </CommandRow>
 
-<CommandRow commands="/baltop" aliases="balancetop, moneytop" permission="openeco.command.baltop">
-View the richest players. Supports pagination and an optional currency id. Results are cached for `baltop.cache-ttl-seconds`.
+<CommandRow commands="/baltop [page] [currency]" aliases="balancetop, moneytop" permission="openeco.command.baltop">
+View the richest players. Supports pagination and an optional currency filter. Results are cached for `baltop.cache-ttl-seconds`.
 </CommandRow>
 
-<CommandRow commands="/pay" permission="openeco.command.pay">
-Send money to another player. Respects pay cooldown, tax, and minimum amount from config. Optional currency argument.
+<CommandRow commands="/pay <player> <amount> [currency]" permission="openeco.command.pay">
+Send money to another player. Respects pay cooldown, transfer tax, and minimum transaction limits from the config.
 </CommandRow>
 
-<CommandRow commands="/history" aliases="txhistory, ecohistory" permission="openeco.command.history">
-View transaction history. Defaults to your own account. With `openeco.command.history.others`, specify another player. Supports pagination and optional currency filter.
+<CommandRow commands="/history [self|player] [page] [currency]" aliases="txhistory, ecohistory" permission="openeco.command.history">
+View transaction history. Defaults to your own account. With `openeco.command.history.others`, specify another player. Supports pagination and optional currency filter. Note: page number and currency can be provided in any order.
 </CommandRow>
 
 ## Admin commands — `/eco`
 
 All `/eco` subcommands require their individual permission node (or `openeco.admin`).
 
-<CommandRow commands="/eco give" permission="openeco.command.eco.give">
-Give money to a player. Optional currency argument. Fires balance change events and records history.
+<CommandRow commands="/eco give <player> <amount> [currency]" permission="openeco.command.eco.give">
+Give money to a player. Fires balance change events and records history.
 </CommandRow>
 
-<CommandRow commands="/eco take" permission="openeco.command.eco.take">
-Take money from a player. Fails if the player has insufficient funds. Optional currency argument.
+<CommandRow commands="/eco take <player> <amount> [currency]" permission="openeco.command.eco.take">
+Take money from a player. Fails if the player has insufficient funds.
 </CommandRow>
 
-<CommandRow commands="/eco set" permission="openeco.command.eco.set">
-Set a player's balance to an exact amount. Optional currency argument.
+<CommandRow commands="/eco set <player> <amount> [currency]" permission="openeco.command.eco.set">
+Set a player's balance to an exact amount.
 </CommandRow>
 
-<CommandRow commands="/eco reset" permission="openeco.command.eco.reset">
-Reset a player's balance to the configured starting balance. Optional currency argument.
+<CommandRow commands="/eco reset <player> [currency]" permission="openeco.command.eco.reset">
+Reset a player's balance to the configured starting balance for the currency.
 </CommandRow>
 
-<CommandRow commands="/eco delete" permission="openeco.command.eco.delete">
+<CommandRow commands="/eco delete <player>" permission="openeco.command.eco.delete">
 Delete a player's account and that account's transaction history. This cannot be undone.
 </CommandRow>
 
-<CommandRow commands="/eco freeze" permission="openeco.command.eco.freeze">
+<CommandRow commands="/eco freeze <player>" permission="openeco.command.eco.freeze">
 Freeze an account. Frozen accounts cannot deposit, withdraw, pay, or receive payments.
 </CommandRow>
 
-<CommandRow commands="/eco unfreeze" permission="openeco.command.eco.unfreeze">
+<CommandRow commands="/eco unfreeze <player>" permission="openeco.command.eco.unfreeze">
 Unfreeze a previously frozen account.
 </CommandRow>
 
-<CommandRow commands="/eco rename" permission="openeco.command.eco.rename">
+<CommandRow commands="/eco rename <player> <newname>" permission="openeco.command.eco.rename">
 Rename an account's display name. Names must be unique (case-insensitive) and 16 characters or fewer.
 </CommandRow>
 

@@ -44,7 +44,8 @@ Replace `N` with the desired rank number (1, 2, 3, …).
 When a rank does not exist:
 
 - `_name` placeholders return `---`
-- Balance placeholders return `0`
+- Raw balance placeholders (`_balance`) return `0`
+- Formatted balance placeholders (`_balance_formatted`) return the formatted value of `0` (e.g. `$0.00` or `0.00` depending on the currency settings)
 
 ## Cache behavior
 
