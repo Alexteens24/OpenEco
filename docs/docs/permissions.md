@@ -2,7 +2,7 @@
 
 Grant permission nodes explicitly in your permissions plugin. Server operators bypass checks by default.
 
-<BaseTable :columns="['Permission', 'Description', 'Default']" grid="2fr 3fr 0.6fr">
+<BaseTable :columns="['Permission', 'Description', 'Default']" grid="3fr 2.5fr 0.7fr">
 
 <PermRow permission="openeco.command.balance" defaultVal="true">
 Check own balance via `/balance`.
@@ -80,7 +80,7 @@ Wildcard — grants all admin permissions listed above.
 
 ## Addon permissions
 
-<BaseTable :columns="['Permission', 'Description', 'Default']" grid="2fr 3fr 0.6fr">
+<BaseTable :columns="['Permission', 'Description', 'Default']" grid="3fr 2.5fr 0.7fr">
 
 <PermRow permission="openeco.enhancements.exchange" defaultVal="true">
 Use `/exchange` (OpenEcoEnhancements).

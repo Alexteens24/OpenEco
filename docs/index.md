@@ -5,6 +5,9 @@ hero:
   name: OpenEco
   text: Simple Economy
   tagline: Single-server-first economy for Paper and Folia with optional proxy-assisted handoff
+  image:
+    src: /logo.png
+    alt: OpenEco Logo
   actions:
     - theme: brand
       text: Get Started

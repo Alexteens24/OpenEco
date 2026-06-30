@@ -36,3 +36,25 @@
   border: 1px solid var(--vp-c-border);
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
 }
+
+/* Prevent inline code in markdown tables from wrapping awkwardly */
+.vp-doc table td code {
+  white-space: nowrap;
+}
+
+/* Page fade-in-up transition animation */
+.vp-doc {
+  animation: fadeInUp 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+

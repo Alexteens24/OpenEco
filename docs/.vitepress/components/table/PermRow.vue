@@ -3,7 +3,8 @@ import { ref } from 'vue'
 
 defineProps({
   permission: { type: String, required: true },
-  defaultVal: { type: String, default: 'op' }
+  defaultVal: { type: String, default: 'op' },
+  grid: { type: String, default: '3fr 2.5fr 0.7fr' }
 })
 
 const copiedItem = ref(null)
@@ -33,7 +34,7 @@ const copyToClipboard = async (text) => {
 </script>
 
 <template>
-  <div class="perm-row">
+  <div class="perm-row" :style="{ gridTemplateColumns: grid }">
     <div class="col-perm">
       <span class="mobile-label">Permission:</span>
       <span class="badge perm-badge clickable" :class="{ 'is-copied': copiedItem === permission }" @click="copyToClipboard(permission)" title="Click to copy">{{ permission }}</span>

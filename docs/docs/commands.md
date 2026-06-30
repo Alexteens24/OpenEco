@@ -71,7 +71,7 @@ Does not replace a restart after changing storage backends, `cross-server.enable
 <CommandRow commands="/openecomigrate" permission="openeco.migrator.admin">
 Import economy data from another plugin or migrate between storage backends.
 
-Usage: `/openecomigrate &lt;source&gt; [--scan] [--dry-run] [--overwrite]`
+Usage: <code>/openecomigrate &lt;source&gt; [--scan] [--dry-run] [--overwrite]</code>
 
 Economy plugin import requires the **OpenEcoMigrator** addon. Storage migration is built into the core JAR.
 </CommandRow>
@@ -81,13 +81,13 @@ Economy plugin import requires the **OpenEcoMigrator** addon. Storage migration 
 ### OpenEcoEnhancements
 
 <CommandRow commands="/exchange" permission="openeco.enhancements.exchange">
-Exchange one currency for another at a configured rate. Usage: `/exchange &lt;amount&gt; &lt;from&gt; &lt;to&gt;`
+Exchange one currency for another at a configured rate. Usage: <code>/exchange &lt;amount&gt; &lt;from&gt; &lt;to&gt;</code>
 </CommandRow>
 
 ### OpenEco Proxy (Velocity)
 
 <CommandRow commands="/ecosync" permission="openeco.admin.sync">
-Manually force a flush-then-refresh cycle for an online player on the proxy network. Usage: `/ecosync &lt;player&gt;`
+Manually force a flush-then-refresh cycle for an online player on the proxy network. Usage: <code>/ecosync &lt;player&gt;</code>
 
 Useful after direct database edits or when debugging a suspected stale balance.
 </CommandRow>

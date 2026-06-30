@@ -175,7 +175,7 @@ Enable proxy-assisted account handoff sync. Requires MySQL, MariaDB, or PostgreS
 
 ## Messages
 
-The `messages` section contains MiniMessage-formatted chat strings. Placeholders like `&lt;player&gt;`, `&lt;balance&gt;`, `&lt;amount&gt;`, and `&lt;currency&gt;` are replaced at runtime.
+The `messages` section contains MiniMessage-formatted chat strings. Placeholders like `<player>`, `<balance>`, `<amount>`, and `<currency>` are replaced at runtime.
 
 Run `/eco reload` after editing messages. No restart needed.
 
