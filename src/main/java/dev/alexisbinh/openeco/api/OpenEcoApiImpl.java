@@ -68,6 +68,7 @@ public final class OpenEcoApiImpl implements OpenEcoApi {
                     .orElseGet(() -> AccountOperationResult.failed(null, "Account already exists but could not be reloaded"));
             case NAME_IN_USE -> AccountOperationResult.nameInUse(null);
             case INVALID_NAME -> AccountOperationResult.failed(null, "Invalid account name");
+            case PERSISTENCE_FAILED -> AccountOperationResult.failed(null, "Account database write failed");
         };
     }
 
@@ -90,6 +91,7 @@ public final class OpenEcoApiImpl implements OpenEcoApi {
                     .orElseGet(() -> AccountOperationResult.failed(null, "Account already exists but could not be reloaded"));
             case NAME_IN_USE -> AccountOperationResult.nameInUse(null);
             case INVALID_NAME -> AccountOperationResult.failed(null, "Invalid account name");
+            case PERSISTENCE_FAILED -> AccountOperationResult.failed(null, "Account database write failed");
         };
     }
 
@@ -624,6 +626,7 @@ public final class OpenEcoApiImpl implements OpenEcoApi {
             case NAME_IN_USE -> AccountOperationResult.nameInUse(current);
             case INVALID_NAME -> AccountOperationResult.failed(current, "Invalid account name");
             case CANCELLED -> AccountOperationResult.failed(current, "Account rename was cancelled or could not be applied");
+            case PERSISTENCE_FAILED -> AccountOperationResult.failed(current, "Account database write failed");
         };
     }
 
@@ -689,6 +692,7 @@ public final class OpenEcoApiImpl implements OpenEcoApi {
             case "Balance limit reached" -> BalanceChangeResult.Status.BALANCE_LIMIT;
             case "Account is frozen" -> BalanceChangeResult.Status.FROZEN;
             case "Cancelled by plugin" -> BalanceChangeResult.Status.CANCELLED;
+            case "Database write failed" -> BalanceChangeResult.Status.PERSISTENCE_FAILURE;
             default -> throw new OpenEcoApiException("Unexpected balance change failure: " + response.errorMessage());
         };
     }
@@ -706,6 +710,7 @@ public final class OpenEcoApiImpl implements OpenEcoApi {
             case INVALID_AMOUNT -> TransferResult.Status.INVALID_AMOUNT;
             case SELF_TRANSFER -> TransferResult.Status.SELF_TRANSFER;
             case FROZEN -> TransferResult.Status.FROZEN;
+            case PERSISTENCE_FAILURE -> TransferResult.Status.PERSISTENCE_FAILURE;
         };
     }
 

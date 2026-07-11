@@ -79,6 +79,8 @@ accounts:
   # Account bootstrap strategy:
   # - eager: preload every account row into memory at startup (recommended default)
   # - lazy: skip startup preload and load accounts on first access, with repository fallback for lookups
+  # - live: re-read accounts on access and commit every successful mutation before returning
+  #   (higher database latency/write load; concurrent multi-server writes are not a distributed transaction)
   # Changing this setting is best treated as restart-required so the live registry matches the selected mode.
   load-strategy: eager
 
@@ -162,6 +164,7 @@ messages:
   eco-freeze-failed: "<red>Failed to freeze <yellow><player><red>'s account."
   eco-unfreeze-failed: "<red>Failed to unfreeze <yellow><player><red>'s account."
   account-frozen: "<red>This account is frozen and cannot perform transactions."
+  operation-failed: "<red>The operation could not be saved. Please try again."
   eco-reset: "<green>Reset <yellow><player><green>'s balance to <yellow><balance><green>."
   eco-reload: "<green>openeco configuration reloaded."
   eco-rename: "<green>Renamed <yellow><old_name><green>'s account to <yellow><new_name><green>."

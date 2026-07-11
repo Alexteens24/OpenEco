@@ -31,7 +31,8 @@ public record TransferResult(Status status, BigDecimal sent, BigDecimal received
         TOO_LOW,
         INVALID_AMOUNT,
         SELF_TRANSFER,
-        FROZEN
+        FROZEN,
+        PERSISTENCE_FAILURE
     }
 
     public boolean isSuccess() {

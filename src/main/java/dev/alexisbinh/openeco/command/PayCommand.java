@@ -108,6 +108,7 @@ public class PayCommand implements CommandExecutor, TabCompleter {
             case ACCOUNT_NOT_FOUND  -> messages.send(payer, "account-not-found",
                     Placeholder.unparsed("player", target.getLastKnownName()));
             case FROZEN             -> messages.send(payer, "account-frozen");
+            case PERSISTENCE_FAILURE -> messages.send(payer, "operation-failed");
             case COOLDOWN -> {
                 long secs = (result.getCooldownRemainingMs() + 999) / 1000;
                 messages.send(payer, "pay-cooldown",

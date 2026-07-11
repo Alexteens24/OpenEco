@@ -32,6 +32,7 @@ import dev.alexisbinh.openeco.model.TransactionType;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.Map;
+import java.util.List;
 import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -39,12 +40,18 @@ import java.util.function.Supplier;
 
 final class EconomyOperations {
 
+    @FunctionalInterface
+    interface AccountPersister {
+        boolean persist(List<AccountRecord> records);
+    }
+
     private final AccountRegistry accountRegistry;
     private final Supplier<EconomyConfigSnapshot> configSupplier;
     private final Map<UUID, Long> lastPayTime;
     private final Consumer<TransactionEntry> transactionLogger;
     private final EventDispatcher eventDispatcher;
     private final Function<UUID, AccountRecord> accountLoader;
+    private final AccountPersister accountPersister;
 
     EconomyOperations(AccountRegistry accountRegistry,
                       Supplier<EconomyConfigSnapshot> configSupplier,
@@ -52,12 +59,24 @@ final class EconomyOperations {
                       Consumer<TransactionEntry> transactionLogger,
                       EventDispatcher eventDispatcher,
                       Function<UUID, AccountRecord> accountLoader) {
+        this(accountRegistry, configSupplier, lastPayTime, transactionLogger, eventDispatcher,
+                accountLoader, ignored -> true);
+    }
+
+    EconomyOperations(AccountRegistry accountRegistry,
+                      Supplier<EconomyConfigSnapshot> configSupplier,
+                      Map<UUID, Long> lastPayTime,
+                      Consumer<TransactionEntry> transactionLogger,
+                      EventDispatcher eventDispatcher,
+                      Function<UUID, AccountRecord> accountLoader,
+                      AccountPersister accountPersister) {
         this.accountRegistry = accountRegistry;
         this.configSupplier = configSupplier;
         this.lastPayTime = lastPayTime;
         this.transactionLogger = transactionLogger;
         this.eventDispatcher = eventDispatcher;
         this.accountLoader = accountLoader;
+        this.accountPersister = accountPersister;
     }
 
     BalanceCheckResult canDeposit(UUID id, BigDecimal amount) {
@@ -196,7 +215,12 @@ final class EconomyOperations {
                 return failure(scaled, before, "Balance limit reached");
             }
 
+            AccountRecord beforeMutation = record.snapshot();
             record.setBalance(currency.id(), newBalance);
+            if (!accountPersister.persist(List.of(record))) {
+                record.overwriteFrom(beforeMutation);
+                return failure(scaled, before, "Database write failed");
+            }
             transactionLogger.accept(new TransactionEntry(
                     TransactionType.GIVE, null, id, scaled, before, newBalance, System.currentTimeMillis(), null, null, currency.id()));
             completedEvent = new BalanceChangedEvent(id, before, newBalance, BalanceChangeEvent.Reason.GIVE, currency.id());
@@ -266,7 +290,12 @@ final class EconomyOperations {
 
             BigDecimal newBalance = before.subtract(scaled);
 
+            AccountRecord beforeMutation = record.snapshot();
             record.setBalance(currency.id(), newBalance);
+            if (!accountPersister.persist(List.of(record))) {
+                record.overwriteFrom(beforeMutation);
+                return failure(scaled, before, "Database write failed");
+            }
             transactionLogger.accept(new TransactionEntry(
                     TransactionType.TAKE, null, id, scaled, before, newBalance, System.currentTimeMillis(), null, null, currency.id()));
             completedEvent = new BalanceChangedEvent(id, before, newBalance, BalanceChangeEvent.Reason.TAKE, currency.id());
@@ -335,7 +364,12 @@ final class EconomyOperations {
                 return failure(scaled, before, "Balance limit reached");
             }
 
+            AccountRecord beforeMutation = record.snapshot();
             record.setBalance(currency.id(), scaled);
+            if (!accountPersister.persist(List.of(record))) {
+                record.overwriteFrom(beforeMutation);
+                return failure(scaled, before, "Database write failed");
+            }
             transactionLogger.accept(new TransactionEntry(
                     TransactionType.SET, null, id, scaled, before, scaled, System.currentTimeMillis(), null, null, currency.id()));
             completedEvent = new BalanceChangedEvent(id, before, scaled, BalanceChangeEvent.Reason.SET, currency.id());
@@ -392,7 +426,12 @@ final class EconomyOperations {
             if (record.isFrozen()) {
                 return failure(BigDecimal.ZERO, before, "Account is frozen");
             }
+            AccountRecord beforeMutation = record.snapshot();
             record.setBalance(currency.id(), startingBalance);
+            if (!accountPersister.persist(List.of(record))) {
+                record.overwriteFrom(beforeMutation);
+                return failure(startingBalance, before, "Database write failed");
+            }
             transactionLogger.accept(new TransactionEntry(
                     TransactionType.RESET, null, id, startingBalance, before, startingBalance,
                     System.currentTimeMillis(), null, null, currency.id()));
@@ -645,8 +684,16 @@ final class EconomyOperations {
                     return DirectTransferResult.failure(DirectTransferResult.Status.BALANCE_LIMIT, scaled, "Balance limit reached");
                 }
 
+                AccountRecord fromBeforeMutation = fromRecord.snapshot();
+                AccountRecord toBeforeMutation = toRecord.snapshot();
                 fromRecord.setBalance(currency.id(), fromAfter);
                 toRecord.setBalance(currency.id(), toAfter);
+                if (!accountPersister.persist(List.of(fromRecord, toRecord))) {
+                    fromRecord.overwriteFrom(fromBeforeMutation);
+                    toRecord.overwriteFrom(toBeforeMutation);
+                    return DirectTransferResult.failure(
+                            DirectTransferResult.Status.PERSISTENCE_FAILURE, scaled, "Database write failed");
+                }
 
                 long now = System.currentTimeMillis();
                 transactionLogger.accept(new TransactionEntry(
@@ -757,8 +804,15 @@ final class EconomyOperations {
                     return PayResult.balanceLimit();
                 }
 
+                AccountRecord fromBeforeMutation = fromRecord.snapshot();
+                AccountRecord toBeforeMutation = toRecord.snapshot();
                 fromRecord.setBalance(currency.id(), fromAfter);
                 toRecord.setBalance(currency.id(), toAfter);
+                if (!accountPersister.persist(List.of(fromRecord, toRecord))) {
+                    fromRecord.overwriteFrom(fromBeforeMutation);
+                    toRecord.overwriteFrom(toBeforeMutation);
+                    return PayResult.persistenceFailure();
+                }
                 lastPayTime.put(fromId, System.currentTimeMillis());
 
                 long now = System.currentTimeMillis();
@@ -790,10 +844,6 @@ final class EconomyOperations {
     }
 
     private AccountRecord requireRecord(UUID id) {
-        AccountRecord record = accountRegistry.getLiveRecord(id);
-        if (record != null) {
-            return record;
-        }
         return accountLoader.apply(id);
     }
 

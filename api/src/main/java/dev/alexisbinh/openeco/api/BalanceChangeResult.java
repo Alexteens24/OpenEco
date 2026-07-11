@@ -28,7 +28,8 @@ public record BalanceChangeResult(Status status, BigDecimal amount, BigDecimal p
         INSUFFICIENT_FUNDS,
         BALANCE_LIMIT,
         CANCELLED,
-        FROZEN
+        FROZEN,
+        PERSISTENCE_FAILURE
     }
 
     public boolean isSuccess() {

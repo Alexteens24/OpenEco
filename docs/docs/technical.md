@@ -4,7 +4,7 @@ Operational details behind OpenEco's runtime model. For contributor internals, s
 
 ## Runtime model
 
-OpenEco keeps account data in memory and writes it through JDBC in the background.
+OpenEco keeps a local account registry backed by JDBC. Persistence behavior depends on the account loading strategy.
 
 ### Account loading
 
@@ -12,10 +12,13 @@ OpenEco keeps account data in memory and writes it through JDBC in the backgroun
 |---|---|
 | `eager` (default) | Loads all account rows at startup |
 | `lazy` | Loads on first access; repository fallback for lookups |
+| `live` | Re-reads on access and writes through every successful mutation |
 
 In eager mode, balance reads and writes do not round-trip to the database after preload. In lazy mode, first access may trigger a one-time repository load.
 
-Dirty account snapshots flush on the autosave interval and on normal shutdown.
+Dirty account snapshots in `eager` and `lazy` flush on the autosave interval and on normal shutdown. In `live`, a balance operation succeeds only after its account snapshot is committed; a failed write restores the previous in-memory state.
+
+`live` reduces stale reads and the crash-loss window, but it is not a distributed transaction protocol. Two backends mutating the same account at exactly the same time can still race; keep one active server authority per account.
 
 ### History writes
 

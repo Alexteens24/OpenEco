@@ -54,7 +54,8 @@ public class AccountService {
         CREATED,
         ALREADY_EXISTS,
         NAME_IN_USE,
-        INVALID_NAME
+        INVALID_NAME,
+        PERSISTENCE_FAILED
     }
 
     public enum RenameAccountStatus {
@@ -63,7 +64,8 @@ public class AccountService {
         UNCHANGED,
         NAME_IN_USE,
         INVALID_NAME,
-        CANCELLED
+        CANCELLED,
+        PERSISTENCE_FAILED
     }
 
     public enum DeleteAccountStatus {
@@ -83,6 +85,7 @@ public class AccountService {
     private volatile EconomyConfigSnapshot config;
     private volatile boolean crossServerEnabled;
     private volatile boolean lazyAccountLoadingEnabled;
+    private volatile boolean liveAccountLoadingEnabled;
 
     // Pay cooldown tracker
     private final ConcurrentHashMap<UUID, Long> lastPayTime = new ConcurrentHashMap<>();
@@ -102,8 +105,9 @@ public class AccountService {
                 () -> this.config,
                 lastPayTime,
                 this::logTransaction,
-            eventDispatcher,
-            this::getOrLoadLiveRecord);
+                eventDispatcher,
+                this::getOrLoadLiveRecord,
+                this::persistLiveRecords);
         readConfig(config);
     }
 
@@ -120,11 +124,14 @@ public class AccountService {
         if (loadStrategy == null) {
             loadStrategy = "eager";
         }
-        if (!loadStrategy.equalsIgnoreCase("eager") && !loadStrategy.equalsIgnoreCase("lazy")) {
+        if (!loadStrategy.equalsIgnoreCase("eager")
+                && !loadStrategy.equalsIgnoreCase("lazy")
+                && !loadStrategy.equalsIgnoreCase("live")) {
             log.warning("Unknown accounts.load-strategy '" + loadStrategy + "'. Falling back to 'eager'.");
             loadStrategy = "eager";
         }
-        this.lazyAccountLoadingEnabled = loadStrategy.equalsIgnoreCase("lazy");
+        this.liveAccountLoadingEnabled = loadStrategy.equalsIgnoreCase("live");
+        this.lazyAccountLoadingEnabled = loadStrategy.equalsIgnoreCase("lazy") || liveAccountLoadingEnabled;
         syncConfiguredCurrencies(updated);
         leaderboardCache.setCacheTtlMs(updated.balTopCacheTtlMs());
         this.crossServerEnabled = config.getBoolean("cross-server.enabled", false);
@@ -136,6 +143,10 @@ public class AccountService {
 
     public boolean isLazyAccountLoadingEnabled() {
         return lazyAccountLoadingEnabled;
+    }
+
+    public boolean isLiveAccountLoadingEnabled() {
+        return liveAccountLoadingEnabled;
     }
 
     // ── Startup ─────────────────────────────────────────────────────────────
@@ -159,9 +170,11 @@ public class AccountService {
     }
 
     public Optional<AccountRecord> getAccount(UUID id) {
-        Optional<AccountRecord> snapshot = accountRegistry.getSnapshot(id);
-        if (snapshot.isPresent()) {
-            return snapshot;
+        if (!liveAccountLoadingEnabled) {
+            Optional<AccountRecord> snapshot = accountRegistry.getSnapshot(id);
+            if (snapshot.isPresent()) {
+                return snapshot;
+            }
         }
 
         AccountRecord record = getOrLoadLiveRecord(id);
@@ -174,6 +187,25 @@ public class AccountService {
     }
 
     public Optional<AccountRecord> findByName(String name) {
+        if (liveAccountLoadingEnabled) {
+            Optional<AccountRecord> persisted = loadPersistedAccountByName(name);
+            if (persisted.isEmpty()) {
+                return Optional.empty();
+            }
+            synchronized (persistenceLock) {
+                AccountRecord fresh = persisted.get();
+                AccountRecord live = accountRegistry.getLiveRecord(fresh.getId());
+                if (live != null) {
+                    if (!accountRegistry.refreshInPlace(fresh)) {
+                        return Optional.empty();
+                    }
+                } else {
+                    live = attachLoadedRecord(fresh);
+                }
+                return live == null ? Optional.empty() : Optional.of(live.snapshot());
+            }
+        }
+
         Optional<AccountRecord> snapshot = accountRegistry.findSnapshotByName(name);
         if (snapshot.isPresent() || !lazyAccountLoadingEnabled) {
             return snapshot;
@@ -231,6 +263,10 @@ public class AccountService {
             record.markDirty();
             if (!accountRegistry.create(record)) {
                 return CreateAccountStatus.NAME_IN_USE;
+            }
+            if (!persistLiveRecords(List.of(record))) {
+                accountRegistry.remove(id, record);
+                return CreateAccountStatus.PERSISTENCE_FAILED;
             }
             invalidateBalTopCache();
             createdEvent = new AccountCreateEvent(id, validatedName, currentConfig.startingBalance());
@@ -299,8 +335,13 @@ public class AccountService {
                     return RenameAccountStatus.NAME_IN_USE;
                 }
 
+                AccountRecord beforeMutation = record.snapshot();
                 if (!accountRegistry.rename(record, validatedName)) {
                     return RenameAccountStatus.NAME_IN_USE;
+                }
+                if (!persistLiveRecords(List.of(record))) {
+                    accountRegistry.rename(record, beforeMutation.getLastKnownName());
+                    return RenameAccountStatus.PERSISTENCE_FAILED;
                 }
                 invalidateBalTopCache();
             }
@@ -601,8 +642,11 @@ public class AccountService {
         if (record == null) return false;
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) return false;
+            AccountRecord beforeMutation = record.snapshot();
             record.setFrozen(true);
-            return true;
+            if (persistLiveRecords(List.of(record))) return true;
+            record.overwriteFrom(beforeMutation);
+            return false;
         }
     }
 
@@ -611,8 +655,11 @@ public class AccountService {
         if (record == null) return false;
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) return false;
+            AccountRecord beforeMutation = record.snapshot();
             record.setFrozen(false);
-            return true;
+            if (persistLiveRecords(List.of(record))) return true;
+            record.overwriteFrom(beforeMutation);
+            return false;
         }
     }
 
@@ -805,6 +852,28 @@ public class AccountService {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private @Nullable AccountRecord getOrLoadLiveRecord(UUID id) {
+        if (liveAccountLoadingEnabled) {
+            synchronized (persistenceLock) {
+                Optional<AccountRecord> persisted = loadPersistedAccount(id);
+                if (persisted.isEmpty()) {
+                    AccountRecord stale = accountRegistry.getLiveRecord(id);
+                    if (stale != null) {
+                        accountRegistry.remove(id, stale);
+                    }
+                    return null;
+                }
+                AccountRecord fresh = persisted.get();
+                AccountRecord current = accountRegistry.getLiveRecord(id);
+                if (current != null) {
+                    if (!accountRegistry.refreshInPlace(fresh)) {
+                        return null;
+                    }
+                    return current;
+                }
+                return attachLoadedRecord(fresh);
+            }
+        }
+
         AccountRecord live = accountRegistry.getLiveRecord(id);
         if (live != null || !lazyAccountLoadingEnabled) {
             return live;
@@ -832,6 +901,24 @@ public class AccountService {
         } catch (SQLException e) {
             log.warning("Failed to lazy-load account " + id + ": " + e.getMessage());
             return Optional.empty();
+        }
+    }
+
+    private boolean persistLiveRecords(List<AccountRecord> records) {
+        if (!liveAccountLoadingEnabled) {
+            return true;
+        }
+
+        List<AccountRecord> snapshots = records.stream().map(AccountRecord::snapshot).toList();
+        try {
+            repository.upsertBatch(snapshots);
+            for (AccountRecord record : records) {
+                record.clearDirty();
+            }
+            return true;
+        } catch (SQLException e) {
+            log.severe("Live account write failed: " + e.getMessage());
+            return false;
         }
     }
 

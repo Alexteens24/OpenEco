@@ -114,6 +114,21 @@ class EconomyOperationsTest {
     }
 
     @Test
+    void deposit_persistenceFailureRestoresBalanceAndSkipsCommitSideEffects() {
+        ops = new EconomyOperations(registry, () -> config, new ConcurrentHashMap<>(),
+                logged::add, dispatchedEvents::add, registry::getLiveRecord, ignored -> false);
+
+        EconomyOperationResponse response = ops.deposit(aliceId, new BigDecimal("3.00"));
+
+        assertFalse(response.transactionSuccess());
+        assertEquals("Database write failed", response.errorMessage());
+        assertEquals(0, new BigDecimal("10.00").compareTo(registry.getLiveRecord(aliceId).getBalance()));
+        assertTrue(logged.isEmpty());
+        assertEquals(List.of(BalanceChangeEvent.class),
+                dispatchedEvents.stream().map(Event::getClass).toList());
+    }
+
+    @Test
     void deposit_nonPositiveAmount_returnsFailure() {
         EconomyOperationResponse resp = ops.deposit(aliceId, BigDecimal.ZERO);
 
@@ -345,6 +360,20 @@ class EconomyOperationsTest {
         PayResult result = ops.pay(aliceId, bobId, new BigDecimal("4.00"));
 
         assertEquals(PayResult.Status.CANCELLED, result.getStatus());
+        assertEquals(0, new BigDecimal("10.00").compareTo(registry.getLiveRecord(aliceId).getBalance()));
+        assertEquals(0, new BigDecimal("5.00").compareTo(registry.getLiveRecord(bobId).getBalance()));
+        assertTrue(logged.isEmpty());
+        assertEquals(List.of(PayEvent.class), dispatchedEvents.stream().map(Event::getClass).toList());
+    }
+
+    @Test
+    void pay_persistenceFailureRestoresBothBalancesAndSkipsCommitSideEffects() {
+        ops = new EconomyOperations(registry, () -> config, new ConcurrentHashMap<>(),
+                logged::add, dispatchedEvents::add, registry::getLiveRecord, ignored -> false);
+
+        PayResult result = ops.pay(aliceId, bobId, new BigDecimal("4.00"));
+
+        assertEquals(PayResult.Status.PERSISTENCE_FAILURE, result.getStatus());
         assertEquals(0, new BigDecimal("10.00").compareTo(registry.getLiveRecord(aliceId).getBalance()));
         assertEquals(0, new BigDecimal("5.00").compareTo(registry.getLiveRecord(bobId).getBalance()));
         assertTrue(logged.isEmpty());

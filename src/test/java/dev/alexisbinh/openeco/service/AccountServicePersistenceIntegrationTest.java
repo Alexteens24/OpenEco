@@ -134,6 +134,53 @@ class AccountServicePersistenceIntegrationTest {
     }
 
     @Test
+    void liveStrategyWritesEverySuccessfulMutationImmediately() throws Exception {
+        JdbcAccountRepository repository = new JdbcAccountRepository(
+                DatabaseDialect.H2, tempDir.toString(), "live-write-through-test");
+        try {
+            AccountService service = newServiceWithConfig(repository, liveConfig());
+            UUID accountId = UUID.randomUUID();
+
+            assertTrue(service.createAccount(accountId, "Alice"));
+            assertEquals(0, new BigDecimal("5.00").compareTo(
+                    repository.loadAccount(accountId).orElseThrow().getBalance()));
+
+            assertTrue(service.deposit(accountId, new BigDecimal("2.00")).transactionSuccess());
+            assertEquals(0, new BigDecimal("7.00").compareTo(
+                    repository.loadAccount(accountId).orElseThrow().getBalance()));
+
+            assertTrue(service.withdraw(accountId, BigDecimal.ONE).transactionSuccess());
+            assertEquals(0, new BigDecimal("6.00").compareTo(
+                    repository.loadAccount(accountId).orElseThrow().getBalance()));
+            service.shutdown();
+        } finally {
+            repository.close();
+        }
+    }
+
+    @Test
+    void liveStrategyRefreshesCachedAccountOnEveryRead() throws Exception {
+        JdbcAccountRepository repository = new JdbcAccountRepository(
+                DatabaseDialect.H2, tempDir.toString(), "live-refresh-test");
+        try {
+            AccountService writer = newServiceWithConfig(repository, liveConfig());
+            AccountService reader = newServiceWithConfig(repository, liveConfig());
+            UUID accountId = UUID.randomUUID();
+
+            assertTrue(writer.createAccount(accountId, "Alice"));
+            assertEquals(0, new BigDecimal("5.00").compareTo(reader.getBalance(accountId)));
+
+            assertTrue(writer.deposit(accountId, new BigDecimal("3.00")).transactionSuccess());
+            assertEquals(0, new BigDecimal("8.00").compareTo(reader.getBalance(accountId)));
+
+            writer.shutdown();
+            reader.shutdown();
+        } finally {
+            repository.close();
+        }
+    }
+
+    @Test
     void lazyLoadCreateStillRejectsPersistedNameCollisions() throws Exception {
         JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "lazy-load-name-conflict-test");
         try {
@@ -838,6 +885,12 @@ class AccountServicePersistenceIntegrationTest {
     private static YamlConfiguration lazyConfig(double taxPercent, int retentionDays) {
         YamlConfiguration config = testConfig(taxPercent, retentionDays);
         config.set("accounts.load-strategy", "lazy");
+        return config;
+    }
+
+    private static YamlConfiguration liveConfig() {
+        YamlConfiguration config = testConfig(0.0, -1);
+        config.set("accounts.load-strategy", "live");
         return config;
     }
 

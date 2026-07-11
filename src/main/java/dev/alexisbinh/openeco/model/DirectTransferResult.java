@@ -34,7 +34,8 @@ public record DirectTransferResult(
         ACCOUNT_NOT_FOUND,
         FROZEN,
         INSUFFICIENT_FUNDS,
-        BALANCE_LIMIT
+        BALANCE_LIMIT,
+        PERSISTENCE_FAILURE
     }
 
     public boolean isSuccess() {

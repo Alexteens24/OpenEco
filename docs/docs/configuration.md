@@ -120,7 +120,7 @@ Source database file name for storage migration helpers.
 <ConfigGroup name="accounts">
 
 <ConfigProperty name="load-strategy" value="eager" type="string">
-`eager` preloads every account at startup (recommended). `lazy` loads on first access. **Restart after changing.**
+`eager` preloads every account at startup (recommended). `lazy` loads on first access. `live` re-reads account state on access and commits each successful mutation before returning. `live` increases database latency and write load; it does not make simultaneous writes from multiple backends atomic. **Restart after changing.**
 </ConfigProperty>
 
 </ConfigGroup>

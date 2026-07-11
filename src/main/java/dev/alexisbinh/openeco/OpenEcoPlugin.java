@@ -166,7 +166,9 @@ public class OpenEcoPlugin extends JavaPlugin {
             getLogger().warning("bStats metrics disabled: " + ex.getMessage());
         }
 
-        String loadStrategy = service.isLazyAccountLoadingEnabled() ? "lazy" : "eager";
+        String loadStrategy = service.isLiveAccountLoadingEnabled()
+                ? "live"
+                : service.isLazyAccountLoadingEnabled() ? "lazy" : "eager";
         getLogger().info("openeco enabled. Backend: " + dialect.name().toLowerCase()
             + " | Account load strategy: " + loadStrategy);
     }
