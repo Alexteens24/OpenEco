@@ -17,8 +17,9 @@
 package dev.alexisbinh.openeco.command;
 
 import dev.alexisbinh.openeco.Messages;
-import dev.alexisbinh.openeco.model.AccountRecord;
 import dev.alexisbinh.openeco.service.AccountService;
+import dev.alexisbinh.openeco.service.LeaderboardEntry;
+import dev.alexisbinh.openeco.service.LeaderboardView;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -82,23 +83,23 @@ public class BalTopCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        List<AccountRecord> snapshot = service.getBalTopSnapshot(currencyId);
-        int totalPages = (int) Math.ceil((double) snapshot.size() / pageSize);
+        LeaderboardView summary = service.getLeaderboardPage(currencyId, 0, 0);
+        int totalPages = (int) Math.ceil((double) summary.totalEntries() / pageSize);
         if (totalPages == 0) totalPages = 1;
         if (page > totalPages) page = totalPages;
 
         int start = (page - 1) * pageSize;
-        int end = Math.min(start + pageSize, snapshot.size());
+        LeaderboardView view = service.getLeaderboardPage(currencyId, start, pageSize);
 
         messages.send(sender, "baltop-header",
                 Placeholder.unparsed("page", String.valueOf(page)),
                 Placeholder.unparsed("total", String.valueOf(totalPages)));
-        for (int i = start; i < end; i++) {
-            AccountRecord r = snapshot.get(i);
+        for (int i = 0; i < view.entries().size(); i++) {
+            LeaderboardEntry entry = view.entries().get(i);
             messages.send(sender, "baltop-entry",
-                    Placeholder.unparsed("rank", String.valueOf(i + 1)),
-                    Placeholder.unparsed("player", r.getLastKnownName()),
-                    Placeholder.unparsed("balance", service.format(r.getBalance(currencyId), currencyId)));
+                    Placeholder.unparsed("rank", String.valueOf(start + i + 1)),
+                    Placeholder.unparsed("player", entry.name()),
+                    Placeholder.unparsed("balance", service.format(entry.balance(), currencyId)));
         }
         return true;
     }
@@ -141,4 +142,3 @@ public class BalTopCommand implements CommandExecutor, TabCompleter {
         }
     }
 }
-

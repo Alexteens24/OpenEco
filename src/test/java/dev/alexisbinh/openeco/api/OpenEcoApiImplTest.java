@@ -22,6 +22,8 @@ import dev.alexisbinh.openeco.model.TransactionEntry;
 import dev.alexisbinh.openeco.model.TransactionType;
 import dev.alexisbinh.openeco.service.AccountService;
 import dev.alexisbinh.openeco.service.EconomyOperationResponse;
+import dev.alexisbinh.openeco.service.LeaderboardEntry;
+import dev.alexisbinh.openeco.service.LeaderboardView;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -306,7 +308,9 @@ class OpenEcoApiImplTest {
                 2L);
 
         when(service.getCanonicalCurrencyId("GEMS")).thenReturn("gems");
-        when(service.getBalTopSnapshot("gems")).thenReturn(List.of(account));
+        when(service.getLeaderboardPage("gems", 0, 10)).thenReturn(new LeaderboardView(
+                1, List.of(new LeaderboardEntry(account.getId(), "Alice", new BigDecimal("7")))));
+        when(service.getAccount(account.getId())).thenReturn(Optional.of(account));
 
         List<AccountSnapshot> top = api.getTopAccounts(10, "GEMS");
 
@@ -325,7 +329,9 @@ class OpenEcoApiImplTest {
                 2L);
 
         when(service.getCanonicalCurrencyId("gems")).thenReturn("gems");
-        when(service.getBalTopSnapshot("gems")).thenReturn(List.of(account));
+        when(service.getLeaderboardPage("gems", 0, 10)).thenReturn(new LeaderboardView(
+                1, List.of(new LeaderboardEntry(account.getId(), "Alice", new BigDecimal("7")))));
+        when(service.getAccount(account.getId())).thenReturn(Optional.of(account));
 
         LeaderboardPage page = api.getTopAccounts(1, 10, "gems");
 

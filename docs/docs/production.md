@@ -34,8 +34,6 @@ For network mode, also:
 3. Enable `cross-server.enabled: true` on every backend.
 4. Restart the proxy and all backends.
 
-If you plan to use `accounts.load-strategy: lazy`, set it from the start. Restart after changing load strategy.
-
 ## Storage choice
 
 ### SQLite (default)

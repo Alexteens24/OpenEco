@@ -42,15 +42,7 @@ public final class RemoteStorageDataSource {
         int poolSize = config.getInt("storage." + section + ".pool-size", 10);
 
         HikariConfig cfg = new HikariConfig();
-        cfg.setJdbcUrl(switch (dialect) {
-            case MYSQL -> "jdbc:mysql://" + host + ":" + port + "/" + database
-                    + "?useUnicode=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=UTC"
-                    + "&allowPublicKeyRetrieval=true";
-            case MARIADB -> "jdbc:mariadb://" + host + ":" + port + "/" + database
-                    + "?useUnicode=true&characterEncoding=UTF-8&allowPublicKeyRetrieval=true";
-            case POSTGRESQL -> "jdbc:postgresql://" + host + ":" + port + "/" + database;
-            default -> throw new IllegalStateException("Unexpected remote dialect: " + dialect);
-        });
+        cfg.setJdbcUrl(jdbcUrl(dialect, host, port, database));
         cfg.setUsername(username);
         cfg.setPassword(password);
         cfg.setMaximumPoolSize(poolSize);
@@ -59,6 +51,18 @@ public final class RemoteStorageDataSource {
         cfg.setPoolName("OpenEco-" + dialect.name());
         cfg.setDriverClassName(driverClassName(dialect));
         return new HikariDataSource(cfg);
+    }
+
+    static String jdbcUrl(DatabaseDialect dialect, String host, int port, String database) {
+        return switch (dialect) {
+            case MYSQL -> "jdbc:mysql://" + host + ":" + port + "/" + database
+                    + "?useUnicode=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=UTC"
+                    + "&allowPublicKeyRetrieval=true&useCursorFetch=true";
+            case MARIADB -> "jdbc:mariadb://" + host + ":" + port + "/" + database
+                    + "?useUnicode=true&characterEncoding=UTF-8&allowPublicKeyRetrieval=true";
+            case POSTGRESQL -> "jdbc:postgresql://" + host + ":" + port + "/" + database;
+            default -> throw new IllegalStateException("Unexpected remote dialect: " + dialect);
+        };
     }
 
     static String driverClassName(DatabaseDialect dialect) {

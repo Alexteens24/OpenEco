@@ -36,6 +36,21 @@ import java.util.UUID;
 
 public class JdbcAccountRepository implements AccountRepository {
 
+    private static final int ACCOUNT_SCAN_FETCH_SIZE = 1_000;
+    private static final String ACCOUNT_SCAN_SQL = """
+            SELECT a.id AS account_id,
+                   a.name AS account_name,
+                   a.created_at AS account_created_at,
+                   a.updated_at AS account_updated_at,
+                   a.frozen AS account_frozen,
+                   b.currency_id AS balance_currency_id,
+                   b.balance AS balance_value,
+                   b.updated_at AS balance_updated_at
+              FROM accounts a
+              LEFT JOIN account_balances b ON b.account_id = a.id
+             ORDER BY a.id, b.currency_id
+            """;
+
     private final HikariDataSource dataSource;
     private final DatabaseDialect dialect;
     private final String defaultCurrencyId;
@@ -187,74 +202,141 @@ public class JdbcAccountRepository implements AccountRepository {
     // ── AccountRepository ─────────────────────────────────────────────────────
 
     @Override
-    public List<AccountRecord> loadAll() throws SQLException {
-        Map<UUID, PersistedAccountRow> accounts = new LinkedHashMap<>();
-        Map<UUID, Map<String, PersistedBalanceRow>> balancesByAccount = new LinkedHashMap<>();
+    public void loadBatches(int batchSize, AccountBatchConsumer consumer) throws SQLException {
+        if (batchSize <= 0) {
+            throw new IllegalArgumentException("batchSize must be greater than 0");
+        }
         try (Connection conn = dataSource.getConnection()) {
-            try (Statement stmt = conn.createStatement();
-                 ResultSet rs = stmt.executeQuery("SELECT id,name,created_at,updated_at,frozen FROM accounts")) {
-                while (rs.next()) {
-                    UUID id = UUID.fromString(rs.getString("id"));
-                    accounts.put(id, new PersistedAccountRow(
-                            rs.getString("name"),
-                            rs.getLong("created_at"),
-                            rs.getLong("updated_at"),
-                            rs.getBoolean("frozen")));
+            scanAccountRows(conn, batchSize, consumer);
+        }
+    }
+
+    private void scanAccountRows(Connection conn, int batchSize, AccountBatchConsumer consumer) throws SQLException {
+        boolean postgresTransaction = dialect == DatabaseDialect.POSTGRESQL;
+        boolean restoreAutoCommit = postgresTransaction && conn.getAutoCommit();
+        boolean h2Lazy = dialect == DatabaseDialect.H2;
+        SQLException primaryFailure = null;
+
+        try {
+            if (restoreAutoCommit) {
+                conn.setAutoCommit(false);
+            }
+            if (h2Lazy) {
+                setH2LazyQueryExecution(conn, true);
+            }
+            scanAccountRowsConfigured(conn, batchSize, consumer);
+        } catch (SQLException e) {
+            primaryFailure = e;
+            throw e;
+        } finally {
+            SQLException cleanupFailure = null;
+            if (postgresTransaction) {
+                try {
+                    conn.rollback();
+                } catch (SQLException e) {
+                    cleanupFailure = e;
+                }
+                if (restoreAutoCommit) {
+                    try {
+                        conn.setAutoCommit(true);
+                    } catch (SQLException e) {
+                        if (cleanupFailure == null) cleanupFailure = e;
+                        else cleanupFailure.addSuppressed(e);
+                    }
                 }
             }
+            if (h2Lazy) {
+                try {
+                    setH2LazyQueryExecution(conn, false);
+                } catch (SQLException e) {
+                    if (cleanupFailure == null) cleanupFailure = e;
+                    else cleanupFailure.addSuppressed(e);
+                }
+            }
+            if (cleanupFailure != null) {
+                if (primaryFailure != null) primaryFailure.addSuppressed(cleanupFailure);
+                else throw cleanupFailure;
+            }
+        }
+    }
 
-            try (Statement stmt = conn.createStatement();
-                 ResultSet rs = stmt.executeQuery(
-                         "SELECT account_id,currency_id,balance,updated_at FROM account_balances")) {
+    private void scanAccountRowsConfigured(
+            Connection conn, int batchSize, AccountBatchConsumer consumer) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                ACCOUNT_SCAN_SQL, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)) {
+            if (dialect != DatabaseDialect.SQLITE) {
+                ps.setFetchSize(ACCOUNT_SCAN_FETCH_SIZE);
+            }
+            try (ResultSet rs = ps.executeQuery()) {
+                List<AccountRecord> batch = new ArrayList<>(batchSize);
+                UUID currentId = null;
+                PersistedAccountRow currentAccount = null;
+                Map<String, PersistedBalanceRow> currentBalances = new LinkedHashMap<>();
+
                 while (rs.next()) {
-                    UUID accountId = UUID.fromString(rs.getString("account_id"));
-                    if (!accounts.containsKey(accountId)) {
-                        continue;
+                    UUID rowId = UUID.fromString(rs.getString("account_id"));
+                    if (currentId != null && !currentId.equals(rowId)) {
+                        batch.add(buildScannedRecord(currentId, currentAccount, currentBalances));
+                        if (batch.size() == batchSize) {
+                            consumer.accept(List.copyOf(batch));
+                            batch.clear();
+                        }
+                        currentBalances = new LinkedHashMap<>();
                     }
-                    String currencyId = normalizePersistedCurrencyId(rs.getString("currency_id"));
-                    PersistedBalanceRow candidate = new PersistedBalanceRow(
-                            currencyId,
-                            rs.getBigDecimal("balance"),
-                            rs.getLong("updated_at"));
-                    Map<String, PersistedBalanceRow> accountBalances = balancesByAccount.computeIfAbsent(
-                            accountId,
-                            ignored -> new LinkedHashMap<>());
-                    String lookupKey = normalizeCurrencyLookupKey(currencyId);
-                    PersistedBalanceRow existing = accountBalances.get(lookupKey);
-                    if (existing == null || candidate.updatedAt() >= existing.updatedAt()) {
-                        accountBalances.put(lookupKey, candidate);
+                    if (!rowId.equals(currentId)) {
+                        currentId = rowId;
+                        currentAccount = new PersistedAccountRow(
+                                rs.getString("account_name"),
+                                rs.getLong("account_created_at"),
+                                rs.getLong("account_updated_at"),
+                                rs.getBoolean("account_frozen"));
                     }
+
+                    String rawCurrencyId = rs.getString("balance_currency_id");
+                    if (rawCurrencyId != null) {
+                        String currencyId = normalizePersistedCurrencyId(rawCurrencyId);
+                        PersistedBalanceRow candidate = new PersistedBalanceRow(
+                                currencyId,
+                                rs.getBigDecimal("balance_value"),
+                                rs.getLong("balance_updated_at"));
+                        String lookupKey = normalizeCurrencyLookupKey(currencyId);
+                        PersistedBalanceRow existing = currentBalances.get(lookupKey);
+                        if (existing == null || candidate.updatedAt() >= existing.updatedAt()) {
+                            currentBalances.put(lookupKey, candidate);
+                        }
+                    }
+                }
+
+                if (currentId != null) {
+                    batch.add(buildScannedRecord(currentId, currentAccount, currentBalances));
+                }
+                if (!batch.isEmpty()) {
+                    consumer.accept(List.copyOf(batch));
                 }
             }
         }
+    }
 
-        List<AccountRecord> result = new ArrayList<>(accounts.size());
-        for (Map.Entry<UUID, PersistedAccountRow> entry : accounts.entrySet()) {
-            UUID accountId = entry.getKey();
-            PersistedAccountRow account = entry.getValue();
-            Map<String, BigDecimal> balances = new LinkedHashMap<>();
-            Map<String, PersistedBalanceRow> persistedBalances = balancesByAccount.get(accountId);
-            if (persistedBalances != null) {
-                for (PersistedBalanceRow balanceRow : persistedBalances.values()) {
-                    balances.put(balanceRow.currencyId(), balanceRow.balance());
-                }
-            }
-            if (balances.isEmpty()) {
-                balances.put(defaultCurrencyId, BigDecimal.ZERO);
-            }
-
-            AccountRecord record = new AccountRecord(
-                    accountId,
-                    account.name(),
-                    defaultCurrencyId,
-                    balances,
-                    account.createdAt(),
-                    account.updatedAt());
-            record.setFrozen(account.frozen());
-            record.clearDirty();
-            result.add(record);
+    private AccountRecord buildScannedRecord(UUID id, PersistedAccountRow account,
+                                             Map<String, PersistedBalanceRow> balanceRows) {
+        Map<String, BigDecimal> balances = new LinkedHashMap<>();
+        for (PersistedBalanceRow row : balanceRows.values()) {
+            balances.put(row.currencyId(), row.balance());
         }
-        return result;
+        if (balances.isEmpty()) {
+            balances.put(defaultCurrencyId, BigDecimal.ZERO);
+        }
+        AccountRecord record = new AccountRecord(
+                id, account.name(), defaultCurrencyId, balances, account.createdAt(), account.updatedAt());
+        record.setFrozen(account.frozen());
+        record.clearDirty();
+        return record;
+    }
+
+    private static void setH2LazyQueryExecution(Connection conn, boolean enabled) throws SQLException {
+        try (Statement statement = conn.createStatement()) {
+            statement.execute("SET LAZY_QUERY_EXECUTION " + (enabled ? "TRUE" : "FALSE"));
+        }
     }
 
     @Override
@@ -279,49 +361,6 @@ public class JdbcAccountRepository implements AccountRepository {
             }
             return Optional.of(buildRecord(conn, id, account));
         }
-    }
-
-    @Override
-    public Optional<AccountRecord> loadAccountByName(String name) throws SQLException {
-        if (name == null) {
-            return Optional.empty();
-        }
-        String trimmed = name.trim();
-        if (trimmed.isEmpty()) {
-            return Optional.empty();
-        }
-
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                     "SELECT id,name,created_at,updated_at,frozen FROM accounts"
-                             + " WHERE LOWER(name)=? ORDER BY updated_at DESC LIMIT 1")) {
-            ps.setString(1, normalizeNameLookupKey(trimmed));
-            try (ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) {
-                    return Optional.empty();
-                }
-                UUID id = UUID.fromString(rs.getString("id"));
-                PersistedAccountRow account = new PersistedAccountRow(
-                        rs.getString("name"),
-                        rs.getLong("created_at"),
-                        rs.getLong("updated_at"),
-                        rs.getBoolean("frozen"));
-                return Optional.of(buildRecord(conn, id, account));
-            }
-        }
-    }
-
-    @Override
-    public Map<UUID, String> loadUUIDNameMap() throws SQLException {
-        Map<UUID, String> result = new LinkedHashMap<>();
-        try (Connection conn = dataSource.getConnection();
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery("SELECT id,name FROM accounts")) {
-            while (rs.next()) {
-                result.put(UUID.fromString(rs.getString("id")), rs.getString("name"));
-            }
-        }
-        return result;
     }
 
     private AccountRecord buildRecord(Connection conn, UUID id, PersistedAccountRow account) throws SQLException {
@@ -787,4 +826,3 @@ public class JdbcAccountRepository implements AccountRepository {
         return value.replace("'", "''");
     }
 }
-

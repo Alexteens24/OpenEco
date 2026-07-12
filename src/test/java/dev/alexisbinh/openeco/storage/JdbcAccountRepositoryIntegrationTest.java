@@ -77,43 +77,6 @@ class JdbcAccountRepositoryIntegrationTest {
     }
 
     @Test
-    void loadAccountByNameFindsRowsCaseInsensitively() throws Exception {
-        JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "load-by-name-test");
-        try {
-            UUID accountId = UUID.randomUUID();
-            repository.upsertBatch(List.of(new AccountRecord(accountId, "Alice", new BigDecimal("10.00"), 100L, 200L)));
-
-            AccountRecord loaded = repository.loadAccountByName("aLiCe").orElseThrow();
-
-            assertEquals(accountId, loaded.getId());
-            assertEquals("Alice", loaded.getLastKnownName());
-            assertEquals(0, new BigDecimal("10.00").compareTo(loaded.getBalance()));
-        } finally {
-            repository.close();
-        }
-    }
-
-    @Test
-    void loadUuidNameMapReturnsPersistedAccountNames() throws Exception {
-        JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "uuid-name-map-test");
-        try {
-            UUID aliceId = UUID.randomUUID();
-            UUID bobId = UUID.randomUUID();
-            repository.upsertBatch(List.of(
-                    new AccountRecord(aliceId, "Alice", BigDecimal.ZERO, 1L, 1L),
-                    new AccountRecord(bobId, "Bob", BigDecimal.ZERO, 1L, 1L)));
-
-            var map = repository.loadUUIDNameMap();
-
-            assertEquals(2, map.size());
-            assertEquals("Alice", map.get(aliceId));
-            assertEquals("Bob", map.get(bobId));
-        } finally {
-            repository.close();
-        }
-    }
-
-    @Test
     void pruneTransactionsDeletesEntriesOlderThanCutoff() throws Exception {
         JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "prune-test");
         try {
@@ -628,6 +591,51 @@ class JdbcAccountRepositoryIntegrationTest {
                     assertEquals("gems", currencyRs.getString(1));
                 }
             }
+        } finally {
+            repository.close();
+        }
+    }
+
+    @Test
+    void loadsAccountsInBoundedBatchesWithoutDuplicates() throws Exception {
+        JdbcAccountRepository repository = new JdbcAccountRepository(
+                DatabaseDialect.H2, tempDir.toString(), "batch-load-test");
+        try {
+            List<AccountRecord> records = List.of(
+                    new AccountRecord(UUID.randomUUID(), "Alice", new BigDecimal("1.00"), 1L, 1L),
+                    new AccountRecord(UUID.randomUUID(), "Bob", new BigDecimal("2.00"), 1L, 1L),
+                    new AccountRecord(UUID.randomUUID(), "Carol", new BigDecimal("3.00"), 1L, 1L));
+            repository.upsertBatch(records);
+
+            List<Integer> batchSizes = new java.util.ArrayList<>();
+            List<AccountRecord> loaded = new java.util.ArrayList<>();
+            repository.loadBatches(2, batch -> {
+                batchSizes.add(batch.size());
+                loaded.addAll(batch);
+            });
+
+            assertEquals(List.of(2, 1), batchSizes);
+            assertEquals(3, loaded.size());
+            assertEquals(3, loaded.stream().map(AccountRecord::getId).distinct().count());
+        } finally {
+            repository.close();
+        }
+    }
+
+    @Test
+    void failedBatchConsumerDoesNotPoisonTheConnectionForLaterScans() throws Exception {
+        JdbcAccountRepository repository = new JdbcAccountRepository(
+                DatabaseDialect.H2, tempDir.toString(), "failed-stream-consumer-test");
+        try {
+            repository.upsertBatch(List.of(
+                    new AccountRecord(UUID.randomUUID(), "Alice", BigDecimal.ONE, 1L, 1L),
+                    new AccountRecord(UUID.randomUUID(), "Bob", BigDecimal.TEN, 1L, 1L)));
+
+            assertThrows(java.sql.SQLException.class, () -> repository.loadBatches(1, batch -> {
+                throw new java.sql.SQLException("expected consumer failure");
+            }));
+
+            assertEquals(2, repository.loadAll().size());
         } finally {
             repository.close();
         }

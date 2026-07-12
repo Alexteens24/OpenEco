@@ -5,7 +5,7 @@ OpenEco is built around a simple operational model: one server authority per acc
 ## Core economy
 
 - **In-memory account registry** — balance reads and writes stay on the JVM after accounts are loaded.
-- **Configurable account loading** — `eager` preloads every account at startup; `lazy` loads on first access.
+- **Batched account loading** — accounts preload into memory in bounded batches so hot-path operations never query storage.
 - **Multi-currency support** — define currencies under `currencies.definitions.*` with per-currency decimals, starting balances, and max caps.
 - **Transaction history** — balance changes and payments are recorded; optional retention pruning.
 - **Account administration** — freeze, unfreeze, rename, delete, and reset accounts from `/eco`.
@@ -38,7 +38,7 @@ Plugin developers can integrate directly through `OpenEcoApi` registered in Bukk
 | Send money | `/pay <player> <amount> [currency]` |
 | Transaction history | `/history [player] [page] [currency]` |
 
-Pay supports configurable cooldown, tax percentage, and minimum amount. Baltop results are cached with a configurable TTL.
+Pay supports configurable cooldown, tax percentage, and minimum amount. Baltop uses lightweight snapshots refreshed in the background.
 
 ## Admin tools
 

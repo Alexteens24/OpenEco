@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package dev.alexisbinh.openeco.service;
 
 import dev.alexisbinh.openeco.model.AccountRecord;
@@ -21,88 +20,117 @@ import dev.alexisbinh.openeco.model.AccountRecord;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 
 final class LeaderboardCache {
 
-    private static final String PRIMARY_BALANCE_CACHE_KEY = "__primary__";
+    private record Snapshot(List<LeaderboardEntry> entries, Map<UUID, Integer> ranks) {
+        private static final Snapshot EMPTY = new Snapshot(List.of(), Map.of());
+    }
 
-    private final Object lock = new Object();
-    private final Map<String, List<AccountRecord>> cachedBalTopByCurrency = new HashMap<>();
-    private final Map<String, Long> cacheExpiryByCurrency = new HashMap<>();
-    private long cacheTtlMs = 30_000L;
-    private long invalidationVersion;
+    private final Map<String, Snapshot> snapshots = new HashMap<>();
+    private final Map<String, Long> versions = new HashMap<>();
+    private final Set<String> dirtyCurrencies = new HashSet<>();
 
-    void setCacheTtlMs(long cacheTtlMs) {
-        synchronized (lock) {
-            this.cacheTtlMs = Math.max(1L, cacheTtlMs);
-            invalidateLocked();
+    synchronized void configureCurrencies(Collection<String> currencyIds) {
+        Set<String> configured = Set.copyOf(currencyIds);
+        snapshots.keySet().retainAll(configured);
+        versions.keySet().retainAll(configured);
+        dirtyCurrencies.retainAll(configured);
+        for (String currencyId : configured) {
+            versions.putIfAbsent(currencyId, 0L);
+            dirtyCurrencies.add(currencyId);
         }
     }
 
-    List<AccountRecord> getSnapshot(Collection<AccountRecord> liveRecords) {
-        return getSnapshotInternal(PRIMARY_BALANCE_CACHE_KEY, liveRecords, null);
+    synchronized void markDirty(String currencyId) {
+        versions.computeIfPresent(currencyId, (ignored, version) -> version + 1L);
+        if (versions.containsKey(currencyId)) {
+            dirtyCurrencies.add(currencyId);
+        }
     }
 
-    List<AccountRecord> getSnapshot(String currencyId, Collection<AccountRecord> liveRecords) {
-        return getSnapshotInternal(currencyId, liveRecords, currencyId);
+    synchronized void markAllDirty() {
+        for (String currencyId : versions.keySet()) {
+            versions.put(currencyId, versions.get(currencyId) + 1L);
+            dirtyCurrencies.add(currencyId);
+        }
     }
 
-    private List<AccountRecord> getSnapshotInternal(String cacheKey, Collection<AccountRecord> liveRecords,
-            String currencyId) {
-        while (true) {
-            long now = System.currentTimeMillis();
+    void rebuildAll(Collection<AccountRecord> records) {
+        List<String> currencyIds;
+        synchronized (this) {
+            currencyIds = List.copyOf(versions.keySet());
+        }
+        rebuild(records, currencyIds);
+    }
+
+    void refreshDirty(Collection<AccountRecord> records) {
+        List<String> currencyIds;
+        synchronized (this) {
+            currencyIds = List.copyOf(dirtyCurrencies);
+        }
+        rebuild(records, currencyIds);
+    }
+
+    private void rebuild(Collection<AccountRecord> records, List<String> currencyIds) {
+        for (String currencyId : currencyIds) {
             long observedVersion;
-            List<AccountRecord> cached;
-
-            synchronized (lock) {
-                observedVersion = invalidationVersion;
-                cached = cachedBalTopByCurrency.get(cacheKey);
-                long expiry = cacheExpiryByCurrency.getOrDefault(cacheKey, 0L);
-                if (cached != null && now < expiry) {
-                    return cached;
-                }
+            synchronized (this) {
+                Long version = versions.get(currencyId);
+                if (version == null) continue;
+                observedVersion = version;
             }
 
-            List<AccountRecord> sorted = new ArrayList<>(liveRecords.size());
-            for (AccountRecord record : liveRecords) {
+            ArrayList<LeaderboardEntry> entries = new ArrayList<>(records.size());
+            for (AccountRecord record : records) {
                 synchronized (record) {
-                    sorted.add(record.snapshot());
+                    entries.add(new LeaderboardEntry(
+                            record.getId(), record.getLastKnownName(), record.getBalance(currencyId)));
                 }
             }
-            if (currencyId == null) {
-                sorted.sort((left, right) -> right.getBalance().compareTo(left.getBalance()));
-            } else {
-                sorted.sort((left, right) -> right.getBalance(currencyId).compareTo(left.getBalance(currencyId)));
-            }
-            List<AccountRecord> snapshot = List.copyOf(sorted);
+            entries.sort((left, right) -> {
+                int byBalance = right.balance().compareTo(left.balance());
+                if (byBalance != 0) return byBalance;
+                int byName = left.name().compareToIgnoreCase(right.name());
+                if (byName != 0) return byName;
+                return left.accountId().compareTo(right.accountId());
+            });
 
-            synchronized (lock) {
-                // If an invalidation raced with this rebuild, discard it and retry.
-                if (invalidationVersion != observedVersion) {
-                    continue;
+            List<LeaderboardEntry> immutableEntries = List.copyOf(entries);
+            HashMap<UUID, Integer> ranks = new HashMap<>(Math.max(16, entries.size() * 4 / 3 + 1));
+            for (int i = 0; i < entries.size(); i++) {
+                ranks.put(entries.get(i).accountId(), i + 1);
+            }
+            Snapshot snapshot = new Snapshot(immutableEntries, Map.copyOf(ranks));
+
+            synchronized (this) {
+                if (!versions.containsKey(currencyId)) continue;
+                snapshots.put(currencyId, snapshot);
+                if (versions.get(currencyId) == observedVersion) {
+                    dirtyCurrencies.remove(currencyId);
                 }
-                cachedBalTopByCurrency.put(cacheKey, snapshot);
-                cacheExpiryByCurrency.put(cacheKey, System.currentTimeMillis() + cacheTtlMs);
-                return snapshot;
             }
         }
     }
 
-    void markDirty() {
-        invalidate();
+    synchronized LeaderboardView page(String currencyId, int offset, int limit) {
+        Snapshot snapshot = snapshots.getOrDefault(currencyId, Snapshot.EMPTY);
+        int from = Math.min(Math.max(0, offset), snapshot.entries().size());
+        int to = Math.min(snapshot.entries().size(), from + Math.max(0, limit));
+        return new LeaderboardView(snapshot.entries().size(), snapshot.entries().subList(from, to));
     }
 
-    void invalidate() {
-        synchronized (lock) {
-            invalidateLocked();
-        }
+    synchronized LeaderboardEntry entryAtRank(String currencyId, int rank) {
+        Snapshot snapshot = snapshots.getOrDefault(currencyId, Snapshot.EMPTY);
+        return rank < 1 || rank > snapshot.entries().size() ? null : snapshot.entries().get(rank - 1);
     }
 
-    private void invalidateLocked() {
-        invalidationVersion++;
-        cachedBalTopByCurrency.clear();
-        cacheExpiryByCurrency.clear();
+    synchronized int rankOf(String currencyId, UUID accountId) {
+        return snapshots.getOrDefault(currencyId, Snapshot.EMPTY).ranks().getOrDefault(accountId, -1);
     }
 }

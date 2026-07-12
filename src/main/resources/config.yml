@@ -75,13 +75,6 @@ storage:
     source-folder: ""
     source-file: ""
 
-accounts:
-  # Account bootstrap strategy:
-  # - eager: preload every account row into memory at startup (recommended default)
-  # - lazy: skip startup preload and load accounts on first access, with repository fallback for lookups
-  # Changing this setting is best treated as restart-required so the live registry matches the selected mode.
-  load-strategy: eager
-
 # Seconds between automatic background saves (values <= 0 are clamped to 1)
 # Lower values reduce worst-case data loss after a crash but increase write pressure.
 autosave-interval: 30
@@ -97,7 +90,7 @@ pay:
 
 baltop:
   page-size: 10
-  # Seconds to cache the sorted leaderboard (reduces re-sort cost)
+  # Seconds between background refreshes of dirty leaderboard snapshots
   cache-ttl-seconds: 30
 
 history:

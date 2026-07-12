@@ -32,6 +32,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ConfigMigratorTest {
 
     @Test
+    void removesLegacyAccountLoadStrategyWithoutLeavingEmptySection() {
+        YamlConfiguration current = new YamlConfiguration();
+        current.set("accounts.load-strategy", "lazy");
+        current.set("pay.cooldown-seconds", 12);
+
+        YamlConfiguration migrated = ConfigMigrator.rewrite(current, loadBundledDefaultConfig());
+
+        assertFalse(migrated.contains("accounts.load-strategy"));
+        assertFalse(migrated.isConfigurationSection("accounts"));
+        assertEquals(12, migrated.getInt("pay.cooldown-seconds"));
+    }
+
+    @Test
     void rewritesLegacyCurrencyBlockInTemplateOrder() {
         YamlConfiguration current = new YamlConfiguration();
         current.set("currency.id", "coins");
@@ -47,7 +60,6 @@ class ConfigMigratorTest {
         String yaml = migrated.saveToString();
         int currenciesIndex = yaml.indexOf("currencies:");
         int storageIndex = yaml.indexOf("storage:");
-        int accountsIndex = yaml.indexOf("accounts:");
         int autosaveIndex = yaml.indexOf("autosave-interval:");
         int payIndex = yaml.indexOf("pay:");
         int baltopIndex = yaml.indexOf("baltop:");
@@ -57,7 +69,6 @@ class ConfigMigratorTest {
         assertFalse(yaml.contains("\ncurrency:"), yaml);
         assertTrue(currenciesIndex >= 0, yaml);
         assertTrue(storageIndex >= 0, yaml);
-        assertTrue(accountsIndex >= 0, yaml);
         assertTrue(autosaveIndex >= 0, yaml);
         assertTrue(payIndex >= 0, yaml);
         assertTrue(baltopIndex >= 0, yaml);
@@ -65,10 +76,8 @@ class ConfigMigratorTest {
         assertTrue(crossServerIndex >= 0, yaml);
         assertTrue(currenciesIndex < storageIndex,
             () -> "currencies=" + currenciesIndex + " storage=" + storageIndex + "\n" + yaml);
-        assertTrue(storageIndex < accountsIndex,
-            () -> "storage=" + storageIndex + " accounts=" + accountsIndex + "\n" + yaml);
-        assertTrue(accountsIndex < autosaveIndex,
-            () -> "accounts=" + accountsIndex + " autosave=" + autosaveIndex + "\n" + yaml);
+        assertTrue(storageIndex < autosaveIndex,
+            () -> "storage=" + storageIndex + " autosave=" + autosaveIndex + "\n" + yaml);
         assertTrue(autosaveIndex < payIndex,
             () -> "autosave=" + autosaveIndex + " pay=" + payIndex + "\n" + yaml);
         assertTrue(payIndex < baltopIndex,
@@ -104,7 +113,7 @@ class ConfigMigratorTest {
         assertEquals("gems", migrated.getString("currencies.default"));
         assertEquals("Gem", migrated.getString("currencies.definitions.gems.name-singular"));
         assertEquals("Gems", migrated.getString("currencies.definitions.gems.name-plural"));
-        assertEquals("eager", migrated.getString("accounts.load-strategy"));
+        assertFalse(migrated.contains("accounts.load-strategy"));
         assertTrue(openecoIndex >= 0, yaml);
         assertTrue(gemsIndex >= 0, yaml);
         assertTrue(storageIndex >= 0, yaml);

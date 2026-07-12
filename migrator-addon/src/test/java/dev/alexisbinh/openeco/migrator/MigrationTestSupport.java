@@ -193,7 +193,6 @@ public final class MigrationTestSupport {
 
     static YamlConfiguration openEcoConfig() {
         YamlConfiguration config = new YamlConfiguration();
-        config.set("accounts.load-strategy", "eager");
         config.set("currencies.default", "openeco");
         config.set("currencies.definitions.openeco.name-singular", "Dollar");
         config.set("currencies.definitions.openeco.name-plural", "Dollars");

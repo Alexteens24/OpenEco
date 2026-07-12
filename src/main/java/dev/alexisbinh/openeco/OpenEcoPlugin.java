@@ -52,6 +52,7 @@ public class OpenEcoPlugin extends JavaPlugin {
     private OpenEcoApi api;
     private ScheduledTask autoSaveTask;
     private ScheduledTask historyPruneTask;
+    private ScheduledTask leaderboardRefreshTask;
 
     @Override
     public void onEnable() {
@@ -156,6 +157,9 @@ public class OpenEcoPlugin extends JavaPlugin {
         // ── Auto-save scheduler ───────────────────────────────────────────────
         restartAutoSaveTask();
 
+        // ── Leaderboard refresh scheduler ────────────────────────────────────
+        restartLeaderboardRefreshTask();
+
         // ── History prune scheduler ───────────────────────────────────────────
         restartPruneTask();
 
@@ -166,9 +170,7 @@ public class OpenEcoPlugin extends JavaPlugin {
             getLogger().warning("bStats metrics disabled: " + ex.getMessage());
         }
 
-        String loadStrategy = service.isLazyAccountLoadingEnabled() ? "lazy" : "eager";
-        getLogger().info("openeco enabled. Backend: " + dialect.name().toLowerCase()
-            + " | Account load strategy: " + loadStrategy);
+        getLogger().info("openeco enabled. Backend: " + dialect.name().toLowerCase());
     }
 
     public void reloadSettings() {
@@ -181,6 +183,7 @@ public class OpenEcoPlugin extends JavaPlugin {
             messages.reload(getConfig());
         }
         restartAutoSaveTask();
+        restartLeaderboardRefreshTask();
         restartPruneTask();
     }
 
@@ -257,6 +260,19 @@ public class OpenEcoPlugin extends JavaPlugin {
         }
     }
 
+    private void restartLeaderboardRefreshTask() {
+        if (leaderboardRefreshTask != null) {
+            leaderboardRefreshTask.cancel();
+        }
+        long intervalSeconds = Math.max(1L, service.getBalTopCacheTtlMs() / 1000L);
+        leaderboardRefreshTask = getServer().getAsyncScheduler().runAtFixedRate(
+                this,
+                task -> service.refreshLeaderboards(),
+                intervalSeconds,
+                intervalSeconds,
+                TimeUnit.SECONDS);
+    }
+
     /** Returns the public addon API. Prefer ServicesManager when integrating from other plugins. */
     public OpenEcoApi getApi() { return api; }
 
@@ -286,6 +302,9 @@ public class OpenEcoPlugin extends JavaPlugin {
         }
         if (historyPruneTask != null) {
             historyPruneTask.cancel();
+        }
+        if (leaderboardRefreshTask != null) {
+            leaderboardRefreshTask.cancel();
         }
         getServer().getServicesManager().unregisterAll(this);
         if (service != null) {

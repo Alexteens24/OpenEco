@@ -28,4 +28,15 @@ class RemoteStorageDataSourceTest {
         assertEquals("org.mariadb.jdbc.Driver", RemoteStorageDataSource.driverClassName(DatabaseDialect.MARIADB));
         assertEquals("org.postgresql.Driver", RemoteStorageDataSource.driverClassName(DatabaseDialect.POSTGRESQL));
     }
+
+    @Test
+    void mysqlUrlEnablesServerSideCursorFetchingOnlyForMysql() {
+        String mysql = RemoteStorageDataSource.jdbcUrl(DatabaseDialect.MYSQL, "db", 3306, "openeco");
+        String mariadb = RemoteStorageDataSource.jdbcUrl(DatabaseDialect.MARIADB, "db", 3306, "openeco");
+        String postgres = RemoteStorageDataSource.jdbcUrl(DatabaseDialect.POSTGRESQL, "db", 5432, "openeco");
+
+        assertTrue(mysql.contains("useCursorFetch=true"));
+        assertFalse(mariadb.contains("useCursorFetch"));
+        assertFalse(postgres.contains("useCursorFetch"));
+    }
 }

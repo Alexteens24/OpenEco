@@ -46,7 +46,6 @@ Review these sections in `plugins/OpenEco/config.yml` before launch:
 |---|---|
 | `currencies` | Default currency and definitions |
 | `storage` | Backend type and connection settings |
-| `accounts.load-strategy` | `eager` (default) or `lazy` |
 | `autosave-interval` | Background flush frequency |
 | `pay` | Cooldown, tax, minimum amount |
 | `history.retention-days` | `-1` keeps all history |
@@ -61,7 +60,6 @@ These cannot be changed safely with `/eco reload` alone:
 - `storage.type` and database file names
 - Remote database connection targets
 - `cross-server.enabled`
-- `accounts.load-strategy` (best treated as startup-only)
 
 ## Network mode
 

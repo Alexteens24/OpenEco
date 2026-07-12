@@ -5,7 +5,7 @@ The `config.yml` file lives in `plugins/OpenEco/`. OpenEco auto-migrates legacy 
 Click any option below to view additional information.
 
 ::: tip Apply most changes without a restart
-After editing `config.yml`, run `/eco reload` to apply messages and most runtime rules. Storage backends, `cross-server.enabled`, and `accounts.load-strategy` still require a restart.
+After editing `config.yml`, run `/eco reload` to apply messages and most runtime rules. Storage backends and `cross-server.enabled` still require a restart.
 :::
 
 <ConfigGroup name="currencies">
@@ -117,14 +117,6 @@ Source database file name for storage migration helpers.
 
 </ConfigGroup>
 
-<ConfigGroup name="accounts">
-
-<ConfigProperty name="load-strategy" value="eager" type="string">
-`eager` preloads every account at startup (recommended). `lazy` loads on first access. **Restart after changing.**
-</ConfigProperty>
-
-</ConfigGroup>
-
 <ConfigProperty name="autosave-interval" value="30" type="number">
 Seconds between automatic background saves. Values ≤ 0 are clamped to 1. Lower values reduce crash loss window but increase write pressure.
 </ConfigProperty>
@@ -196,9 +188,6 @@ storage:
   type: sqlite
   sqlite:
     file: economy.db
-
-accounts:
-  load-strategy: eager
 
 autosave-interval: 30
 

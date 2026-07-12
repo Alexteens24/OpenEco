@@ -24,51 +24,48 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 class LeaderboardCacheTest {
 
     @Test
-    void markDirtyRebuildsLeaderboardImmediately() {
+    void dirtyLeaderboardKeepsOldSnapshotUntilBackgroundRefresh() {
         LeaderboardCache cache = new LeaderboardCache();
-        cache.setCacheTtlMs(60_000L);
+        cache.configureCurrencies(List.of("openeco"));
 
         AccountRecord alice = new AccountRecord(UUID.randomUUID(), "Alice", new BigDecimal("50.00"), 1L, 1L);
         AccountRecord bob = new AccountRecord(UUID.randomUUID(), "Bob", new BigDecimal("10.00"), 1L, 1L);
 
-        List<AccountRecord> first = cache.getSnapshot(List.of(alice, bob));
-        assertNotSame(alice, first.getFirst());
-        assertNotSame(bob, first.getLast());
-        assertEquals(List.of("Alice", "Bob"), first.stream().map(AccountRecord::getLastKnownName).toList());
-        assertEquals(0, new BigDecimal("50.00").compareTo(first.getFirst().getBalance()));
-        assertEquals(0, new BigDecimal("10.00").compareTo(first.getLast().getBalance()));
+        cache.rebuildAll(List.of(alice, bob));
+        LeaderboardView first = cache.page("openeco", 0, 10);
+        assertEquals(List.of("Alice", "Bob"), first.entries().stream().map(LeaderboardEntry::name).toList());
+        assertEquals(1, cache.rankOf("openeco", alice.getId()));
 
         alice.setBalance(new BigDecimal("5.00"));
         bob.setBalance(new BigDecimal("100.00"));
 
-        cache.markDirty();
+        cache.markDirty("openeco");
+        assertEquals("Alice", cache.entryAtRank("openeco", 1).name());
 
-        List<AccountRecord> refreshed = cache.getSnapshot(List.of(alice, bob));
-        assertNotSame(first, refreshed);
-        assertEquals(List.of("Bob", "Alice"), refreshed.stream().map(AccountRecord::getLastKnownName).toList());
-        assertEquals(0, new BigDecimal("100.00").compareTo(refreshed.getFirst().getBalance()));
-        assertEquals(0, new BigDecimal("5.00").compareTo(refreshed.getLast().getBalance()));
+        cache.refreshDirty(List.of(alice, bob));
+        LeaderboardView refreshed = cache.page("openeco", 0, 10);
+        assertEquals(List.of("Bob", "Alice"), refreshed.entries().stream().map(LeaderboardEntry::name).toList());
+        assertEquals(1, cache.rankOf("openeco", bob.getId()));
+        assertEquals(2, cache.rankOf("openeco", alice.getId()));
     }
 
     @Test
-    void invalidateDropsCachedSnapshotSoRenamesAppearImmediately() {
+    void configurationDropsRemovedCurrenciesAndSlicesWithoutCopyingAllEntries() {
         LeaderboardCache cache = new LeaderboardCache();
-        cache.setCacheTtlMs(60_000L);
+        cache.configureCurrencies(List.of("openeco", "gems"));
 
         AccountRecord alice = new AccountRecord(UUID.randomUUID(), "Alice", new BigDecimal("50.00"), 1L, 1L);
 
-        List<AccountRecord> first = cache.getSnapshot(List.of(alice));
-        alice.setLastKnownName("Alicia");
+        cache.rebuildAll(List.of(alice));
+        assertEquals(1, cache.page("openeco", 0, 1).totalEntries());
+        assertEquals(0, cache.page("openeco", 1, 1).entries().size());
 
-        cache.invalidate();
-
-        List<AccountRecord> refreshed = cache.getSnapshot(List.of(alice));
-        assertNotSame(first, refreshed);
-        assertEquals("Alicia", refreshed.getFirst().getLastKnownName());
+        cache.configureCurrencies(List.of("gems"));
+        assertNull(cache.entryAtRank("openeco", 1));
     }
 }

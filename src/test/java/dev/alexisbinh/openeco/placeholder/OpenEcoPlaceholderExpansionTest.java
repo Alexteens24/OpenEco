@@ -16,8 +16,8 @@
 
 package dev.alexisbinh.openeco.placeholder;
 
-import dev.alexisbinh.openeco.model.AccountRecord;
 import dev.alexisbinh.openeco.service.AccountService;
+import dev.alexisbinh.openeco.service.LeaderboardEntry;
 import org.bukkit.OfflinePlayer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -26,8 +26,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
-import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -63,16 +61,10 @@ class OpenEcoPlaceholderExpansionTest {
 
     @Test
     void topPlaceholdersUseCurrencySpecificLeaderboard() {
-        AccountRecord entry = new AccountRecord(
-                accountId,
-                "Alice",
-                "gems",
-                Map.of("gems", new BigDecimal("5.00")),
-                1L,
-                1L);
+        LeaderboardEntry entry = new LeaderboardEntry(accountId, "Alice", new BigDecimal("5.00"));
 
         when(service.hasCurrency("gems")).thenReturn(true);
-        when(service.getBalTopSnapshot("gems")).thenReturn(List.of(entry));
+        when(service.getLeaderboardEntry(1, "gems")).thenReturn(entry);
         when(service.format(new BigDecimal("5.00"), "gems")).thenReturn("5 Gems");
 
         assertEquals("Alice", expansion.onRequest(null, "top_1_name_gems"));

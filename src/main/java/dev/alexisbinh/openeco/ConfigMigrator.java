@@ -47,6 +47,11 @@ final class ConfigMigrator {
     private static YamlConfiguration copySourceWithoutLegacy(FileConfiguration currentConfig) {
         YamlConfiguration normalizedSource = new YamlConfiguration();
         copySection(currentConfig, normalizedSource);
+        normalizedSource.set("accounts.load-strategy", null);
+        ConfigurationSection accounts = normalizedSource.getConfigurationSection("accounts");
+        if (accounts != null && accounts.getKeys(false).isEmpty()) {
+            normalizedSource.set("accounts", null);
+        }
         return normalizedSource;
     }
 

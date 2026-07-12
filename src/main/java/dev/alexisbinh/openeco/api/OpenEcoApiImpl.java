@@ -21,6 +21,8 @@ import dev.alexisbinh.openeco.model.PayResult;
 import dev.alexisbinh.openeco.model.TransactionEntry;
 import dev.alexisbinh.openeco.model.TransactionType;
 import dev.alexisbinh.openeco.service.AccountService;
+import dev.alexisbinh.openeco.service.LeaderboardEntry;
+import dev.alexisbinh.openeco.service.LeaderboardView;
 import dev.alexisbinh.openeco.service.EconomyOperationResponse;
 
 import java.math.BigDecimal;
@@ -425,9 +427,9 @@ public final class OpenEcoApiImpl implements OpenEcoApi {
         if (limit == 0) {
             return List.of();
         }
-        return service.getBalTopSnapshot().stream()
-                .limit(limit)
-                .map(OpenEcoApiImpl::toAccountSnapshot)
+        return service.getLeaderboardPage(0, limit).entries().stream()
+                .map(this::toLeaderboardAccountSnapshot)
+                .flatMap(Optional::stream)
                 .toList();
     }
 
@@ -440,9 +442,9 @@ public final class OpenEcoApiImpl implements OpenEcoApi {
             return List.of();
         }
         String validatedCurrencyId = requireKnownCurrency(currencyId);
-        return service.getBalTopSnapshot(validatedCurrencyId).stream()
-                .limit(limit)
-                .map(record -> toAccountSnapshot(record, record.getBalance(validatedCurrencyId)))
+        return service.getLeaderboardPage(validatedCurrencyId, 0, limit).entries().stream()
+                .map(this::toLeaderboardAccountSnapshot)
+                .flatMap(Optional::stream)
                 .toList();
     }
 
@@ -450,15 +452,12 @@ public final class OpenEcoApiImpl implements OpenEcoApi {
     public LeaderboardPage getTopAccounts(int page, int pageSize) {
         int validatedPage = requirePositive(page, "page");
         int validatedPageSize = requirePositive(pageSize, "pageSize");
-        List<AccountSnapshot> all = service.getBalTopSnapshot().stream()
-            .map(OpenEcoApiImpl::toAccountSnapshot)
-            .toList();
-        int total = all.size();
-        int totalPages = total == 0 ? 0 : (int) Math.ceil(total / (double) validatedPageSize);
         int fromIndex = (validatedPage - 1) * validatedPageSize;
-        List<AccountSnapshot> slice = fromIndex >= total
-            ? List.of()
-            : all.subList(fromIndex, Math.min(fromIndex + validatedPageSize, total));
+        LeaderboardView view = service.getLeaderboardPage(fromIndex, validatedPageSize);
+        int total = view.totalEntries();
+        int totalPages = total == 0 ? 0 : (int) Math.ceil(total / (double) validatedPageSize);
+        List<AccountSnapshot> slice = view.entries().stream()
+                .map(this::toLeaderboardAccountSnapshot).flatMap(Optional::stream).toList();
         return new LeaderboardPage(validatedPage, validatedPageSize, total, totalPages, slice);
     }
 
@@ -467,15 +466,13 @@ public final class OpenEcoApiImpl implements OpenEcoApi {
         int validatedPage = requirePositive(page, "page");
         int validatedPageSize = requirePositive(pageSize, "pageSize");
         String validatedCurrencyId = requireKnownCurrency(currencyId);
-        List<AccountSnapshot> all = service.getBalTopSnapshot(validatedCurrencyId).stream()
-            .map(record -> toAccountSnapshot(record, record.getBalance(validatedCurrencyId)))
-                .toList();
-        int total = all.size();
-        int totalPages = total == 0 ? 0 : (int) Math.ceil(total / (double) validatedPageSize);
         int fromIndex = (validatedPage - 1) * validatedPageSize;
-        List<AccountSnapshot> slice = fromIndex >= total
-                ? List.of()
-                : all.subList(fromIndex, Math.min(fromIndex + validatedPageSize, total));
+        LeaderboardView view = service.getLeaderboardPage(
+                validatedCurrencyId, fromIndex, validatedPageSize);
+        int total = view.totalEntries();
+        int totalPages = total == 0 ? 0 : (int) Math.ceil(total / (double) validatedPageSize);
+        List<AccountSnapshot> slice = view.entries().stream()
+                .map(this::toLeaderboardAccountSnapshot).flatMap(Optional::stream).toList();
         return new LeaderboardPage(validatedPage, validatedPageSize, total, totalPages, slice);
     }
 
@@ -639,6 +636,11 @@ public final class OpenEcoApiImpl implements OpenEcoApi {
                 record.getCreatedAt(),
                 record.getUpdatedAt(),
                 record.isFrozen());
+    }
+
+    private Optional<AccountSnapshot> toLeaderboardAccountSnapshot(LeaderboardEntry entry) {
+        return service.getAccount(entry.accountId())
+                .map(record -> toAccountSnapshot(record, entry.balance()));
     }
 
     private static TransactionSnapshot toTransactionSnapshot(TransactionEntry entry) {
