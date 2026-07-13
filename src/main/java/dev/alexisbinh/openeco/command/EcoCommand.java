@@ -59,8 +59,11 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
                 messages.send(sender, "no-permission");
                 return true;
             }
-            plugin.reloadSettings();
-            messages.send(sender, "eco-reload");
+            if (plugin.reloadSettings()) {
+                messages.send(sender, "eco-reload");
+            } else {
+                messages.send(sender, "eco-reload-failed");
+            }
             return true;
         }
 

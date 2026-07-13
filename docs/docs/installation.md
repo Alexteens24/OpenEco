@@ -46,8 +46,7 @@ Review these sections in `plugins/OpenEco/config.yml` before launch:
 |---|---|
 | `currencies` | Default currency and definitions |
 | `storage` | Backend type and connection settings |
-| `accounts.load-strategy` | `eager` (default) or `lazy` |
-| `autosave-interval` | Background flush frequency |
+| `persistence.autosave-interval-seconds` | Background flush frequency |
 | `pay` | Cooldown, tax, minimum amount |
 | `history.retention-days` | `-1` keeps all history |
 | `messages` | MiniMessage chat strings |
@@ -61,7 +60,6 @@ These cannot be changed safely with `/eco reload` alone:
 - `storage.type` and database file names
 - Remote database connection targets
 - `cross-server.enabled`
-- `accounts.load-strategy` (best treated as startup-only)
 
 ## Network mode
 
@@ -107,7 +105,7 @@ See [Migration](/docs/migration) for supported sources and workflows.
 |---|---|
 | Plugin disables on startup | Storage connection failed or account load error — check console |
 | Vault plugins see no economy | Vault not installed, or OpenEco failed to register providers |
-| Balances reset after crash | Up to one `autosave-interval` of changes may be lost — lower the interval |
+| Balances reset after crash | Up to one autosave interval of changes may be lost — lower `persistence.autosave-interval-seconds` |
 | Cross-server balances stale | `cross-server.enabled` not set on all backends, or proxy addon missing |
 
 For deeper operational guidance, see [Production guide](/docs/production) and [Technical notes](/docs/technical).

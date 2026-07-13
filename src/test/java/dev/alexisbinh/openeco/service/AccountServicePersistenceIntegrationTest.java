@@ -88,71 +88,6 @@ class AccountServicePersistenceIntegrationTest {
     }
 
     @Test
-    void lazyLoadResolvesExistingAccountsWithoutStartupPreload() throws Exception {
-        JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "lazy-load-lookup-test");
-        try {
-            UUID accountId = UUID.randomUUID();
-            AccountService writer = newService(repository);
-            assertTrue(writer.createAccount(accountId, "Alice"));
-            assertTrue(writer.deposit(accountId, new BigDecimal("7.50")).transactionSuccess());
-            writer.shutdown();
-
-            AccountService lazyReader = newServiceWithConfig(repository, lazyConfig(0.0, -1));
-
-            assertTrue(lazyReader.hasAccount(accountId));
-            assertEquals(0, new BigDecimal("12.50").compareTo(lazyReader.getBalance(accountId)));
-            assertTrue(lazyReader.findByName("Alice").isPresent());
-            assertEquals("Alice", lazyReader.getUUIDNameMap().get(accountId));
-            assertTrue(lazyReader.getAccountNames().contains("Alice"));
-
-            lazyReader.shutdown();
-        } finally {
-            repository.close();
-        }
-    }
-
-    @Test
-    void lazyLoadSupportsMutationsAgainstPreviouslyUnloadedAccounts() throws Exception {
-        JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "lazy-load-mutation-test");
-        try {
-            UUID accountId = UUID.randomUUID();
-            AccountService writer = newService(repository);
-            assertTrue(writer.createAccount(accountId, "Alice"));
-            writer.shutdown();
-
-            AccountService lazyService = newServiceWithConfig(repository, lazyConfig(0.0, -1));
-            assertTrue(lazyService.deposit(accountId, new BigDecimal("2.00")).transactionSuccess());
-            lazyService.shutdown();
-
-            AccountService reader = newService(repository);
-            reader.loadAll();
-            assertEquals(0, new BigDecimal("7.00").compareTo(reader.getBalance(accountId)));
-            reader.shutdown();
-        } finally {
-            repository.close();
-        }
-    }
-
-    @Test
-    void lazyLoadCreateStillRejectsPersistedNameCollisions() throws Exception {
-        JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "lazy-load-name-conflict-test");
-        try {
-            UUID existingId = UUID.randomUUID();
-            AccountService writer = newService(repository);
-            assertTrue(writer.createAccount(existingId, "Alice"));
-            writer.shutdown();
-
-            AccountService lazyService = newServiceWithConfig(repository, lazyConfig(0.0, -1));
-            AccountService.CreateAccountStatus status = lazyService.createAccountDetailed(UUID.randomUUID(), "Alice");
-
-            assertEquals(AccountService.CreateAccountStatus.NAME_IN_USE, status);
-            lazyService.shutdown();
-        } finally {
-            repository.close();
-        }
-    }
-
-    @Test
     void createAccountSeedsConfiguredStartingBalancesForAllCurrencies() throws Exception {
         JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "multi-starting-balance-test");
         try {
@@ -496,8 +431,11 @@ class AccountServicePersistenceIntegrationTest {
             AccountService service = newService(repository);
 
             assertThrows(java.sql.SQLException.class, service::loadAll);
+            assertTrue(service.getUUIDNameMap().isEmpty());
+            assertEquals(0, service.getLeaderboardPage(0, 10).totalEntries());
 
             service.shutdown();
+            assertEquals(2, repository.loadAll().size());
         } finally {
             repository.close();
         }
@@ -630,6 +568,46 @@ class AccountServicePersistenceIntegrationTest {
     }
 
     @Test
+    void failedDeleteMarksLeaderboardDirtyAfterRestoringAccount() throws Exception {
+        BlockingRepository repository = new BlockingRepository(false, true, true);
+        AccountService service = newService(repository);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+
+        try {
+            UUID accountId = UUID.randomUUID();
+            assertTrue(service.createAccount(accountId, "Alice"));
+            service.flushDirty();
+            service.refreshLeaderboards();
+            assertEquals("Alice", service.getLeaderboardPage(0, 10).entries().getFirst().name());
+
+            assertTrue(service.renameAccount(accountId, "Alicia"));
+            Future<AccountService.DeleteAccountStatus> deleteFuture =
+                    executor.submit(() -> service.deleteAccountDetailed(accountId));
+            assertTrue(repository.deleteStarted.await(2, TimeUnit.SECONDS));
+
+            // Rebuild while the account is temporarily absent from the live registry.
+            service.refreshLeaderboards();
+            assertEquals(0, service.getLeaderboardPage(0, 10).totalEntries());
+
+            repository.allowDelete.countDown();
+            assertEquals(AccountService.DeleteAccountStatus.FAILED,
+                    deleteFuture.get(2, TimeUnit.SECONDS));
+
+            // The rollback must make another refresh eligible even though no balance changed.
+            service.refreshLeaderboards();
+            LeaderboardView restored = service.getLeaderboardPage(0, 10);
+            assertEquals(1, restored.totalEntries());
+            assertEquals("Alicia", restored.entries().getFirst().name());
+
+            service.shutdown();
+        } finally {
+            repository.allowDelete.countDown();
+            executor.shutdownNow();
+            executor.awaitTermination(2, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
     void payWithTaxTransfersCorrectAmountsAndLogsBothEntries() throws Exception {
         JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "pay-tax-test");
         try {
@@ -702,16 +680,20 @@ class AccountServicePersistenceIntegrationTest {
             service.createAccount(aliceId, "Alice");
             service.createAccount(bobId, "Bob");
             service.deposit(aliceId, new BigDecimal("45.00"));
+            service.refreshLeaderboards();
 
             // Seed the cache: Alice is currently #1
-            List<AccountRecord> first = service.getBalTopSnapshot();
-            assertEquals("Alice", first.getFirst().getLastKnownName());
+            LeaderboardView first = service.getLeaderboardPage(0, 10);
+            assertEquals("Alice", first.entries().getFirst().name());
 
             // Bob now has more money in memory, but the cache is still fresh (TTL not expired)
             service.deposit(bobId, new BigDecimal("100.00"));
 
-            List<AccountRecord> cached = service.getBalTopSnapshot();
-            assertEquals("Alice", cached.getFirst().getLastKnownName());
+            LeaderboardView cached = service.getLeaderboardPage(0, 10);
+            assertEquals("Alice", cached.entries().getFirst().name());
+
+            service.refreshLeaderboards();
+            assertEquals("Bob", service.getLeaderboardPage(0, 10).entries().getFirst().name());
 
             service.shutdown();
         } finally {
@@ -720,21 +702,23 @@ class AccountServicePersistenceIntegrationTest {
     }
 
     @Test
-    void renameRefreshesBalTopSnapshotImmediately() throws Exception {
+    void renameRefreshesBalTopSnapshotOnBackgroundRefresh() throws Exception {
         JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "baltop-rename-test");
         try {
             AccountService service = newService(repository);
             UUID aliceId = UUID.randomUUID();
 
             service.createAccount(aliceId, "Alice");
-            List<AccountRecord> first = service.getBalTopSnapshot();
-            assertEquals("Alice", first.getFirst().getLastKnownName());
+            service.refreshLeaderboards();
+            LeaderboardView first = service.getLeaderboardPage(0, 10);
+            assertEquals("Alice", first.entries().getFirst().name());
 
             assertTrue(service.renameAccount(aliceId, "Alicia"));
 
-            List<AccountRecord> refreshed = service.getBalTopSnapshot();
-            assertEquals("Alicia", refreshed.getFirst().getLastKnownName());
-            assertTrue(refreshed.stream().noneMatch(record -> record.getLastKnownName().equals("Alice")));
+            assertEquals("Alice", service.getLeaderboardPage(0, 10).entries().getFirst().name());
+            service.refreshLeaderboards();
+            LeaderboardView refreshed = service.getLeaderboardPage(0, 10);
+            assertEquals("Alicia", refreshed.entries().getFirst().name());
 
             service.shutdown();
         } finally {
@@ -820,7 +804,6 @@ class AccountServicePersistenceIntegrationTest {
 
     private static YamlConfiguration testConfig(double taxPercent, int retentionDays) {
         YamlConfiguration config = new YamlConfiguration();
-        config.set("accounts.load-strategy", "eager");
         config.set("currency.id", "openeco");
         config.set("currency.name-singular", "Dollar");
         config.set("currency.name-plural", "Dollars");
@@ -830,14 +813,8 @@ class AccountServicePersistenceIntegrationTest {
         config.set("pay.cooldown-seconds", 0);
         config.set("pay.tax-percent", taxPercent);
         config.set("pay.min-amount", 0.01);
-        config.set("baltop.cache-ttl-seconds", 30);
+        config.set("baltop.refresh-interval-seconds", 30);
         config.set("history.retention-days", retentionDays);
-        return config;
-    }
-
-    private static YamlConfiguration lazyConfig(double taxPercent, int retentionDays) {
-        YamlConfiguration config = testConfig(taxPercent, retentionDays);
-        config.set("accounts.load-strategy", "lazy");
         return config;
     }
 
@@ -861,7 +838,7 @@ class AccountServicePersistenceIntegrationTest {
         config.set("pay.cooldown-seconds", 0);
         config.set("pay.tax-percent", 0.0);
         config.set("pay.min-amount", 0.01);
-        config.set("baltop.cache-ttl-seconds", 30);
+        config.set("baltop.refresh-interval-seconds", 30);
         config.set("history.retention-days", -1);
         return config;
     }
@@ -872,52 +849,38 @@ class AccountServicePersistenceIntegrationTest {
         private final CountDownLatch allowTransactionInsert = new CountDownLatch(1);
         private final CountDownLatch upsertStarted = new CountDownLatch(1);
         private final CountDownLatch allowUpsert = new CountDownLatch(1);
+        private final CountDownLatch deleteStarted = new CountDownLatch(1);
+        private final CountDownLatch allowDelete = new CountDownLatch(1);
         private final boolean blockUpsert;
+        private final boolean blockDelete;
+        private final boolean failDelete;
         private final List<TransactionEntry> transactions = new ArrayList<>();
         private List<AccountRecord> lastUpsertedRecords = List.of();
         private int upsertCalls;
 
         private BlockingRepository() {
-            this(false);
+            this(false, false, false);
         }
 
         private BlockingRepository(boolean blockUpsert) {
+            this(blockUpsert, false, false);
+        }
+
+        private BlockingRepository(boolean blockUpsert, boolean blockDelete, boolean failDelete) {
             this.blockUpsert = blockUpsert;
+            this.blockDelete = blockDelete;
+            this.failDelete = failDelete;
         }
 
         @Override
-        public synchronized List<AccountRecord> loadAll() {
-            return new ArrayList<>(lastUpsertedRecords);
+        public synchronized void loadBatches(int batchSize, AccountBatchConsumer consumer) throws SQLException {
+            consumer.accept(new ArrayList<>(lastUpsertedRecords));
         }
 
         @Override
         public java.util.Optional<AccountRecord> loadAccount(UUID id) {
             return lastUpsertedRecords.stream().filter(r -> r.getId().equals(id)).findFirst()
                     .map(AccountRecord::snapshot);
-        }
-
-        @Override
-        public synchronized java.util.Optional<AccountRecord> loadAccountByName(String name) {
-            if (name == null) {
-                return java.util.Optional.empty();
-            }
-            String normalized = name.trim().toLowerCase(java.util.Locale.ROOT);
-            if (normalized.isEmpty()) {
-                return java.util.Optional.empty();
-            }
-            return lastUpsertedRecords.stream()
-                    .filter(r -> r.getLastKnownName().toLowerCase(java.util.Locale.ROOT).equals(normalized))
-                    .findFirst()
-                    .map(AccountRecord::snapshot);
-        }
-
-        @Override
-        public synchronized Map<UUID, String> loadUUIDNameMap() {
-            Map<UUID, String> map = new HashMap<>();
-            for (AccountRecord record : lastUpsertedRecords) {
-                map.put(record.getId(), record.getLastKnownName());
-            }
-            return map;
         }
 
         @Override
@@ -943,7 +906,21 @@ class AccountServicePersistenceIntegrationTest {
         }
 
         @Override
-        public synchronized void delete(UUID accountId) {
+        public synchronized void delete(UUID accountId) throws SQLException {
+            deleteStarted.countDown();
+            if (blockDelete) {
+                try {
+                    if (!allowDelete.await(5, TimeUnit.SECONDS)) {
+                        throw new SQLException("Timed out waiting to delete account");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new SQLException("Interrupted while waiting to delete account", e);
+                }
+            }
+            if (failDelete) {
+                throw new SQLException("expected delete failure");
+            }
             lastUpsertedRecords = lastUpsertedRecords.stream()
                     .filter(record -> !record.getId().equals(accountId))
                     .toList();

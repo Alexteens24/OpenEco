@@ -44,6 +44,7 @@ final class EconomyOperations {
     private final Map<UUID, Long> lastPayTime;
     private final Consumer<TransactionEntry> transactionLogger;
     private final EventDispatcher eventDispatcher;
+    private final Consumer<String> leaderboardDirtyMarker;
     private final Function<UUID, AccountRecord> accountLoader;
 
     EconomyOperations(AccountRegistry accountRegistry,
@@ -51,12 +52,14 @@ final class EconomyOperations {
                       Map<UUID, Long> lastPayTime,
                       Consumer<TransactionEntry> transactionLogger,
                       EventDispatcher eventDispatcher,
+                      Consumer<String> leaderboardDirtyMarker,
                       Function<UUID, AccountRecord> accountLoader) {
         this.accountRegistry = accountRegistry;
         this.configSupplier = configSupplier;
         this.lastPayTime = lastPayTime;
         this.transactionLogger = transactionLogger;
         this.eventDispatcher = eventDispatcher;
+        this.leaderboardDirtyMarker = leaderboardDirtyMarker;
         this.accountLoader = accountLoader;
     }
 
@@ -202,6 +205,7 @@ final class EconomyOperations {
             completedEvent = new BalanceChangedEvent(id, before, newBalance, BalanceChangeEvent.Reason.GIVE, currency.id());
         }
         eventDispatcher.dispatch(completedEvent);
+        leaderboardDirtyMarker.accept(currency.id());
         return success(scaled, completedEvent.getNewBalance());
     }
 
@@ -272,6 +276,7 @@ final class EconomyOperations {
             completedEvent = new BalanceChangedEvent(id, before, newBalance, BalanceChangeEvent.Reason.TAKE, currency.id());
         }
         eventDispatcher.dispatch(completedEvent);
+        leaderboardDirtyMarker.accept(currency.id());
         return success(scaled, completedEvent.getNewBalance());
     }
 
@@ -341,6 +346,7 @@ final class EconomyOperations {
             completedEvent = new BalanceChangedEvent(id, before, scaled, BalanceChangeEvent.Reason.SET, currency.id());
         }
         eventDispatcher.dispatch(completedEvent);
+        leaderboardDirtyMarker.accept(currency.id());
         return success(scaled, completedEvent.getNewBalance());
     }
 
@@ -399,6 +405,7 @@ final class EconomyOperations {
             completedEvent = new BalanceChangedEvent(id, before, startingBalance, BalanceChangeEvent.Reason.RESET, currency.id());
         }
         eventDispatcher.dispatch(completedEvent);
+        leaderboardDirtyMarker.accept(currency.id());
         return success(startingBalance, completedEvent.getNewBalance());
     }
 
@@ -661,6 +668,7 @@ final class EconomyOperations {
         }
         eventDispatcher.dispatch(fromChangedEvent);
         eventDispatcher.dispatch(toChangedEvent);
+        leaderboardDirtyMarker.accept(currency.id());
         return DirectTransferResult.success(scaled, fromChangedEvent.getNewBalance(), toChangedEvent.getNewBalance());
     }
 
@@ -782,6 +790,7 @@ final class EconomyOperations {
                     completedEvent.getFromBalanceAfter(), BalanceChangeEvent.Reason.PAY_SENT, currency.id()));
         eventDispatcher.dispatch(new BalanceChangedEvent(toId, completedEvent.getToBalanceBefore(),
                     completedEvent.getToBalanceAfter(), BalanceChangeEvent.Reason.PAY_RECEIVED, currency.id()));
+        leaderboardDirtyMarker.accept(currency.id());
         return PayResult.success(scaled, received, tax);
     }
 

@@ -38,6 +38,7 @@ final class ConfigMigrator {
 
         YamlConfiguration normalizedSource = copySourceWithoutLegacy(currentConfig);
         migrateLegacyCurrencySection(currentConfig, normalizedSource);
+        migrateRenamedSettings(currentConfig, normalizedSource);
 
         YamlConfiguration orderedConfig = new YamlConfiguration();
         mergeSection(defaultConfig, normalizedSource, orderedConfig);
@@ -47,7 +48,27 @@ final class ConfigMigrator {
     private static YamlConfiguration copySourceWithoutLegacy(FileConfiguration currentConfig) {
         YamlConfiguration normalizedSource = new YamlConfiguration();
         copySection(currentConfig, normalizedSource);
+        normalizedSource.set("accounts.load-strategy", null);
+        ConfigurationSection accounts = normalizedSource.getConfigurationSection("accounts");
+        if (accounts != null && accounts.getKeys(false).isEmpty()) {
+            normalizedSource.set("accounts", null);
+        }
         return normalizedSource;
+    }
+
+    private static void migrateRenamedSettings(FileConfiguration currentConfig, YamlConfiguration targetConfig) {
+        migrateRenamedSetting(currentConfig, targetConfig,
+                "autosave-interval", "persistence.autosave-interval-seconds");
+        migrateRenamedSetting(currentConfig, targetConfig,
+                "baltop.cache-ttl-seconds", "baltop.refresh-interval-seconds");
+    }
+
+    private static void migrateRenamedSetting(FileConfiguration source, YamlConfiguration target,
+                                              String oldPath, String newPath) {
+        if (source.contains(oldPath) && !source.contains(newPath)) {
+            target.set(newPath, source.get(oldPath));
+        }
+        target.set(oldPath, null);
     }
 
     private static void migrateLegacyCurrencySection(FileConfiguration currentConfig, YamlConfiguration targetConfig) {

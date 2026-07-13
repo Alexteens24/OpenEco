@@ -8,12 +8,7 @@ OpenEco keeps account data in memory and writes it through JDBC in the backgroun
 
 ### Account loading
 
-| Strategy | Behavior |
-|---|---|
-| `eager` (default) | Loads all account rows at startup |
-| `lazy` | Loads on first access; repository fallback for lookups |
-
-In eager mode, balance reads and writes do not round-trip to the database after preload. In lazy mode, first access may trigger a one-time repository load.
+Accounts and their balances are read with one ordered streaming join, assembled a row at a time, and emitted into the in-memory registry in bounded batches. After startup, balance reads and writes never fall back to database queries.
 
 Dirty account snapshots flush on the autosave interval and on normal shutdown.
 
@@ -23,7 +18,7 @@ Transaction history is written on a dedicated single-thread executor. Before a d
 
 ### Baltop cache
 
-Leaderboard results are cached with a configurable TTL and stored as immutable account snapshots.
+Lightweight per-currency leaderboard snapshots are refreshed in the background at the configured interval. Requests keep using the previous immutable snapshot while a refresh is running; rank lookup is constant-time.
 
 ## Storage
 
@@ -46,7 +41,7 @@ This is handoff sync, not real-time global replication. Balances are not broadca
 ## Crash semantics
 
 - Recent balance changes can be lost after an unclean stop.
-- Loss window is at most one `autosave-interval` under normal conditions.
+- Loss window is at most one `persistence.autosave-interval-seconds` under normal conditions.
 - Normal shutdown drains queued history writes, then performs a final balance flush.
 
 ## Scaling notes
@@ -59,6 +54,7 @@ This is handoff sync, not real-time global replication. Balances are not broadca
 Observed staging signal (not a guarantee for every server):
 
 - 1000 accounts, 100 operations per tick, 180 seconds, 2-thread 2 GB host — successful verify after the run.
+- 500,000 accounts, H2, one currency, 1 GB heap — streaming preload retained about 228 MiB, peaked around 638 MiB, and completed in roughly 3.6–3.8 seconds on the benchmark host.
 
 ## Hot path callers
 

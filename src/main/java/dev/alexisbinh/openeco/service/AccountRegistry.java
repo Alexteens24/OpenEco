@@ -35,13 +35,13 @@ final class AccountRegistry {
     private final ConcurrentHashMap<UUID, AccountRecord> accounts = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, UUID> nameIndex = new ConcurrentHashMap<>();
 
-    void loadAll(List<AccountRecord> records) {
+    void clear() {
         accounts.clear();
         nameIndex.clear();
-        for (AccountRecord record : records) {
-            accounts.put(record.getId(), record);
-            nameIndex.put(normalizeName(record.getLastKnownName()), record.getId());
-        }
+    }
+
+    boolean addLoaded(AccountRecord record) {
+        return create(record);
     }
 
     boolean hasAccount(UUID id) {

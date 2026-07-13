@@ -38,17 +38,18 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.SQLException;
 import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Logger;
 
 public class AccountService {
+
+    private static final int ACCOUNT_LOAD_BATCH_SIZE = 500;
 
     public enum CreateAccountStatus {
         CREATED,
@@ -82,7 +83,7 @@ public class AccountService {
     private final EconomyOperations economyOperations;
     private volatile EconomyConfigSnapshot config;
     private volatile boolean crossServerEnabled;
-    private volatile boolean lazyAccountLoadingEnabled;
+    private final AtomicBoolean leaderboardRefreshRunning = new AtomicBoolean();
 
     // Pay cooldown tracker
     private final ConcurrentHashMap<UUID, Long> lastPayTime = new ConcurrentHashMap<>();
@@ -102,9 +103,11 @@ public class AccountService {
                 () -> this.config,
                 lastPayTime,
                 this::logTransaction,
-            eventDispatcher,
-            this::getOrLoadLiveRecord);
+                eventDispatcher,
+                leaderboardCache::markDirty,
+                this::getOrLoadLiveRecord);
         readConfig(config);
+        this.crossServerEnabled = config.getBoolean("cross-server.enabled", false);
     }
 
     // ── Config ──────────────────────────────────────────────────────────────
@@ -116,40 +119,45 @@ public class AccountService {
     private void readConfig(FileConfiguration config) {
         EconomyConfigSnapshot updated = EconomyConfigSnapshot.from(config);
         this.config = updated;
-        String loadStrategy = config.getString("accounts.load-strategy", "eager");
-        if (loadStrategy == null) {
-            loadStrategy = "eager";
-        }
-        if (!loadStrategy.equalsIgnoreCase("eager") && !loadStrategy.equalsIgnoreCase("lazy")) {
-            log.warning("Unknown accounts.load-strategy '" + loadStrategy + "'. Falling back to 'eager'.");
-            loadStrategy = "eager";
-        }
-        this.lazyAccountLoadingEnabled = loadStrategy.equalsIgnoreCase("lazy");
         syncConfiguredCurrencies(updated);
-        leaderboardCache.setCacheTtlMs(updated.balTopCacheTtlMs());
-        this.crossServerEnabled = config.getBoolean("cross-server.enabled", false);
+        leaderboardCache.configureCurrencies(updated.currencies().all().stream().map(CurrencyDefinition::id).toList());
     }
 
     public boolean isCrossServerEnabled() {
         return crossServerEnabled;
     }
 
-    public boolean isLazyAccountLoadingEnabled() {
-        return lazyAccountLoadingEnabled;
-    }
-
     // ── Startup ─────────────────────────────────────────────────────────────
 
     public void loadAll() throws SQLException {
-        if (lazyAccountLoadingEnabled) {
-            log.info("Account lazy-loading enabled; skipping startup preload.");
-            return;
+        clearStartupState();
+        try {
+            int[] loaded = {0};
+            repository.loadBatches(ACCOUNT_LOAD_BATCH_SIZE, records -> {
+                for (AccountRecord record : records) {
+                    validateLoadedName(record);
+                    if (alignLoadedRecordCurrencies(record, config)) {
+                        record.markDirty();
+                    }
+                    if (!accountRegistry.addLoaded(record)) {
+                        throw new SQLException("Duplicate stored account id or name for " + record.getId()
+                                + " ('" + record.getLastKnownName()
+                                + "'). Resolve duplicates before starting openeco.");
+                    }
+                    loaded[0]++;
+                }
+            });
+            leaderboardCache.rebuildAll(accountRegistry.liveRecords());
+            log.info("Loaded " + loaded[0] + " economy accounts.");
+        } catch (SQLException | RuntimeException e) {
+            clearStartupState();
+            throw e;
         }
-        List<AccountRecord> records = repository.loadAll();
-        validateLoadedNames(records);
-        accountRegistry.loadAll(records);
-        syncConfiguredCurrencies(config);
-        log.info("Loaded " + records.size() + " economy accounts.");
+    }
+
+    private void clearStartupState() {
+        accountRegistry.clear();
+        leaderboardCache.clearSnapshots();
     }
 
     // ── Account management ───────────────────────────────────────────────────
@@ -174,25 +182,7 @@ public class AccountService {
     }
 
     public Optional<AccountRecord> findByName(String name) {
-        Optional<AccountRecord> snapshot = accountRegistry.findSnapshotByName(name);
-        if (snapshot.isPresent() || !lazyAccountLoadingEnabled) {
-            return snapshot;
-        }
-
-        Optional<AccountRecord> persisted = loadPersistedAccountByName(name);
-        if (persisted.isEmpty()) {
-            return Optional.empty();
-        }
-
-        synchronized (persistenceLock) {
-            AccountRecord live = attachLoadedRecord(persisted.get());
-            if (live == null) {
-                return accountRegistry.findSnapshotByName(name);
-            }
-            synchronized (live) {
-                return Optional.of(live.snapshot());
-            }
-        }
+        return accountRegistry.findSnapshotByName(name);
     }
 
     /** Creates an account if it doesn't exist yet. Returns true if created. */
@@ -232,7 +222,7 @@ public class AccountService {
             if (!accountRegistry.create(record)) {
                 return CreateAccountStatus.NAME_IN_USE;
             }
-            invalidateBalTopCache();
+            markAllLeaderboardsDirty();
             createdEvent = new AccountCreateEvent(id, validatedName, currentConfig.startingBalance());
         }
 
@@ -302,7 +292,7 @@ public class AccountService {
                 if (!accountRegistry.rename(record, validatedName)) {
                     return RenameAccountStatus.NAME_IN_USE;
                 }
-                invalidateBalTopCache();
+                markAllLeaderboardsDirty();
             }
         }
         eventDispatcher.dispatch(new AccountRenamedEvent(id, event.getOldName(), validatedName));
@@ -360,7 +350,7 @@ public class AccountService {
                 log.severe("Failed to delete account " + id + ": " + e.getMessage());
                 return DeleteAccountStatus.FAILED;
             }
-            invalidateBalTopCache();
+            markAllLeaderboardsDirty();
             AccountDeletedEvent deletedEvent = new AccountDeletedEvent(id, event.getPlayerName(), event.getBalance());
             eventDispatcher.dispatch(deletedEvent);
             return DeleteAccountStatus.DELETED;
@@ -368,18 +358,7 @@ public class AccountService {
     }
 
     public Map<UUID, String> getUUIDNameMap() {
-        if (!lazyAccountLoadingEnabled) {
-            return accountRegistry.getUUIDNameMap();
-        }
-
-        Map<UUID, String> merged = new HashMap<>();
-        try {
-            merged.putAll(repository.loadUUIDNameMap());
-        } catch (SQLException e) {
-            log.warning("Failed to load UUID-name map from repository: " + e.getMessage());
-        }
-        merged.putAll(accountRegistry.getUUIDNameMap());
-        return Collections.unmodifiableMap(merged);
+        return accountRegistry.getUUIDNameMap();
     }
 
     public List<String> getAccountNames() {
@@ -568,16 +547,17 @@ public class AccountService {
 
     // ── Baltop ───────────────────────────────────────────────────────────────
 
-    public List<AccountRecord> getBalTopSnapshot() {
-        return getBalTopSnapshot(config.currencyId());
+    public LeaderboardView getLeaderboardPage(int offset, int limit) {
+        return getLeaderboardPage(config.currencyId(), offset, limit);
     }
 
-    public List<AccountRecord> getBalTopSnapshot(String currencyId) {
+    public LeaderboardView getLeaderboardPage(String currencyId, int offset, int limit) {
         String resolvedCurrencyId = resolveCurrencyIdOrFallback(currencyId);
-        if (!lazyAccountLoadingEnabled) {
-            return leaderboardCache.getSnapshot(resolvedCurrencyId, accountRegistry.liveRecords());
-        }
-        return leaderboardCache.getSnapshot(resolvedCurrencyId, collectLeaderboardRecords());
+        return leaderboardCache.page(resolvedCurrencyId, offset, limit);
+    }
+
+    public @Nullable LeaderboardEntry getLeaderboardEntry(int rank, String currencyId) {
+        return leaderboardCache.entryAtRank(resolveCurrencyIdOrFallback(currencyId), rank);
     }
 
     public int getRankOf(UUID accountId) {
@@ -585,13 +565,16 @@ public class AccountService {
     }
 
     public int getRankOf(UUID accountId, String currencyId) {
-        List<AccountRecord> snapshot = getBalTopSnapshot(currencyId);
-        for (int i = 0; i < snapshot.size(); i++) {
-            if (snapshot.get(i).getId().equals(accountId)) {
-                return i + 1;
-            }
+        return leaderboardCache.rankOf(resolveCurrencyIdOrFallback(currencyId), accountId);
+    }
+
+    public void refreshLeaderboards() {
+        if (!leaderboardRefreshRunning.compareAndSet(false, true)) return;
+        try {
+            leaderboardCache.refreshDirty(accountRegistry.liveRecords());
+        } finally {
+            leaderboardRefreshRunning.set(false);
         }
-        return -1;
     }
 
     // ── Account freeze ────────────────────────────────────────────────────────
@@ -632,11 +615,7 @@ public class AccountService {
         if (currency == null) {
             return amount.toPlainString();
         }
-        BigDecimal scaled = amount.setScale(currency.fractionalDigits(), RoundingMode.HALF_UP);
-        String unit = scaled.abs().compareTo(BigDecimal.ONE) == 0
-                ? currency.singularName()
-                : currency.pluralName();
-        return scaled.toPlainString() + " " + unit;
+        return currency.format(amount);
     }
 
     public String getCurrencyId() { return config.currencyId(); }
@@ -675,6 +654,8 @@ public class AccountService {
     public BigDecimal getPayTaxRate() { return config.payTaxRate(); }
     public BigDecimal getPayMinAmount() { return config.payMinAmount(); }
     public long getBalTopCacheTtlMs() { return config.balTopCacheTtlMs(); }
+    public int getBalTopPageSize() { return config.balTopPageSize(); }
+    public int getHistoryPageSize() { return config.historyPageSize(); }
     public int getHistoryRetentionDays() { return config.historyRetentionDays(); }
     /** Returns the formatted max balance string, or null if unlimited. */
     public String getFormattedMaxBalance() {
@@ -791,7 +772,7 @@ public class AccountService {
                     return;
                 }
             }
-            invalidateBalTopCache();
+            markAllLeaderboardsDirty();
         } catch (SQLException e) {
             log.warning("Cross-server refresh failed for " + id + ": " + e.getMessage());
         }
@@ -805,95 +786,14 @@ public class AccountService {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private @Nullable AccountRecord getOrLoadLiveRecord(UUID id) {
-        AccountRecord live = accountRegistry.getLiveRecord(id);
-        if (live != null || !lazyAccountLoadingEnabled) {
-            return live;
-        }
-
-        synchronized (persistenceLock) {
-            live = accountRegistry.getLiveRecord(id);
-            if (live != null) {
-                return live;
-            }
-
-            Optional<AccountRecord> persisted = loadPersistedAccount(id);
-            if (persisted.isEmpty()) {
-                return null;
-            }
-            return attachLoadedRecord(persisted.get());
-        }
-    }
-
-    private Optional<AccountRecord> loadPersistedAccount(UUID id) {
-        try {
-            Optional<AccountRecord> record = repository.loadAccount(id);
-            record.ifPresent(value -> alignLoadedRecordCurrencies(value, config));
-            return record;
-        } catch (SQLException e) {
-            log.warning("Failed to lazy-load account " + id + ": " + e.getMessage());
-            return Optional.empty();
-        }
-    }
-
-    private Optional<AccountRecord> loadPersistedAccountByName(String name) {
-        try {
-            Optional<AccountRecord> record = repository.loadAccountByName(name);
-            record.ifPresent(value -> alignLoadedRecordCurrencies(value, config));
-            return record;
-        } catch (SQLException e) {
-            log.warning("Failed to lazy-load account by name '" + name + "': " + e.getMessage());
-            return Optional.empty();
-        }
-    }
-
-    private @Nullable AccountRecord attachLoadedRecord(AccountRecord record) {
-        if (!accountRegistry.replace(record)) {
-            return accountRegistry.getLiveRecord(record.getId());
-        }
-        return accountRegistry.getLiveRecord(record.getId());
+        return accountRegistry.getLiveRecord(id);
     }
 
     private boolean isNameClaimedByAnotherIncludingPersistence(UUID id, String name) {
         if (accountRegistry.isNameClaimedByAnother(id, name)) {
             return true;
         }
-        if (!lazyAccountLoadingEnabled) {
-            return false;
-        }
-
-        Optional<AccountRecord> persisted = loadPersistedAccountByName(name);
-        if (persisted.isEmpty()) {
-            return false;
-        }
-        AccountRecord persistedRecord = persisted.get();
-        if (!persistedRecord.getId().equals(id)) {
-            return true;
-        }
-
-        if (accountRegistry.getLiveRecord(id) == null) {
-            attachLoadedRecord(persistedRecord);
-        }
         return false;
-    }
-
-    private Collection<AccountRecord> collectLeaderboardRecords() {
-        Map<UUID, AccountRecord> merged = new HashMap<>();
-        try {
-            List<AccountRecord> persisted = repository.loadAll();
-            for (AccountRecord record : persisted) {
-                alignLoadedRecordCurrencies(record, config);
-                merged.put(record.getId(), record);
-            }
-        } catch (SQLException e) {
-            log.warning("Failed to load persisted accounts for leaderboard snapshot: " + e.getMessage());
-        }
-
-        for (AccountRecord live : accountRegistry.liveRecords()) {
-            synchronized (live) {
-                merged.put(live.getId(), live.snapshot());
-            }
-        }
-        return merged.values();
     }
 
     private void logTransaction(TransactionEntry entry) {
@@ -911,10 +811,11 @@ public class AccountService {
         } else {
             lastPayTime.remove(id);
         }
+        markAllLeaderboardsDirty();
     }
 
-    private void invalidateBalTopCache() {
-        leaderboardCache.invalidate();
+    private void markAllLeaderboardsDirty() {
+        leaderboardCache.markAllDirty();
     }
 
     private void syncConfiguredCurrencies(EconomyConfigSnapshot configSnapshot) {
@@ -924,13 +825,14 @@ public class AccountService {
         });
     }
 
-    private void alignLoadedRecordCurrencies(AccountRecord record, EconomyConfigSnapshot configSnapshot) {
-        record.canonicalizeCurrencyIds(currencyId -> {
+    private boolean alignLoadedRecordCurrencies(AccountRecord record, EconomyConfigSnapshot configSnapshot) {
+        boolean changed = record.canonicalizeCurrencyIds(currencyId -> {
             CurrencyDefinition currency = configSnapshot.currencies().find(currencyId).orElse(null);
             return currency != null ? currency.id() : null;
         });
         record.setPrimaryCurrencyId(configSnapshot.currencyId());
         record.clearDirty();
+        return changed;
     }
 
     private static String sanitizeAccountName(String name) {
@@ -945,21 +847,11 @@ public class AccountService {
         return trimmed;
     }
 
-    private static void validateLoadedNames(List<AccountRecord> records) throws SQLException {
-        Map<String, UUID> owners = new HashMap<>();
-        for (AccountRecord record : records) {
-            String sanitized = sanitizeAccountName(record.getLastKnownName());
-            if (sanitized == null || !sanitized.equals(record.getLastKnownName())) {
-                throw new SQLException("Invalid stored account name for " + record.getId()
-                        + ": '" + record.getLastKnownName() + "'. Resolve invalid names before starting openeco.");
-            }
-
-            String normalized = AccountRegistry.normalizeName(record.getLastKnownName());
-            UUID existingOwner = owners.putIfAbsent(normalized, record.getId());
-            if (existingOwner != null && !existingOwner.equals(record.getId())) {
-                throw new SQLException("Duplicate stored account name '" + record.getLastKnownName() + "' for "
-                        + existingOwner + " and " + record.getId() + ". Resolve duplicates before starting openeco.");
-            }
+    private static void validateLoadedName(AccountRecord record) throws SQLException {
+        String sanitized = sanitizeAccountName(record.getLastKnownName());
+        if (sanitized == null || !sanitized.equals(record.getLastKnownName())) {
+            throw new SQLException("Invalid stored account name for " + record.getId()
+                    + ": '" + record.getLastKnownName() + "'. Resolve invalid names before starting openeco.");
         }
     }
 

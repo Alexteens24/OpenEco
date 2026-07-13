@@ -407,7 +407,7 @@ class EconomyOperationsTest {
         config = configWith(0.0, 60, null, 2); // 60 second cooldown
         ConcurrentHashMap<UUID, Long> cooldownMap = new ConcurrentHashMap<>();
         cooldownMap.put(aliceId, System.currentTimeMillis()); // just paid now
-        ops = new EconomyOperations(registry, () -> config, cooldownMap, logged::add, event -> { }, registry::getLiveRecord);
+        ops = new EconomyOperations(registry, () -> config, cooldownMap, logged::add, event -> { }, ignored -> { }, registry::getLiveRecord);
 
         PayResult result = ops.pay(aliceId, bobId, new BigDecimal("1.00"));
 
@@ -497,7 +497,7 @@ class EconomyOperationsTest {
         config = configWith(0.0, 60, null, 2);
         ConcurrentHashMap<UUID, Long> cooldownMap = new ConcurrentHashMap<>();
         cooldownMap.put(aliceId, System.currentTimeMillis());
-        ops = new EconomyOperations(registry, () -> config, cooldownMap, logged::add, event -> { }, registry::getLiveRecord);
+        ops = new EconomyOperations(registry, () -> config, cooldownMap, logged::add, event -> { }, ignored -> { }, registry::getLiveRecord);
 
         TransferPreviewResult result = ops.previewTransfer(aliceId, bobId, new BigDecimal("1.00"));
 
@@ -551,7 +551,7 @@ class EconomyOperationsTest {
         config = configWith(10.0, 60, null, 2, 0.10);
         ConcurrentHashMap<UUID, Long> cooldownMap = new ConcurrentHashMap<>();
         cooldownMap.put(aliceId, System.currentTimeMillis());
-        ops = new EconomyOperations(registry, () -> config, cooldownMap, logged::add, event -> { }, registry::getLiveRecord);
+        ops = new EconomyOperations(registry, () -> config, cooldownMap, logged::add, event -> { }, ignored -> { }, registry::getLiveRecord);
 
         DirectTransferResult result = ops.directTransfer(aliceId, bobId, new BigDecimal("0.05"));
 
@@ -664,7 +664,7 @@ class EconomyOperationsTest {
                 logged::add, event -> {
                     dispatchedEvents.add(event);
                     listener.accept(event);
-                }, registry::getLiveRecord);
+                }, ignored -> { }, registry::getLiveRecord);
     }
 
     private AccountRecord account(UUID id, String name, BigDecimal balance) {
@@ -689,7 +689,7 @@ class EconomyOperationsTest {
         cfg.set("pay.cooldown-seconds", cooldownSec);
         cfg.set("pay.tax-percent", taxPercent);
         cfg.set("pay.min-amount", minAmount);
-        cfg.set("baltop.cache-ttl-seconds", 30);
+        cfg.set("baltop.refresh-interval-seconds", 30);
         cfg.set("history.retention-days", -1);
         return EconomyConfigSnapshot.from(cfg);
     }

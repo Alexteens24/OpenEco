@@ -32,6 +32,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ConfigMigratorTest {
 
     @Test
+    void removesLegacyAccountLoadStrategyWithoutLeavingEmptySection() {
+        YamlConfiguration current = new YamlConfiguration();
+        current.set("accounts.load-strategy", "lazy");
+        current.set("pay.cooldown-seconds", 12);
+
+        YamlConfiguration migrated = ConfigMigrator.rewrite(current, loadBundledDefaultConfig());
+
+        assertFalse(migrated.contains("accounts.load-strategy"));
+        assertFalse(migrated.isConfigurationSection("accounts"));
+        assertEquals(12, migrated.getInt("pay.cooldown-seconds"));
+    }
+
+    @Test
     void rewritesLegacyCurrencyBlockInTemplateOrder() {
         YamlConfiguration current = new YamlConfiguration();
         current.set("currency.id", "coins");
@@ -47,8 +60,7 @@ class ConfigMigratorTest {
         String yaml = migrated.saveToString();
         int currenciesIndex = yaml.indexOf("currencies:");
         int storageIndex = yaml.indexOf("storage:");
-        int accountsIndex = yaml.indexOf("accounts:");
-        int autosaveIndex = yaml.indexOf("autosave-interval:");
+        int persistenceIndex = yaml.indexOf("persistence:");
         int payIndex = yaml.indexOf("pay:");
         int baltopIndex = yaml.indexOf("baltop:");
         int historyIndex = yaml.indexOf("history:");
@@ -57,20 +69,17 @@ class ConfigMigratorTest {
         assertFalse(yaml.contains("\ncurrency:"), yaml);
         assertTrue(currenciesIndex >= 0, yaml);
         assertTrue(storageIndex >= 0, yaml);
-        assertTrue(accountsIndex >= 0, yaml);
-        assertTrue(autosaveIndex >= 0, yaml);
+        assertTrue(persistenceIndex >= 0, yaml);
         assertTrue(payIndex >= 0, yaml);
         assertTrue(baltopIndex >= 0, yaml);
         assertTrue(historyIndex >= 0, yaml);
         assertTrue(crossServerIndex >= 0, yaml);
         assertTrue(currenciesIndex < storageIndex,
             () -> "currencies=" + currenciesIndex + " storage=" + storageIndex + "\n" + yaml);
-        assertTrue(storageIndex < accountsIndex,
-            () -> "storage=" + storageIndex + " accounts=" + accountsIndex + "\n" + yaml);
-        assertTrue(accountsIndex < autosaveIndex,
-            () -> "accounts=" + accountsIndex + " autosave=" + autosaveIndex + "\n" + yaml);
-        assertTrue(autosaveIndex < payIndex,
-            () -> "autosave=" + autosaveIndex + " pay=" + payIndex + "\n" + yaml);
+        assertTrue(storageIndex < persistenceIndex,
+            () -> "storage=" + storageIndex + " persistence=" + persistenceIndex + "\n" + yaml);
+        assertTrue(persistenceIndex < payIndex,
+            () -> "persistence=" + persistenceIndex + " pay=" + payIndex + "\n" + yaml);
         assertTrue(payIndex < baltopIndex,
             () -> "pay=" + payIndex + " baltop=" + baltopIndex + "\n" + yaml);
         assertTrue(baltopIndex < historyIndex,
@@ -81,6 +90,27 @@ class ConfigMigratorTest {
         assertTrue(migrated.getBoolean("custom.feature.enabled"));
         assertTrue(yaml.contains("custom:"), yaml);
         assertTrue(yaml.contains("  coins:"));
+    }
+
+    @Test
+    void migratesRenamedIntervalsWithoutOverwritingNewValues() {
+        YamlConfiguration current = new YamlConfiguration();
+        current.set("autosave-interval", 45);
+        current.set("baltop.cache-ttl-seconds", 60);
+
+        YamlConfiguration migrated = ConfigMigrator.rewrite(current, loadBundledDefaultConfig());
+
+        assertEquals(45, migrated.getLong("persistence.autosave-interval-seconds"));
+        assertEquals(60, migrated.getLong("baltop.refresh-interval-seconds"));
+        assertFalse(migrated.contains("autosave-interval"));
+        assertFalse(migrated.contains("baltop.cache-ttl-seconds"));
+
+        current.set("persistence.autosave-interval-seconds", 90);
+        current.set("baltop.refresh-interval-seconds", 120);
+        migrated = ConfigMigrator.rewrite(current, loadBundledDefaultConfig());
+
+        assertEquals(90, migrated.getLong("persistence.autosave-interval-seconds"));
+        assertEquals(120, migrated.getLong("baltop.refresh-interval-seconds"));
     }
 
     @Test
@@ -104,7 +134,7 @@ class ConfigMigratorTest {
         assertEquals("gems", migrated.getString("currencies.default"));
         assertEquals("Gem", migrated.getString("currencies.definitions.gems.name-singular"));
         assertEquals("Gems", migrated.getString("currencies.definitions.gems.name-plural"));
-        assertEquals("eager", migrated.getString("accounts.load-strategy"));
+        assertFalse(migrated.contains("accounts.load-strategy"));
         assertTrue(openecoIndex >= 0, yaml);
         assertTrue(gemsIndex >= 0, yaml);
         assertTrue(storageIndex >= 0, yaml);

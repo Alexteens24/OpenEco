@@ -16,8 +16,8 @@
 
 package dev.alexisbinh.openeco.placeholder;
 
-import dev.alexisbinh.openeco.model.AccountRecord;
 import dev.alexisbinh.openeco.service.AccountService;
+import dev.alexisbinh.openeco.service.LeaderboardEntry;
 import me.clip.placeholderapi.expansion.PlaceholderExpansion;
 import org.bukkit.OfflinePlayer;
 import org.jetbrains.annotations.NotNull;
@@ -119,8 +119,8 @@ public class OpenEcoPlaceholderExpansion extends PlaceholderExpansion {
             ParsedTopField parsed = parseTopField(descriptor);
             if (parsed == null) return "";
 
-            List<AccountRecord> top = service.getBalTopSnapshot(parsed.currencyId());
-            if (rank > top.size()) {
+            LeaderboardEntry entry = service.getLeaderboardEntry(rank, parsed.currencyId());
+            if (entry == null) {
                 return switch (parsed.field()) {
                     case "name" -> "---";
                     case "balance" -> "0";
@@ -128,11 +128,10 @@ public class OpenEcoPlaceholderExpansion extends PlaceholderExpansion {
                     default -> "";
                 };
             }
-            AccountRecord entry = top.get(rank - 1);
             return switch (parsed.field()) {
-                case "name" -> entry.getLastKnownName();
-                case "balance" -> entry.getBalance(parsed.currencyId()).toPlainString();
-                case "balance_formatted" -> service.format(entry.getBalance(parsed.currencyId()), parsed.currencyId());
+                case "name" -> entry.name();
+                case "balance" -> entry.balance().toPlainString();
+                case "balance_formatted" -> service.format(entry.balance(), parsed.currencyId());
                 default -> "";
             };
         }

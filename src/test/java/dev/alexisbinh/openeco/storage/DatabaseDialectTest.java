@@ -56,4 +56,13 @@ class DatabaseDialectTest {
             assertTrue(dialect.createTransactionIndexSql().toUpperCase().contains("IF NOT EXISTS"), dialect.name());
         }
     }
+
+    @Test
+    void rejectsUnknownStorageTypeInsteadOfSilentlyUsingSqlite() {
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class, () -> DatabaseDialect.fromConfig("mysqll"));
+
+        assertTrue(error.getMessage().contains("storage.type"));
+        assertTrue(error.getMessage().contains("mysqll"));
+    }
 }

@@ -36,6 +36,16 @@ public record EconomyRulesSnapshot(
         return payMinAmount != null;
     }
 
+    /**
+     * Background leaderboard refresh interval. This is the semantic alias for
+     * {@link #balTopCacheTtlMs()}, whose original accessor remains for binary compatibility.
+     *
+     * @return refresh interval in milliseconds
+     */
+    public long balTopRefreshIntervalMs() {
+        return balTopCacheTtlMs;
+    }
+
     public boolean keepsHistoryForever() {
         return historyRetentionDays < 0;
     }

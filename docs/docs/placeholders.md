@@ -49,7 +49,7 @@ When a rank does not exist:
 
 ## Cache behavior
 
-Leaderboard placeholders use the same cache as `/baltop`, controlled by `baltop.cache-ttl-seconds` in config. Lower values give fresher leaderboard data at the cost of more sorting work.
+Leaderboard placeholders use the same background-refreshed snapshots as `/baltop`, controlled by `baltop.refresh-interval-seconds` in config. Lower values give fresher data at the cost of more sorting work.
 
 ::: tip Reload
 Placeholder formatting follows the current currency definitions. After changing `currencies.*`, run `/eco reload` or restart so display names and decimal digits stay in sync.

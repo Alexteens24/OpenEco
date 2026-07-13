@@ -177,12 +177,14 @@ public enum DatabaseDialect {
 
     public static DatabaseDialect fromConfig(String value) {
         if (value == null) return SQLITE;
-        return switch (value.toLowerCase(Locale.ROOT)) {
+        return switch (value.trim().toLowerCase(Locale.ROOT)) {
+            case "", "sqlite" -> SQLITE;
             case "h2" -> H2;
             case "mysql" -> MYSQL;
             case "mariadb" -> MARIADB;
             case "postgresql", "postgres" -> POSTGRESQL;
-            default -> SQLITE;
+            default -> throw new IllegalArgumentException(
+                    "storage.type must be sqlite, h2, mysql, mariadb, or postgresql (was '" + value + "')");
         };
     }
 }

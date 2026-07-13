@@ -9,7 +9,7 @@ Check your or another player's balance. Without `openeco.command.balance.others`
 </CommandRow>
 
 <CommandRow commands="/baltop [page] [currency]" aliases="balancetop, moneytop" permission="openeco.command.baltop">
-View the richest players. Supports pagination and an optional currency filter. Results are cached for `baltop.cache-ttl-seconds`.
+View the richest players. Supports pagination and an optional currency filter. Results refresh in the background every `baltop.refresh-interval-seconds` while changes are pending.
 </CommandRow>
 
 <CommandRow commands="/pay <player> <amount> [currency]" permission="openeco.command.pay">
@@ -57,9 +57,9 @@ Rename an account's display name. Names must be unique (case-insensitive) and 16
 </CommandRow>
 
 <CommandRow commands="/eco reload" permission="openeco.command.eco.reload">
-Reload `config.yml` and message templates. Restarts autosave and history prune schedulers.
+Reload `config.yml` and message templates. Restarts autosave, leaderboard refresh, and history prune schedulers.
 
-Does not replace a restart after changing storage backends, `cross-server.enabled`, or `accounts.load-strategy`.
+Does not replace a restart after changing storage backends or `cross-server.enabled`.
 </CommandRow>
 
 ::: tip Alias

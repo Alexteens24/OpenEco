@@ -27,16 +27,16 @@ For the public addon-facing contract, read [Addon API](/docs/api). Server owners
 
 1. Save default config.
 2. Resolve storage backend and open `JdbcAccountRepository`.
-3. Create `AccountService` and initialize account loading strategy.
+3. Create `AccountService`, preload account batches, and build initial leaderboard snapshots.
 4. Load message templates.
 5. Register `OpenEcoApi` in Bukkit's `ServicesManager`.
 6. Register VaultUnlocked v2 and legacy Vault v1 providers.
 7. Register commands, listeners, and optional PlaceholderAPI expansion.
-8. Start autosave and history prune schedulers.
+8. Start autosave, leaderboard refresh, and history prune schedulers.
 
 If storage open or initial account load fails, the plugin disables itself.
 
-`reloadSettings()` reloads config and messages, then restarts autosave and prune schedules.
+`reloadSettings()` reloads config and messages, then restarts autosave, leaderboard refresh, and prune schedules.
 
 `onDisable()` cancels schedulers, unregisters services, drains history, flushes dirty state, and closes JDBC.
 
@@ -48,7 +48,7 @@ OpenEco is an in-memory economy with single-JVM authority and JDBC persistence.
 - Normal reads/writes do not round-trip to the database.
 - Dirty rows flush on autosave interval and clean shutdown.
 - History writes through a dedicated single-thread executor.
-- Baltop cached with TTL as immutable snapshots.
+- Baltop uses lightweight immutable snapshots refreshed asynchronously on the configured interval.
 
 ## Main components
 
@@ -110,7 +110,7 @@ Notes:
 | Name/account lifecycle | `AccountService`, `PlayerConnectionListener`, API docs |
 | History writing | `TransactionHistoryService`, history command, API docs |
 | Baltop logic | Cache invalidation, snapshot immutability, rank lookups |
-| Storage schema | SQLite and H2 behavior, integration tests |
+| Storage schema or account scan | SQLite/H2 tests and the remote-storage CI job |
 | Scheduler usage | Paper vs Folia safety, reply dispatch |
 
 ## Entry points
