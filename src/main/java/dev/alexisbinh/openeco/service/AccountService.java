@@ -132,23 +132,34 @@ public class AccountService {
     // ── Startup ─────────────────────────────────────────────────────────────
 
     public void loadAll() throws SQLException {
+        clearStartupState();
+        try {
+            int[] loaded = {0};
+            repository.loadBatches(ACCOUNT_LOAD_BATCH_SIZE, records -> {
+                for (AccountRecord record : records) {
+                    validateLoadedName(record);
+                    if (alignLoadedRecordCurrencies(record, config)) {
+                        record.markDirty();
+                    }
+                    if (!accountRegistry.addLoaded(record)) {
+                        throw new SQLException("Duplicate stored account id or name for " + record.getId()
+                                + " ('" + record.getLastKnownName()
+                                + "'). Resolve duplicates before starting openeco.");
+                    }
+                    loaded[0]++;
+                }
+            });
+            leaderboardCache.rebuildAll(accountRegistry.liveRecords());
+            log.info("Loaded " + loaded[0] + " economy accounts.");
+        } catch (SQLException | RuntimeException e) {
+            clearStartupState();
+            throw e;
+        }
+    }
+
+    private void clearStartupState() {
         accountRegistry.clear();
-        int[] loaded = {0};
-        repository.loadBatches(ACCOUNT_LOAD_BATCH_SIZE, records -> {
-            for (AccountRecord record : records) {
-                validateLoadedName(record);
-                if (alignLoadedRecordCurrencies(record, config)) {
-                    record.markDirty();
-                }
-                if (!accountRegistry.addLoaded(record)) {
-                    throw new SQLException("Duplicate stored account id or name for " + record.getId()
-                            + " ('" + record.getLastKnownName() + "'). Resolve duplicates before starting openeco.");
-                }
-                loaded[0]++;
-            }
-        });
-        leaderboardCache.rebuildAll(accountRegistry.liveRecords());
-        log.info("Loaded " + loaded[0] + " economy accounts.");
+        leaderboardCache.clearSnapshots();
     }
 
     // ── Account management ───────────────────────────────────────────────────

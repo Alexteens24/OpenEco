@@ -61,6 +61,12 @@ final class LeaderboardCache {
         }
     }
 
+    synchronized void clearSnapshots() {
+        snapshots.clear();
+        dirtyCurrencies.clear();
+        dirtyCurrencies.addAll(versions.keySet());
+    }
+
     void rebuildAll(Collection<AccountRecord> records) {
         List<String> currencyIds;
         synchronized (this) {

@@ -431,8 +431,11 @@ class AccountServicePersistenceIntegrationTest {
             AccountService service = newService(repository);
 
             assertThrows(java.sql.SQLException.class, service::loadAll);
+            assertTrue(service.getUUIDNameMap().isEmpty());
+            assertEquals(0, service.getLeaderboardPage(0, 10).totalEntries());
 
             service.shutdown();
+            assertEquals(2, repository.loadAll().size());
         } finally {
             repository.close();
         }
