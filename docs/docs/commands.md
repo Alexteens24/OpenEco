@@ -57,7 +57,7 @@ Rename an account's display name. Names must be unique (case-insensitive) and 16
 </CommandRow>
 
 <CommandRow commands="/eco reload" permission="openeco.command.eco.reload">
-Reload `config.yml` and message templates. Restarts autosave and history prune schedulers.
+Reload `config.yml` and message templates. Restarts autosave, leaderboard refresh, and history prune schedulers.
 
 Does not replace a restart after changing storage backends or `cross-server.enabled`.
 </CommandRow>

@@ -568,6 +568,46 @@ class AccountServicePersistenceIntegrationTest {
     }
 
     @Test
+    void failedDeleteMarksLeaderboardDirtyAfterRestoringAccount() throws Exception {
+        BlockingRepository repository = new BlockingRepository(false, true, true);
+        AccountService service = newService(repository);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+
+        try {
+            UUID accountId = UUID.randomUUID();
+            assertTrue(service.createAccount(accountId, "Alice"));
+            service.flushDirty();
+            service.refreshLeaderboards();
+            assertEquals("Alice", service.getLeaderboardPage(0, 10).entries().getFirst().name());
+
+            assertTrue(service.renameAccount(accountId, "Alicia"));
+            Future<AccountService.DeleteAccountStatus> deleteFuture =
+                    executor.submit(() -> service.deleteAccountDetailed(accountId));
+            assertTrue(repository.deleteStarted.await(2, TimeUnit.SECONDS));
+
+            // Rebuild while the account is temporarily absent from the live registry.
+            service.refreshLeaderboards();
+            assertEquals(0, service.getLeaderboardPage(0, 10).totalEntries());
+
+            repository.allowDelete.countDown();
+            assertEquals(AccountService.DeleteAccountStatus.FAILED,
+                    deleteFuture.get(2, TimeUnit.SECONDS));
+
+            // The rollback must make another refresh eligible even though no balance changed.
+            service.refreshLeaderboards();
+            LeaderboardView restored = service.getLeaderboardPage(0, 10);
+            assertEquals(1, restored.totalEntries());
+            assertEquals("Alicia", restored.entries().getFirst().name());
+
+            service.shutdown();
+        } finally {
+            repository.allowDelete.countDown();
+            executor.shutdownNow();
+            executor.awaitTermination(2, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
     void payWithTaxTransfersCorrectAmountsAndLogsBothEntries() throws Exception {
         JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "pay-tax-test");
         try {
@@ -809,17 +849,27 @@ class AccountServicePersistenceIntegrationTest {
         private final CountDownLatch allowTransactionInsert = new CountDownLatch(1);
         private final CountDownLatch upsertStarted = new CountDownLatch(1);
         private final CountDownLatch allowUpsert = new CountDownLatch(1);
+        private final CountDownLatch deleteStarted = new CountDownLatch(1);
+        private final CountDownLatch allowDelete = new CountDownLatch(1);
         private final boolean blockUpsert;
+        private final boolean blockDelete;
+        private final boolean failDelete;
         private final List<TransactionEntry> transactions = new ArrayList<>();
         private List<AccountRecord> lastUpsertedRecords = List.of();
         private int upsertCalls;
 
         private BlockingRepository() {
-            this(false);
+            this(false, false, false);
         }
 
         private BlockingRepository(boolean blockUpsert) {
+            this(blockUpsert, false, false);
+        }
+
+        private BlockingRepository(boolean blockUpsert, boolean blockDelete, boolean failDelete) {
             this.blockUpsert = blockUpsert;
+            this.blockDelete = blockDelete;
+            this.failDelete = failDelete;
         }
 
         @Override
@@ -856,7 +906,21 @@ class AccountServicePersistenceIntegrationTest {
         }
 
         @Override
-        public synchronized void delete(UUID accountId) {
+        public synchronized void delete(UUID accountId) throws SQLException {
+            deleteStarted.countDown();
+            if (blockDelete) {
+                try {
+                    if (!allowDelete.await(5, TimeUnit.SECONDS)) {
+                        throw new SQLException("Timed out waiting to delete account");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new SQLException("Interrupted while waiting to delete account", e);
+                }
+            }
+            if (failDelete) {
+                throw new SQLException("expected delete failure");
+            }
             lastUpsertedRecords = lastUpsertedRecords.stream()
                     .filter(record -> !record.getId().equals(accountId))
                     .toList();

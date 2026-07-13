@@ -15,9 +15,9 @@
  */
 package dev.alexisbinh.openeco.storage;
 
-import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import dev.alexisbinh.openeco.model.AccountRecord;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
@@ -38,25 +38,25 @@ class RemoteAccountScanIntegrationTest {
     @Test
     void streamsAccountsOnAllRemoteDialectsAndRestoresConnections() throws Exception {
         verifyDialect(DatabaseDialect.MYSQL,
-                "jdbc:mysql://127.0.0.1:13306/openeco?useSSL=false&allowPublicKeyRetrieval=true&useCursorFetch=true",
-                "com.mysql.cj.jdbc.Driver", "root", "test");
+                13306, "root", "test");
         verifyDialect(DatabaseDialect.MARIADB,
-                "jdbc:mariadb://127.0.0.1:13307/openeco",
-                "org.mariadb.jdbc.Driver", "root", "test");
+                13307, "root", "test");
         verifyDialect(DatabaseDialect.POSTGRESQL,
-                "jdbc:postgresql://127.0.0.1:15432/openeco",
-                "org.postgresql.Driver", "postgres", "test");
+                15432, "postgres", "test");
     }
 
-    private static void verifyDialect(DatabaseDialect dialect, String jdbcUrl, String driver,
+    private static void verifyDialect(DatabaseDialect dialect, int port,
                                       String username, String password) throws Exception {
-        HikariConfig config = new HikariConfig();
-        config.setJdbcUrl(jdbcUrl);
-        config.setDriverClassName(driver);
-        config.setUsername(username);
-        config.setPassword(password);
-        config.setMaximumPoolSize(2);
-        HikariDataSource dataSource = new HikariDataSource(config);
+        String section = dialect.name().toLowerCase(java.util.Locale.ROOT);
+        YamlConfiguration config = new YamlConfiguration();
+        config.set("storage." + section + ".host", "127.0.0.1");
+        config.set("storage." + section + ".port", port);
+        config.set("storage." + section + ".database", "openeco");
+        config.set("storage." + section + ".username", username);
+        config.set("storage." + section + ".password", password);
+        config.set("storage." + section + ".pool-size", 2);
+        config.set("storage." + section + ".connection-timeout-seconds", 10);
+        HikariDataSource dataSource = RemoteStorageDataSource.create(dialect, config);
         JdbcAccountRepository repository = new JdbcAccountRepository(dataSource, dialect, "openeco");
         try {
             int count = 1_001;

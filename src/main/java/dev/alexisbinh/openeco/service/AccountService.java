@@ -38,8 +38,6 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.SQLException;
 import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -813,6 +811,7 @@ public class AccountService {
         } else {
             lastPayTime.remove(id);
         }
+        markAllLeaderboardsDirty();
     }
 
     private void markAllLeaderboardsDirty() {

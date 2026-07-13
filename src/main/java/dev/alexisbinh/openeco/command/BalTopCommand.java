@@ -25,7 +25,6 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
-import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Collections;
@@ -34,12 +33,10 @@ import java.util.List;
 public class BalTopCommand implements CommandExecutor, TabCompleter {
 
     private final AccountService service;
-    private final JavaPlugin plugin;
     private final Messages messages;
 
-    public BalTopCommand(AccountService service, JavaPlugin plugin, Messages messages) {
+    public BalTopCommand(AccountService service, Messages messages) {
         this.service = service;
-        this.plugin = plugin;
         this.messages = messages;
     }
 

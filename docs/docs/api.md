@@ -136,6 +136,8 @@ OpenEco uses result objects for normal business-rule failures (insufficient fund
 | Method | Result |
 |---|---|
 | `getRules()` | `EconomyRulesSnapshot` |
+
+`EconomyRulesSnapshot.balTopRefreshIntervalMs()` exposes the background leaderboard refresh interval. The legacy `balTopCacheTtlMs()` accessor remains available for binary compatibility.
 | `getCurrencyInfo()` / `getCurrencyInfo(String)` | `CurrencyInfo` |
 | `getCurrencies()` | `List<CurrencyInfo>` |
 | `hasCurrency(String)` | `boolean` |

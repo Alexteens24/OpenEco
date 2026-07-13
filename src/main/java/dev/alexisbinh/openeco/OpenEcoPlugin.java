@@ -140,7 +140,7 @@ public class OpenEcoPlugin extends JavaPlugin {
         BalanceCommand balance = new BalanceCommand(service, messages);
         getCommand("balance").setExecutor(balance);
         getCommand("balance").setTabCompleter(balance);
-        BalTopCommand balTop = new BalTopCommand(service, this, messages);
+        BalTopCommand balTop = new BalTopCommand(service, messages);
         getCommand("baltop").setExecutor(balTop);
         getCommand("baltop").setTabCompleter(balTop);
         PayCommand pay = new PayCommand(service, messages);

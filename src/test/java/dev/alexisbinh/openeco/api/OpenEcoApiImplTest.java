@@ -363,6 +363,7 @@ class OpenEcoApiImplTest {
         when(service.getHistoryRetentionDays()).thenReturn(-1);
 
         EconomyRulesSnapshot rules = api.getRules();
+        assertEquals(rules.balTopCacheTtlMs(), rules.balTopRefreshIntervalMs());
 
         assertEquals("openeco", rules.currency().id());
         assertEquals(5000L, rules.payCooldownMs());
