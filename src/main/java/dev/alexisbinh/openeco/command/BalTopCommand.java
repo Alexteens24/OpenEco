@@ -56,8 +56,8 @@ public class BalTopCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        int pageSize = plugin.getConfig().getInt("baltop.page-size", 10);
-        if (pageSize < 1) pageSize = 10;
+        int pageSize = service.getBalTopPageSize();
+        if (pageSize <= 0) pageSize = 10;
 
         int page = 1;
         String currencyId = service.getCurrencyId();

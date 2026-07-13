@@ -202,7 +202,7 @@ public final class MigrationTestSupport {
         config.set("pay.cooldown-seconds", 0);
         config.set("pay.tax-percent", 0.0);
         config.set("pay.min-amount", 0.01);
-        config.set("baltop.cache-ttl-seconds", 30);
+        config.set("baltop.refresh-interval-seconds", 30);
         config.set("history.retention-days", -1);
         return config;
     }

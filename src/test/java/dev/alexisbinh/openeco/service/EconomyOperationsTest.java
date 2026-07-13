@@ -689,7 +689,7 @@ class EconomyOperationsTest {
         cfg.set("pay.cooldown-seconds", cooldownSec);
         cfg.set("pay.tax-percent", taxPercent);
         cfg.set("pay.min-amount", minAmount);
-        cfg.set("baltop.cache-ttl-seconds", 30);
+        cfg.set("baltop.refresh-interval-seconds", 30);
         cfg.set("history.retention-days", -1);
         return EconomyConfigSnapshot.from(cfg);
     }

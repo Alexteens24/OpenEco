@@ -41,7 +41,7 @@ This is handoff sync, not real-time global replication. Balances are not broadca
 ## Crash semantics
 
 - Recent balance changes can be lost after an unclean stop.
-- Loss window is at most one `autosave-interval` under normal conditions.
+- Loss window is at most one `persistence.autosave-interval-seconds` under normal conditions.
 - Normal shutdown drains queued history writes, then performs a final balance flush.
 
 ## Scaling notes

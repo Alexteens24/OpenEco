@@ -109,6 +109,7 @@ public class AccountService {
                 leaderboardCache::markDirty,
                 this::getOrLoadLiveRecord);
         readConfig(config);
+        this.crossServerEnabled = config.getBoolean("cross-server.enabled", false);
     }
 
     // ── Config ──────────────────────────────────────────────────────────────
@@ -122,7 +123,6 @@ public class AccountService {
         this.config = updated;
         syncConfiguredCurrencies(updated);
         leaderboardCache.configureCurrencies(updated.currencies().all().stream().map(CurrencyDefinition::id).toList());
-        this.crossServerEnabled = config.getBoolean("cross-server.enabled", false);
     }
 
     public boolean isCrossServerEnabled() {
@@ -617,11 +617,7 @@ public class AccountService {
         if (currency == null) {
             return amount.toPlainString();
         }
-        BigDecimal scaled = amount.setScale(currency.fractionalDigits(), RoundingMode.HALF_UP);
-        String unit = scaled.abs().compareTo(BigDecimal.ONE) == 0
-                ? currency.singularName()
-                : currency.pluralName();
-        return scaled.toPlainString() + " " + unit;
+        return currency.format(amount);
     }
 
     public String getCurrencyId() { return config.currencyId(); }
@@ -660,6 +656,8 @@ public class AccountService {
     public BigDecimal getPayTaxRate() { return config.payTaxRate(); }
     public BigDecimal getPayMinAmount() { return config.payMinAmount(); }
     public long getBalTopCacheTtlMs() { return config.balTopCacheTtlMs(); }
+    public int getBalTopPageSize() { return config.balTopPageSize(); }
+    public int getHistoryPageSize() { return config.historyPageSize(); }
     public int getHistoryRetentionDays() { return config.historyRetentionDays(); }
     /** Returns the formatted max balance string, or null if unlimited. */
     public String getFormattedMaxBalance() {

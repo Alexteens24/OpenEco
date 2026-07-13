@@ -31,12 +31,15 @@ class RemoteStorageDataSourceTest {
 
     @Test
     void mysqlUrlEnablesServerSideCursorFetchingOnlyForMysql() {
-        String mysql = RemoteStorageDataSource.jdbcUrl(DatabaseDialect.MYSQL, "db", 3306, "openeco");
-        String mariadb = RemoteStorageDataSource.jdbcUrl(DatabaseDialect.MARIADB, "db", 3306, "openeco");
-        String postgres = RemoteStorageDataSource.jdbcUrl(DatabaseDialect.POSTGRESQL, "db", 5432, "openeco");
+        String mysql = RemoteStorageDataSource.jdbcUrl(DatabaseDialect.MYSQL, "db", 3306, "openeco", "preferred");
+        String mariadb = RemoteStorageDataSource.jdbcUrl(DatabaseDialect.MARIADB, "db", 3306, "openeco", "disabled");
+        String postgres = RemoteStorageDataSource.jdbcUrl(DatabaseDialect.POSTGRESQL, "db", 5432, "openeco", "prefer");
 
         assertTrue(mysql.contains("useCursorFetch=true"));
         assertFalse(mariadb.contains("useCursorFetch"));
         assertFalse(postgres.contains("useCursorFetch"));
+        assertTrue(mysql.contains("sslMode=PREFERRED"));
+        assertTrue(mariadb.contains("sslMode=disable"));
+        assertTrue(postgres.contains("sslmode=prefer"));
     }
 }

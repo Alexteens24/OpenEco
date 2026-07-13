@@ -1,6 +1,6 @@
 # Configuration
 
-The `config.yml` file lives in `plugins/OpenEco/`. OpenEco auto-migrates legacy `currency.*` keys into `currencies.*` on startup and `/eco reload`.
+The `config.yml` file lives in `plugins/OpenEco/`. OpenEco auto-migrates legacy `currency.*` keys into `currencies.*`, `autosave-interval` into `persistence.autosave-interval-seconds`, and `baltop.cache-ttl-seconds` into `baltop.refresh-interval-seconds` on startup and `/eco reload`.
 
 Click any option below to view additional information.
 
@@ -36,6 +36,22 @@ Balance given to new accounts and used by `/eco reset`.
 
 <ConfigProperty name="max-balance" value="-1" type="number">
 Maximum balance a player can hold. `-1` means unlimited.
+</ConfigProperty>
+
+<ConfigProperty name="format" value="&lt;amount&gt; &lt;name&gt;" type="string">
+Display format for this currency. `&lt;amount&gt;` is required; `&lt;name&gt;` selects the singular/plural name and `&lt;currency&gt;` inserts the currency ID.
+</ConfigProperty>
+
+<ConfigProperty name="grouping" value="false" type="boolean">
+Insert a grouping separator every three integer digits.
+</ConfigProperty>
+
+<ConfigProperty name="decimal-separator" value="." type="string">
+Single character displayed between the integer and fractional parts.
+</ConfigProperty>
+
+<ConfigProperty name="grouping-separator" value="," type="string">
+Single character used for digit grouping. It must differ from `decimal-separator`.
 </ConfigProperty>
 
 </ConfigGroup>
@@ -74,6 +90,9 @@ H2 file base name (without extension). H2 appends `.mv.db` automatically. Local-
 <ConfigProperty name="username" value="root" type="string">Connection username.</ConfigProperty>
 <ConfigProperty name="password" value="" type="string">Connection password.</ConfigProperty>
 <ConfigProperty name="pool-size" value="10" type="number">HikariCP pool size for remote backends.</ConfigProperty>
+<ConfigProperty name="connection-timeout-seconds" value="10" type="number">Maximum time to wait for a pooled connection (1–300 seconds).</ConfigProperty>
+<ConfigProperty name="ssl-mode" value="preferred" type="string">`disabled`, `preferred`, `required`, `verify-ca`, or `verify-full`.</ConfigProperty>
+<ConfigProperty name="jdbc-url" value="" type="string">Optional full `jdbc:mysql:` URL. Overrides host, port, database, and SSL mode.</ConfigProperty>
 
 </ConfigGroup>
 
@@ -85,6 +104,9 @@ H2 file base name (without extension). H2 appends `.mv.db` automatically. Local-
 <ConfigProperty name="username" value="root" type="string">Connection username.</ConfigProperty>
 <ConfigProperty name="password" value="" type="string">Connection password.</ConfigProperty>
 <ConfigProperty name="pool-size" value="10" type="number">HikariCP pool size.</ConfigProperty>
+<ConfigProperty name="connection-timeout-seconds" value="10" type="number">Maximum time to wait for a pooled connection (1–300 seconds).</ConfigProperty>
+<ConfigProperty name="ssl-mode" value="disabled" type="string">`disabled`, `trust`, `verify-ca`, or `verify-full`.</ConfigProperty>
+<ConfigProperty name="jdbc-url" value="" type="string">Optional full `jdbc:mariadb:` URL. Overrides host, port, database, and SSL mode.</ConfigProperty>
 
 </ConfigGroup>
 
@@ -96,6 +118,9 @@ H2 file base name (without extension). H2 appends `.mv.db` automatically. Local-
 <ConfigProperty name="username" value="postgres" type="string">Connection username.</ConfigProperty>
 <ConfigProperty name="password" value="" type="string">Connection password.</ConfigProperty>
 <ConfigProperty name="pool-size" value="10" type="number">HikariCP pool size.</ConfigProperty>
+<ConfigProperty name="connection-timeout-seconds" value="10" type="number">Maximum time to wait for a pooled connection (1–300 seconds).</ConfigProperty>
+<ConfigProperty name="ssl-mode" value="prefer" type="string">`disable`, `allow`, `prefer`, `require`, `verify-ca`, or `verify-full`.</ConfigProperty>
+<ConfigProperty name="jdbc-url" value="" type="string">Optional full `jdbc:postgresql:` URL. Overrides host, port, database, and SSL mode.</ConfigProperty>
 
 </ConfigGroup>
 
@@ -117,9 +142,13 @@ Source database file name for storage migration helpers.
 
 </ConfigGroup>
 
-<ConfigProperty name="autosave-interval" value="30" type="number">
-Seconds between automatic background saves. Values ≤ 0 are clamped to 1. Lower values reduce crash loss window but increase write pressure.
+<ConfigGroup name="persistence">
+
+<ConfigProperty name="autosave-interval-seconds" value="30" type="number">
+Seconds between automatic background saves. Must be greater than `0`. Lower values reduce crash loss window but increase write pressure.
 </ConfigProperty>
+
+</ConfigGroup>
 
 <ConfigGroup name="pay">
 
@@ -143,13 +172,17 @@ Minimum amount per `/pay` transaction. `0` means no minimum.
 Number of entries per `/baltop` page.
 </ConfigProperty>
 
-<ConfigProperty name="cache-ttl-seconds" value="30" type="number">
-Seconds to cache the sorted leaderboard. Also affects PlaceholderAPI top placeholders.
+<ConfigProperty name="refresh-interval-seconds" value="30" type="number">
+Seconds between background refreshes of dirty leaderboard snapshots. Also affects PlaceholderAPI top placeholders.
 </ConfigProperty>
 
 </ConfigGroup>
 
 <ConfigGroup name="history">
+
+<ConfigProperty name="page-size" value="10" type="number">
+Number of entries per `/history` page.
+</ConfigProperty>
 
 <ConfigProperty name="retention-days" value="-1" type="number">
 Days to keep transaction history. `≤ 0` keeps all history with no pruning.
@@ -183,13 +216,18 @@ currencies:
       decimal-digits: 2
       starting-balance: 0.00
       max-balance: -1
+      format: "<amount> <name>"
+      grouping: false
+      decimal-separator: "."
+      grouping-separator: ","
 
 storage:
   type: sqlite
   sqlite:
     file: economy.db
 
-autosave-interval: 30
+persistence:
+  autosave-interval-seconds: 30
 
 pay:
   cooldown-seconds: 0
@@ -198,9 +236,10 @@ pay:
 
 baltop:
   page-size: 10
-  cache-ttl-seconds: 30
+  refresh-interval-seconds: 30
 
 history:
+  page-size: 10
   retention-days: -1
 
 cross-server:

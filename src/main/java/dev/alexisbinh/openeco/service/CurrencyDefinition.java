@@ -19,6 +19,7 @@ package dev.alexisbinh.openeco.service;
 import org.jetbrains.annotations.Nullable;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.Objects;
 
 record CurrencyDefinition(
@@ -27,7 +28,11 @@ record CurrencyDefinition(
         String pluralName,
         int fractionalDigits,
         BigDecimal startingBalance,
-        @Nullable BigDecimal maxBalance
+        @Nullable BigDecimal maxBalance,
+        String formatPattern,
+        boolean grouping,
+        char decimalSeparator,
+        char groupingSeparator
 ) {
 
     CurrencyDefinition {
@@ -35,10 +40,49 @@ record CurrencyDefinition(
         singularName = requireText(singularName, "singularName");
         pluralName = requireText(pluralName, "pluralName");
         startingBalance = Objects.requireNonNull(startingBalance, "startingBalance");
+        formatPattern = requireText(formatPattern, "formatPattern");
+        if (!formatPattern.contains("<amount>")) {
+            throw new IllegalArgumentException("formatPattern must contain <amount>");
+        }
+        if (decimalSeparator == groupingSeparator) {
+            throw new IllegalArgumentException("decimalSeparator and groupingSeparator must be different");
+        }
     }
 
     boolean hasMaxBalance() {
         return maxBalance != null;
+    }
+
+    String format(BigDecimal amount) {
+        BigDecimal scaled = amount.setScale(fractionalDigits, RoundingMode.HALF_UP);
+        String unit = scaled.abs().compareTo(BigDecimal.ONE) == 0 ? singularName : pluralName;
+        return formatPattern
+                .replace("<amount>", formatNumber(scaled))
+                .replace("<name>", unit)
+                .replace("<currency>", id);
+    }
+
+    private String formatNumber(BigDecimal amount) {
+        String plain = amount.toPlainString();
+        int decimalIndex = plain.indexOf('.');
+        String integer = decimalIndex >= 0 ? plain.substring(0, decimalIndex) : plain;
+        String fraction = decimalIndex >= 0 ? plain.substring(decimalIndex + 1) : "";
+
+        if (grouping) {
+            boolean negative = integer.startsWith("-");
+            String digits = negative ? integer.substring(1) : integer;
+            StringBuilder grouped = new StringBuilder(integer.length() + integer.length() / 3);
+            if (negative) grouped.append('-');
+            int firstGroup = digits.length() % 3;
+            if (firstGroup == 0) firstGroup = 3;
+            grouped.append(digits, 0, firstGroup);
+            for (int i = firstGroup; i < digits.length(); i += 3) {
+                grouped.append(groupingSeparator).append(digits, i, i + 3);
+            }
+            integer = grouped.toString();
+        }
+
+        return fraction.isEmpty() ? integer : integer + decimalSeparator + fraction;
     }
 
     private static String requireText(String value, String fieldName) {

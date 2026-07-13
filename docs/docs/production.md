@@ -61,21 +61,22 @@ Changing `storage.type` does not move data automatically. Use `/openecomigrate s
 ## Recommended starting values
 
 ```yaml
-autosave-interval: 10-30
+persistence:
+  autosave-interval-seconds: 30 # Usually 10-30
 
 pay:
-  cooldown-seconds: 0-5
-  tax-percent: 0.0-5.0
-  min-amount: 0.01-1.00
+  cooldown-seconds: 0          # Usually 0-5
+  tax-percent: 0.0             # Usually 0.0-5.0
+  min-amount: 0.01             # Usually 0.01-1.00
 
 baltop:
-  cache-ttl-seconds: 15-60
+  refresh-interval-seconds: 30 # Usually 15-60
 
 history:
   retention-days: -1
 ```
 
-- Lower `autosave-interval` reduces worst-case balance loss after an unclean stop.
+- Lower `persistence.autosave-interval-seconds` reduces worst-case balance loss after an unclean stop.
 - `pay.min-amount` helps prevent spammy micro-transfers.
 - `history.retention-days: -1` keeps all history; positive values prune in the background.
 

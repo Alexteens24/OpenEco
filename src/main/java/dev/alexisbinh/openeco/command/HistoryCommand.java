@@ -42,7 +42,6 @@ import java.util.UUID;
 
 public class HistoryCommand implements CommandExecutor, TabCompleter {
 
-    private static final int PAGE_SIZE = 10;
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter
             .ofPattern("yyyy-MM-dd HH:mm")
             .withZone(ZoneId.systemDefault());
@@ -84,13 +83,15 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
         final String targetName = request.targetName();
         final int requestedPage = request.page();
         final String currencyId = request.currencyId();
+        final int configuredPageSize = service.getHistoryPageSize();
+        final int pageSize = configuredPageSize > 0 ? configuredPageSize : 10;
 
         plugin.getServer().getAsyncScheduler().runNow(plugin, task -> {
             try {
                 int totalEntries = service.countTransactions(targetId, currencyId);
-                int totalPages = Math.max(1, (int) Math.ceil((double) totalEntries / PAGE_SIZE));
+                int totalPages = Math.max(1, (int) Math.ceil((double) totalEntries / pageSize));
                 int page = Math.min(requestedPage, totalPages);
-                List<TransactionEntry> entries = service.getTransactions(targetId, currencyId, page, PAGE_SIZE);
+                List<TransactionEntry> entries = service.getTransactions(targetId, currencyId, page, pageSize);
                 Map<UUID, String> nameMap = service.getUUIDNameMap();
 
                 dispatchReply(sender, () -> {

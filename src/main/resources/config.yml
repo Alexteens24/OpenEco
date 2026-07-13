@@ -26,16 +26,12 @@ currencies:
       starting-balance: 0.00
       # Maximum balance a player can hold (-1 = unlimited)
       max-balance: -1
-
-# Legacy single-currency format is still accepted during the migration window,
-# but OpenEco rewrites it to currencies.* on startup/reload and removes the old keys.
-# currency:
-#   id: "openeco"
-#   name-singular: "Dollar"
-#   name-plural: "Dollars"
-#   decimal-digits: 2
-#   starting-balance: 0.00
-#   max-balance: -1
+      # Available placeholders: <amount>, <name>, <currency>. <amount> is required.
+      format: "<amount> <name>"
+      grouping: false
+      # Separators must each be exactly one different character.
+      decimal-separator: "."
+      grouping-separator: ","
 
 storage:
   # Backend to use: sqlite, h2, mysql, mariadb, or postgresql
@@ -54,6 +50,11 @@ storage:
     password: ""
     # Number of concurrent database connections (remote backends only)
     pool-size: 10
+    connection-timeout-seconds: 10
+    # preferred, disabled, required, verify-ca, or verify-full
+    ssl-mode: preferred
+    # Optional full JDBC URL override. When set, host/port/database/ssl-mode are ignored.
+    jdbc-url: ""
   mariadb:
     host: localhost
     port: 3306
@@ -61,6 +62,10 @@ storage:
     username: root
     password: ""
     pool-size: 10
+    connection-timeout-seconds: 10
+    # disabled, trust, verify-ca, or verify-full
+    ssl-mode: disabled
+    jdbc-url: ""
   postgresql:
     host: localhost
     port: 5432
@@ -68,6 +73,10 @@ storage:
     username: postgres
     password: ""
     pool-size: 10
+    connection-timeout-seconds: 10
+    # disable, allow, prefer, require, verify-ca, or verify-full
+    ssl-mode: prefer
+    jdbc-url: ""
   migration:
     # Optional local backup source when the server already runs on a remote backend.
     # Leave source-folder and source-file empty to migrate from the active local database.
@@ -75,9 +84,10 @@ storage:
     source-folder: ""
     source-file: ""
 
-# Seconds between automatic background saves (values <= 0 are clamped to 1)
-# Lower values reduce worst-case data loss after a crash but increase write pressure.
-autosave-interval: 30
+persistence:
+  # Seconds between automatic background saves. Must be greater than 0.
+  # Lower values reduce worst-case data loss after a crash but increase write pressure.
+  autosave-interval-seconds: 30
 
 pay:
   # Cooldown between /pay uses in seconds (0 = disabled)
@@ -89,11 +99,14 @@ pay:
   min-amount: 0.01
 
 baltop:
+  # Must be greater than 0
   page-size: 10
   # Seconds between background refreshes of dirty leaderboard snapshots
-  cache-ttl-seconds: 30
+  refresh-interval-seconds: 30
 
 history:
+  # Must be greater than 0
+  page-size: 10
   # Number of days to keep transaction history (<= 0 = keep forever, no pruning)
   # Transactions older than this will be deleted automatically once per day.
   retention-days: -1
@@ -157,6 +170,7 @@ messages:
   account-frozen: "<red>This account is frozen and cannot perform transactions."
   eco-reset: "<green>Reset <yellow><player><green>'s balance to <yellow><balance><green>."
   eco-reload: "<green>openeco configuration reloaded."
+  eco-reload-failed: "<red>Configuration reload failed. Check the server console for the invalid option."
   eco-rename: "<green>Renamed <yellow><old_name><green>'s account to <yellow><new_name><green>."
   eco-rename-name-in-use: "<red>The name <yellow><new_name><red> is already taken."
   eco-rename-invalid: "<red>Invalid name: <yellow><new_name><red>."

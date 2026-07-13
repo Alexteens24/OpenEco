@@ -62,7 +62,19 @@ public class OpenEcoPlugin extends JavaPlugin {
 
         // ── Storage ──────────────────────────────────────────────────────────
         String dialectStr = getConfig().getString("storage.type", "sqlite");
-        DatabaseDialect dialect = DatabaseDialect.fromConfig(dialectStr);
+        DatabaseDialect dialect;
+        try {
+            dialect = DatabaseDialect.fromConfig(dialectStr);
+        } catch (IllegalArgumentException e) {
+            getLogger().severe("Invalid config: " + e.getMessage());
+            getServer().getPluginManager().disablePlugin(this);
+            return;
+        }
+        if (getConfig().getBoolean("cross-server.enabled", false) && dialect.isLocal()) {
+            getLogger().severe("Invalid config: cross-server.enabled requires mysql, mariadb, or postgresql storage.");
+            getServer().getPluginManager().disablePlugin(this);
+            return;
+        }
 
         File dataDir = getDataFolder();
         if (!dataDir.exists() && !dataDir.mkdirs()) {
@@ -77,10 +89,14 @@ public class OpenEcoPlugin extends JavaPlugin {
                     case H2 -> getConfig().getString("storage.h2.file", "economy");
                     default -> getConfig().getString("storage.sqlite.file", "economy.db");
                 };
+                if (filename == null || filename.isBlank()) {
+                    String path = dialect == DatabaseDialect.H2 ? "storage.h2.file" : "storage.sqlite.file";
+                    throw new IllegalArgumentException(path + " must not be blank");
+                }
                 repository = new JdbcAccountRepository(
                         dialect,
                         dataDir.getAbsolutePath(),
-                        filename,
+                        filename.trim(),
                         resolveDefaultCurrencyId());
             } else {
                 repository = new JdbcAccountRepository(
@@ -88,18 +104,19 @@ public class OpenEcoPlugin extends JavaPlugin {
                         dialect,
                         resolveDefaultCurrencyId());
             }
-        } catch (SQLException e) {
+        } catch (SQLException | IllegalArgumentException e) {
             getLogger().severe("Failed to open database: " + e.getMessage());
             getServer().getPluginManager().disablePlugin(this);
             return;
         }
 
         // ── Service ───────────────────────────────────────────────────────────
-        service = new AccountService(repository, this, getConfig());
         try {
+            validatePluginRuntimeConfig();
+            service = new AccountService(repository, this, getConfig());
             service.loadAll();
-        } catch (SQLException e) {
-            getLogger().severe("Failed to load accounts: " + e.getMessage());
+        } catch (SQLException | IllegalArgumentException e) {
+            getLogger().severe("Invalid configuration or failed account load: " + e.getMessage());
             getServer().getPluginManager().disablePlugin(this);
             return;
         }
@@ -173,11 +190,17 @@ public class OpenEcoPlugin extends JavaPlugin {
         getLogger().info("openeco enabled. Backend: " + dialect.name().toLowerCase());
     }
 
-    public void reloadSettings() {
+    public boolean reloadSettings() {
         migrateConfig();
         reloadConfig();
-        if (service != null) {
-            service.reloadConfig(getConfig());
+        try {
+            validatePluginRuntimeConfig();
+            if (service != null) {
+                service.reloadConfig(getConfig());
+            }
+        } catch (IllegalArgumentException e) {
+            getLogger().warning("Config reload rejected: " + e.getMessage());
+            return false;
         }
         if (messages != null) {
             messages.reload(getConfig());
@@ -185,6 +208,7 @@ public class OpenEcoPlugin extends JavaPlugin {
         restartAutoSaveTask();
         restartLeaderboardRefreshTask();
         restartPruneTask();
+        return true;
     }
 
     private com.zaxxer.hikari.HikariDataSource buildRemoteDataSource(DatabaseDialect dialect) {
@@ -230,17 +254,21 @@ public class OpenEcoPlugin extends JavaPlugin {
             autoSaveTask.cancel();
         }
 
-        long configuredIntervalSec = getConfig().getLong("autosave-interval", 300);
-        long intervalSec = Math.max(1L, configuredIntervalSec);
-        if (configuredIntervalSec != intervalSec) {
-            getLogger().warning("autosave-interval must be greater than 0. Clamping to 1 second.");
-        }
+        long intervalSec = getConfig().getLong("persistence.autosave-interval-seconds", 30);
         autoSaveTask = getServer().getAsyncScheduler().runAtFixedRate(
                 this,
                 task -> service.flushDirty(),
                 intervalSec,
                 intervalSec,
                 TimeUnit.SECONDS);
+    }
+
+    private void validatePluginRuntimeConfig() {
+        long autosaveInterval = getConfig().getLong("persistence.autosave-interval-seconds", 30);
+        if (autosaveInterval <= 0) {
+            throw new IllegalArgumentException(
+                    "persistence.autosave-interval-seconds must be greater than 0");
+        }
     }
 
     private void restartPruneTask() {

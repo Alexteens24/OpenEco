@@ -60,7 +60,7 @@ class ConfigMigratorTest {
         String yaml = migrated.saveToString();
         int currenciesIndex = yaml.indexOf("currencies:");
         int storageIndex = yaml.indexOf("storage:");
-        int autosaveIndex = yaml.indexOf("autosave-interval:");
+        int persistenceIndex = yaml.indexOf("persistence:");
         int payIndex = yaml.indexOf("pay:");
         int baltopIndex = yaml.indexOf("baltop:");
         int historyIndex = yaml.indexOf("history:");
@@ -69,17 +69,17 @@ class ConfigMigratorTest {
         assertFalse(yaml.contains("\ncurrency:"), yaml);
         assertTrue(currenciesIndex >= 0, yaml);
         assertTrue(storageIndex >= 0, yaml);
-        assertTrue(autosaveIndex >= 0, yaml);
+        assertTrue(persistenceIndex >= 0, yaml);
         assertTrue(payIndex >= 0, yaml);
         assertTrue(baltopIndex >= 0, yaml);
         assertTrue(historyIndex >= 0, yaml);
         assertTrue(crossServerIndex >= 0, yaml);
         assertTrue(currenciesIndex < storageIndex,
             () -> "currencies=" + currenciesIndex + " storage=" + storageIndex + "\n" + yaml);
-        assertTrue(storageIndex < autosaveIndex,
-            () -> "storage=" + storageIndex + " autosave=" + autosaveIndex + "\n" + yaml);
-        assertTrue(autosaveIndex < payIndex,
-            () -> "autosave=" + autosaveIndex + " pay=" + payIndex + "\n" + yaml);
+        assertTrue(storageIndex < persistenceIndex,
+            () -> "storage=" + storageIndex + " persistence=" + persistenceIndex + "\n" + yaml);
+        assertTrue(persistenceIndex < payIndex,
+            () -> "persistence=" + persistenceIndex + " pay=" + payIndex + "\n" + yaml);
         assertTrue(payIndex < baltopIndex,
             () -> "pay=" + payIndex + " baltop=" + baltopIndex + "\n" + yaml);
         assertTrue(baltopIndex < historyIndex,
@@ -90,6 +90,27 @@ class ConfigMigratorTest {
         assertTrue(migrated.getBoolean("custom.feature.enabled"));
         assertTrue(yaml.contains("custom:"), yaml);
         assertTrue(yaml.contains("  coins:"));
+    }
+
+    @Test
+    void migratesRenamedIntervalsWithoutOverwritingNewValues() {
+        YamlConfiguration current = new YamlConfiguration();
+        current.set("autosave-interval", 45);
+        current.set("baltop.cache-ttl-seconds", 60);
+
+        YamlConfiguration migrated = ConfigMigrator.rewrite(current, loadBundledDefaultConfig());
+
+        assertEquals(45, migrated.getLong("persistence.autosave-interval-seconds"));
+        assertEquals(60, migrated.getLong("baltop.refresh-interval-seconds"));
+        assertFalse(migrated.contains("autosave-interval"));
+        assertFalse(migrated.contains("baltop.cache-ttl-seconds"));
+
+        current.set("persistence.autosave-interval-seconds", 90);
+        current.set("baltop.refresh-interval-seconds", 120);
+        migrated = ConfigMigrator.rewrite(current, loadBundledDefaultConfig());
+
+        assertEquals(90, migrated.getLong("persistence.autosave-interval-seconds"));
+        assertEquals(120, migrated.getLong("baltop.refresh-interval-seconds"));
     }
 
     @Test

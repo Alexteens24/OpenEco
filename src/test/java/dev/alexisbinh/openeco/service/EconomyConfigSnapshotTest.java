@@ -128,4 +128,49 @@ class EconomyConfigSnapshotTest {
 
         assertTrue(error.getMessage().contains("Duplicate currency id"));
     }
+
+    @Test
+    void currencyFormattingSupportsPatternsGroupingAndCustomSeparators() {
+        YamlConfiguration config = new YamlConfiguration();
+        config.set("currencies.default", "euro");
+        config.set("currencies.definitions.euro.name-singular", "Euro");
+        config.set("currencies.definitions.euro.name-plural", "Euros");
+        config.set("currencies.definitions.euro.decimal-digits", 2);
+        config.set("currencies.definitions.euro.format", "<amount> <name> [<currency>]");
+        config.set("currencies.definitions.euro.grouping", true);
+        config.set("currencies.definitions.euro.decimal-separator", ",");
+        config.set("currencies.definitions.euro.grouping-separator", ".");
+
+        EconomyConfigSnapshot snapshot = EconomyConfigSnapshot.from(config);
+
+        assertEquals("1.234.567,89 Euros [euro]",
+                snapshot.defaultCurrency().format(new BigDecimal("1234567.89")));
+        assertEquals("1,00 Euro [euro]",
+                snapshot.defaultCurrency().format(BigDecimal.ONE));
+    }
+
+    @Test
+    void invalidCurrencyFormatIsRejectedWithItsConfigPath() {
+        YamlConfiguration config = new YamlConfiguration();
+        config.set("currencies.default", "coins");
+        config.set("currencies.definitions.coins.name-singular", "Coin");
+        config.set("currencies.definitions.coins.name-plural", "Coins");
+        config.set("currencies.definitions.coins.format", "Coins only");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> EconomyConfigSnapshot.from(config));
+
+        assertTrue(error.getMessage().contains("currencies.definitions.coins.format"));
+    }
+
+    @Test
+    void invalidPageSizeIsRejectedWithItsConfigPath() {
+        YamlConfiguration config = new YamlConfiguration();
+        config.set("baltop.page-size", 0);
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> EconomyConfigSnapshot.from(config));
+
+        assertTrue(error.getMessage().contains("baltop.page-size"));
+    }
 }
