@@ -361,6 +361,10 @@ public class AccountService {
         return accountRegistry.getUUIDNameMap();
     }
 
+    public int getAccountCount() {
+        return accountRegistry.size();
+    }
+
     public List<String> getAccountNames() {
         return new ArrayList<>(getUUIDNameMap().values());
     }
@@ -630,6 +634,7 @@ public class AccountService {
         return currency != null ? currency.id() : null;
     }
     public List<String> getCurrencyIds() { return config.currencies().all().stream().map(CurrencyDefinition::id).toList(); }
+    public int getCurrencyCount() { return config.currencies().size(); }
     public String getCurrencySingular(String currencyId) {
         CurrencyDefinition currency = resolveCurrency(currencyId);
         return currency != null ? currency.singularName() : config.currencySingular();

@@ -48,6 +48,10 @@ final class AccountRegistry {
         return accounts.containsKey(id);
     }
 
+    int size() {
+        return accounts.size();
+    }
+
     AccountRecord getLiveRecord(UUID id) {
         return accounts.get(id);
     }

@@ -38,6 +38,7 @@ class AccountRegistryTest {
                 100L);
 
         assertTrue(registry.create(live));
+        assertEquals(1, registry.size());
         assertTrue(registry.hasAccount(live.getId()));
         assertEquals("Alice", registry.findSnapshotByName("alice").orElseThrow().getLastKnownName());
 
@@ -46,10 +47,12 @@ class AccountRegistryTest {
         assertEquals("Bob", registry.findSnapshotByName("bob").orElseThrow().getLastKnownName());
 
         assertTrue(registry.remove(live.getId(), live));
+        assertEquals(0, registry.size());
         assertFalse(registry.hasAccount(live.getId()));
         assertTrue(registry.findSnapshotByName("bob").isEmpty());
 
         registry.restore(live);
+        assertEquals(1, registry.size());
         assertTrue(registry.hasAccount(live.getId()));
         assertEquals("Bob", registry.findSnapshotByName("bob").orElseThrow().getLastKnownName());
     }

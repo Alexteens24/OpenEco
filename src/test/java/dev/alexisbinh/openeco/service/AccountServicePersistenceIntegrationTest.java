@@ -95,6 +95,8 @@ class AccountServicePersistenceIntegrationTest {
             UUID accountId = UUID.randomUUID();
 
             assertTrue(writer.createAccount(accountId, "Alice"));
+            assertEquals(1, writer.getAccountCount());
+            assertEquals(2, writer.getCurrencyCount());
             assertEquals(0, BigDecimal.ZERO.compareTo(writer.getBalance(accountId)));
             assertEquals(0, new BigDecimal("5").compareTo(writer.getBalance(accountId, "gems")));
             writer.shutdown();
@@ -102,6 +104,8 @@ class AccountServicePersistenceIntegrationTest {
             AccountService reader = newServiceWithConfig(repository, multiCurrencyConfig("openeco"));
             reader.loadAll();
 
+            assertEquals(1, reader.getAccountCount());
+            assertEquals(2, reader.getCurrencyCount());
             assertEquals(0, BigDecimal.ZERO.compareTo(reader.getBalance(accountId)));
             assertEquals(0, new BigDecimal("5").compareTo(reader.getBalance(accountId, "gems")));
             reader.shutdown();

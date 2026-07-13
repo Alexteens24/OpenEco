@@ -109,6 +109,26 @@ After a restore, verify `/balance`, `/history`, `/baltop`, and any Vault or Plac
 - An unclean stop can lose up to one autosave interval of recent balance changes.
 - Network mode requests an immediate flush on handoff, but this is best-effort — not global real-time replication.
 
+## Telemetry
+
+OpenEco starts bStats and FastStats only after the economy has enabled successfully. Telemetry startup or shutdown failures are isolated and do not disable economy features.
+
+The FastStats integration submits built-in Bukkit platform metrics plus these OpenEco metrics:
+
+| Source ID | Type | Value |
+|---|---|---|
+| `storage_backend` | String | Active database type |
+| `account_count` | Number | Number of loaded economy accounts |
+| `currency_count` | Number | Number of configured currencies |
+| `cross_server_enabled` | Boolean | Whether proxy-assisted handoff is enabled |
+| `integrations` | String array | Detected Vault and PlaceholderAPI integrations |
+
+These source IDs and types must match the data sources configured in the FastStats project. OpenEco does not submit account balances, account names, UUIDs, transaction history, or error tracking.
+
+- Disable FastStats for the whole server with the JVM option `-Dfaststats.enabled=false`.
+- Configure the existing bStats integration in `plugins/bStats/config.yml`.
+- See the [FastStats system properties](https://docs.faststats.dev/java/system-properties) for debug and initial-delay controls.
+
 ## Network mode checklist
 
 1. Shared backend must be MySQL, MariaDB, or PostgreSQL.

@@ -37,7 +37,13 @@ plugins {
 }
 
 group = "dev.alexisbinh"
-version = "1.6.0"
+version = "1.6.1"
+
+allprojects {
+    repositories {
+        maven("https://repo.faststats.dev/releases")
+    }
+}
 
 java {
     toolchain {
@@ -60,6 +66,7 @@ dependencies {
     compileOnly("org.xerial:sqlite-jdbc:3.53.2.0")
     compileOnly("com.h2database:h2:2.4.240")
     implementation("org.bstats:bstats-bukkit:3.2.1")
+    implementation("dev.faststats.metrics:bukkit:0.27.2")
     compileOnly("com.zaxxer:HikariCP:7.1.0")
     compileOnly("com.mysql:mysql-connector-j:9.7.0") {
         exclude(group = "com.google.protobuf") // only needed for X Protocol (mysqlx://), not standard JDBC
@@ -102,6 +109,7 @@ tasks.jar {
 tasks.named<ShadowJar>("shadowJar") {
     archiveClassifier.set("")
     relocate("org.bstats", "dev.alexisbinh.openeco.libs.bstats")
+    relocate("dev.faststats", "dev.alexisbinh.openeco.libs.faststats")
     from("LICENSE") {
         into("")
     }

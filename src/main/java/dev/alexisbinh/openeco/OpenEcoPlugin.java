@@ -29,6 +29,8 @@ import dev.alexisbinh.openeco.storage.AccountRepository;
 import dev.alexisbinh.openeco.storage.DatabaseDialect;
 import dev.alexisbinh.openeco.storage.JdbcAccountRepository;
 import dev.alexisbinh.openeco.storage.RemoteStorageDataSource;
+import dev.faststats.bukkit.BukkitContext;
+import dev.faststats.data.Metric;
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import net.milkbowl.vault2.economy.Economy;
 import org.bstats.bukkit.Metrics;
@@ -42,9 +44,12 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.sql.SQLException;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 public class OpenEcoPlugin extends JavaPlugin {
+
+    private static final String FASTSTATS_TOKEN = "83b1ce7d24e774f11a19baa64a90e367";
 
     private AccountRepository repository;
     private AccountService service;
@@ -53,6 +58,7 @@ public class OpenEcoPlugin extends JavaPlugin {
     private ScheduledTask autoSaveTask;
     private ScheduledTask historyPruneTask;
     private ScheduledTask leaderboardRefreshTask;
+    private BukkitContext fastStatsContext;
 
     @Override
     public void onEnable() {
@@ -187,6 +193,9 @@ public class OpenEcoPlugin extends JavaPlugin {
             getLogger().warning("bStats metrics disabled: " + ex.getMessage());
         }
 
+        // ── FastStats (optional) ─────────────────────────────────────────────
+        startFastStats(dialect);
+
         getLogger().info("openeco enabled. Backend: " + dialect.name().toLowerCase());
     }
 
@@ -301,6 +310,41 @@ public class OpenEcoPlugin extends JavaPlugin {
                 TimeUnit.SECONDS);
     }
 
+    private void startFastStats(DatabaseDialect dialect) {
+        String storageBackend = dialect.name().toLowerCase(Locale.ROOT);
+        String[] integrations = getServer().getPluginManager().getPlugin("PlaceholderAPI") == null
+                ? new String[]{"vault"}
+                : new String[]{"vault", "placeholderapi"};
+        try {
+            fastStatsContext = new BukkitContext.Factory(this, FASTSTATS_TOKEN)
+                    .metrics(factory -> factory
+                            .addMetric(Metric.string("storage_backend", () -> storageBackend))
+                            .addMetric(Metric.number("account_count", service::getAccountCount))
+                            .addMetric(Metric.number("currency_count", service::getCurrencyCount))
+                            .addMetric(Metric.bool("cross_server_enabled", service::isCrossServerEnabled))
+                            .addMetric(Metric.stringArray("integrations", integrations::clone))
+                            .create())
+                    .create();
+            fastStatsContext.ready();
+        } catch (RuntimeException | LinkageError ex) {
+            shutdownFastStats();
+            getLogger().warning("FastStats metrics disabled: " + ex.getMessage());
+        }
+    }
+
+    private void shutdownFastStats() {
+        BukkitContext context = fastStatsContext;
+        fastStatsContext = null;
+        if (context == null) {
+            return;
+        }
+        try {
+            context.shutdown();
+        } catch (RuntimeException | LinkageError ex) {
+            getLogger().warning("Failed to shut down FastStats metrics: " + ex.getMessage());
+        }
+    }
+
     /** Returns the public addon API. Prefer ServicesManager when integrating from other plugins. */
     public OpenEcoApi getApi() { return api; }
 
@@ -325,6 +369,7 @@ public class OpenEcoPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        shutdownFastStats();
         if (autoSaveTask != null) {
             autoSaveTask.cancel();
         }
