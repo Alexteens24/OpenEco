@@ -5,7 +5,7 @@ The `config.yml` file lives in `plugins/OpenEco/`. OpenEco auto-migrates legacy 
 Click any option below to view additional information.
 
 ::: tip Apply most changes without a restart
-After editing `config.yml`, run `/eco reload` to apply messages and most runtime rules. Storage backends and `cross-server.enabled` still require a restart.
+After editing `config.yml`, run `/eco reload` to apply messages and most runtime rules. Storage backends, `cross-server.enabled`, `account-loading.mode`, and `account-loading.lazy.cache.enabled` still require a restart.
 :::
 
 <ConfigGroup name="currencies">
@@ -150,6 +150,28 @@ Seconds between automatic background saves. Must be greater than `0`. Lower valu
 
 </ConfigGroup>
 
+<ConfigGroup name="account-loading">
+
+<ConfigProperty name="mode" value="eager" type="string">
+`eager` loads every account at startup. `lazy` reads accounts from the database on demand. **Restart required.**
+</ConfigProperty>
+
+<ConfigProperty name="lazy.cache.enabled" value="true" type="boolean">
+Controls record retention inside `lazy` mode. When `true`, clean loaded accounts are reused according to the size and expiry settings. When `false`, clean offline records are evicted on the short maintenance cycle; online, dirty, login-pinned, and actively leased records remain for correctness. Ignored in `eager` mode. **Restart required.**
+</ConfigProperty>
+
+<ConfigProperty name="lazy.cache.maximum-size" value="50000" type="number">
+Lazy mode soft limit for clean inactive accounts retained in RAM. Online or dirty accounts are never evicted, so the cache may temporarily exceed this value.
+Ignored unless lazy mode and lazy cache retention are both enabled.
+</ConfigProperty>
+
+<ConfigProperty name="lazy.cache.expire-after-access-minutes" value="30" type="number">
+Lazy mode idle time before a clean offline account becomes eligible for eviction.
+Ignored unless lazy mode and lazy cache retention are both enabled.
+</ConfigProperty>
+
+</ConfigGroup>
+
 <ConfigGroup name="pay">
 
 <ConfigProperty name="cooldown-seconds" value="0" type="number">
@@ -228,6 +250,14 @@ storage:
 
 persistence:
   autosave-interval-seconds: 30
+
+account-loading:
+  mode: eager
+  lazy:
+    cache:
+      enabled: true
+      maximum-size: 50000
+      expire-after-access-minutes: 30
 
 pay:
   cooldown-seconds: 0

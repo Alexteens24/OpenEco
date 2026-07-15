@@ -22,6 +22,14 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+/**
+ * Synchronous OpenEco integration API.
+ *
+ * <p>When the server enables lazy account caching, an operation that references a cold
+ * account may wait for JDBC I/O. Integrations should avoid cold calls from latency-sensitive
+ * server threads; callers that need non-blocking behavior should schedule those calls on
+ * their own executor.</p>
+ */
 public interface OpenEcoApi {
 
     boolean hasAccount(UUID accountId);

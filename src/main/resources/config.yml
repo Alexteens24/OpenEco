@@ -89,6 +89,19 @@ persistence:
   # Lower values reduce worst-case data loss after a crash but increase write pressure.
   autosave-interval-seconds: 30
 
+# Account loading policy. Changing mode or lazy cache retention requires a restart.
+account-loading:
+  # eager loads every account at startup; lazy loads accounts on demand.
+  mode: eager
+  lazy:
+    cache:
+      # Retain clean offline accounts for reuse. Online and in-flight accounts are always retained.
+      enabled: true
+      # Retain at most this many inactive clean accounts when possible.
+      maximum-size: 50000
+      # Evict inactive clean accounts after this many idle minutes.
+      expire-after-access-minutes: 30
+
 pay:
   # Cooldown between /pay uses in seconds (0 = disabled)
   cooldown-seconds: 0
@@ -136,6 +149,8 @@ messages:
   console-player-only: "<red>Console must specify a player name."
   account-not-found: "<red>No account found for: <yellow><player>"
   account-sync-failed: "<red>Your economy account could not be synchronized. Contact an administrator if economy features do not work."
+  login-storage-error: "<red>Your economy account could not be loaded. Please try joining again later."
+  storage-error: "<red>Economy storage is temporarily unavailable. Please try again."
   account-name-conflict: "<red>Your economy account could not use the name <yellow><player><red> because it is already linked to another account. Contact an administrator."
   self-pay: "<red>You cannot pay yourself."
   insufficient-funds: "<red>Insufficient funds."

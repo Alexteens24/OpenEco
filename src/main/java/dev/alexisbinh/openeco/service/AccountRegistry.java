@@ -26,18 +26,26 @@ import java.util.Locale;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
 final class AccountRegistry {
 
     private final ConcurrentHashMap<UUID, AccountRecord> accounts = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, UUID> nameIndex = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, Long> lastAccessNanos = new ConcurrentHashMap<>();
+    private final Set<UUID> onlineAccounts = ConcurrentHashMap.newKeySet();
+    private final ConcurrentHashMap<UUID, AtomicInteger> activeLeases = new ConcurrentHashMap<>();
 
     void clear() {
         accounts.clear();
         nameIndex.clear();
+        lastAccessNanos.clear();
+        onlineAccounts.clear();
+        activeLeases.clear();
     }
 
     boolean addLoaded(AccountRecord record) {
@@ -53,7 +61,9 @@ final class AccountRegistry {
     }
 
     AccountRecord getLiveRecord(UUID id) {
-        return accounts.get(id);
+        AccountRecord record = accounts.get(id);
+        if (record != null) touch(id);
+        return record;
     }
 
     Optional<AccountRecord> getSnapshot(UUID id) {
@@ -61,6 +71,7 @@ final class AccountRegistry {
         if (record == null) {
             return Optional.empty();
         }
+        touch(id);
         synchronized (record) {
             return Optional.of(record.snapshot());
         }
@@ -92,6 +103,7 @@ final class AccountRegistry {
             accounts.remove(record.getId(), record);
             return false;
         }
+        touch(record.getId());
         return true;
     }
 
@@ -119,6 +131,8 @@ final class AccountRegistry {
             return false;
         }
         nameIndex.remove(normalizeName(record.getLastKnownName()), id);
+        lastAccessNanos.remove(id);
+        onlineAccounts.remove(id);
         return true;
     }
 
@@ -135,6 +149,7 @@ final class AccountRegistry {
         }
 
         accounts.put(record.getId(), record);
+        touch(record.getId());
         nameIndex.put(newKey, record.getId());
 
         String oldKey = normalizeName(previous.getLastKnownName());
@@ -168,10 +183,38 @@ final class AccountRegistry {
     void restore(AccountRecord record) {
         accounts.put(record.getId(), record);
         nameIndex.put(normalizeName(record.getLastKnownName()), record.getId());
+        touch(record.getId());
     }
 
     boolean isLive(UUID id, AccountRecord record) {
         return accounts.get(id) == record;
+    }
+
+    AccountLease tryAcquireLease(UUID id, AccountRecord record) {
+        synchronized (record) {
+            if (!isLive(id, record)) return null;
+            activeLeases.compute(id, (ignored, count) -> {
+                if (count == null) return new AtomicInteger(1);
+                count.incrementAndGet();
+                return count;
+            });
+            touch(id);
+            return new AccountLease(this, id, record);
+        }
+    }
+
+    AccountLease acquireLease(UUID id) {
+        AccountRecord record = getLiveRecord(id);
+        return record == null ? null : tryAcquireLease(id, record);
+    }
+
+    void releaseLease(UUID id) {
+        activeLeases.computeIfPresent(id, (ignored, count) -> count.decrementAndGet() <= 0 ? null : count);
+    }
+
+    boolean hasActiveLease(UUID id) {
+        AtomicInteger count = activeLeases.get(id);
+        return count != null && count.get() > 0;
     }
 
     Map<UUID, String> getUUIDNameMap() {
@@ -192,6 +235,46 @@ final class AccountRegistry {
 
     Collection<AccountRecord> liveRecords() {
         return accounts.values();
+    }
+
+    void markOnline(UUID id) {
+        if (!accounts.containsKey(id)) return;
+        onlineAccounts.add(id);
+        touch(id);
+    }
+
+    void markOffline(UUID id) {
+        onlineAccounts.remove(id);
+        if (accounts.containsKey(id)) touch(id);
+    }
+
+    List<String> getCachedAccountNames() {
+        return getAccountNames();
+    }
+
+    int evict(long expireAfterNanos, int maximumSize) {
+        long now = System.nanoTime();
+        List<Map.Entry<UUID, Long>> candidates = new ArrayList<>(lastAccessNanos.entrySet());
+        candidates.sort(Map.Entry.comparingByValue());
+        int removed = 0;
+        for (Map.Entry<UUID, Long> candidate : candidates) {
+            boolean expired = now - candidate.getValue() >= expireAfterNanos;
+            boolean oversized = accounts.size() > maximumSize;
+            if (!expired && !oversized) continue;
+            UUID id = candidate.getKey();
+            if (onlineAccounts.contains(id) || hasActiveLease(id)) continue;
+            AccountRecord record = accounts.get(id);
+            if (record == null) continue;
+            synchronized (record) {
+                if (record.isDirty() || onlineAccounts.contains(id) || hasActiveLease(id)) continue;
+                if (remove(id, record)) removed++;
+            }
+        }
+        return removed;
+    }
+
+    private void touch(UUID id) {
+        lastAccessNanos.put(id, System.nanoTime());
     }
 
     void syncCurrencies(String currencyId, Function<String, String> canonicalizer) {

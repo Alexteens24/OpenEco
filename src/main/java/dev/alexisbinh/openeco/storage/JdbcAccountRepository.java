@@ -21,6 +21,8 @@ import com.zaxxer.hikari.HikariDataSource;
 import dev.alexisbinh.openeco.model.AccountRecord;
 import dev.alexisbinh.openeco.model.TransactionEntry;
 import dev.alexisbinh.openeco.model.TransactionType;
+import dev.alexisbinh.openeco.service.LeaderboardEntry;
+import dev.alexisbinh.openeco.service.LeaderboardView;
 import org.jetbrains.annotations.Nullable;
 
 import java.math.BigDecimal;
@@ -73,7 +75,12 @@ public class JdbcAccountRepository implements AccountRepository {
         this.dataSource = dataSource;
         this.dialect = dialect;
         this.defaultCurrencyId = normalizeCurrencyId(defaultCurrencyId);
-        createSchema();
+        try {
+            createSchema();
+        } catch (SQLException e) {
+            dataSource.close();
+            throw e;
+        }
     }
 
     private static HikariDataSource buildLocalDataSource(DatabaseDialect dialect,
@@ -105,6 +112,7 @@ public class JdbcAccountRepository implements AccountRepository {
                     CREATE TABLE IF NOT EXISTS accounts (
                         id         VARCHAR(36)   NOT NULL PRIMARY KEY,
                         name       VARCHAR(16)   NOT NULL,
+                        normalized_name VARCHAR(16),
                         balance    DECIMAL(30,8) NOT NULL DEFAULT 0,
                         created_at BIGINT        NOT NULL,
                         updated_at BIGINT        NOT NULL
@@ -137,6 +145,12 @@ public class JdbcAccountRepository implements AccountRepository {
                 ensureColumn(conn, stmt, "transactions", "currency_id",
                         "VARCHAR(32) NOT NULL DEFAULT '" + sqlLiteral(defaultCurrencyId) + "'");
                 ensureColumn(conn, stmt, "accounts", "frozen", "BOOLEAN NOT NULL DEFAULT FALSE");
+                ensureColumn(conn, stmt, "accounts", "normalized_name", "VARCHAR(16)");
+                stmt.executeUpdate("UPDATE accounts SET normalized_name=LOWER(TRIM(name)) "
+                        + "WHERE normalized_name IS NULL OR normalized_name=''");
+                failOnDuplicateNormalizedNames(conn);
+                createIndexIfMissing(conn, stmt, "accounts", "ux_accounts_normalized_name",
+                        uniqueNormalizedNameIndexSql());
                 createIndexIfMissing(conn, stmt, "transactions", "idx_tx_target_ts",
                         dialect.createTransactionIndexSql());
                 backfillDefaultBalances(conn);
@@ -147,6 +161,26 @@ public class JdbcAccountRepository implements AccountRepository {
                 throw e;
             } finally {
                 conn.setAutoCommit(true);
+            }
+        }
+    }
+
+    private String uniqueNormalizedNameIndexSql() {
+        return switch (dialect) {
+            case MYSQL -> "CREATE UNIQUE INDEX ux_accounts_normalized_name ON accounts(normalized_name)";
+            default -> "CREATE UNIQUE INDEX IF NOT EXISTS ux_accounts_normalized_name ON accounts(normalized_name)";
+        };
+    }
+
+    private void failOnDuplicateNormalizedNames(Connection conn) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT normalized_name,COUNT(*) AS duplicate_count FROM accounts "
+                        + "GROUP BY normalized_name HAVING COUNT(*) > 1");
+             ResultSet rs = ps.executeQuery()) {
+            if (rs.next()) {
+                throw new SQLException("Duplicate stored account name '" + rs.getString("normalized_name")
+                        + "' prevents case-insensitive name indexing (" + rs.getLong("duplicate_count")
+                        + " accounts). Resolve the duplicate before starting OpenEco.");
             }
         }
     }
@@ -341,72 +375,231 @@ public class JdbcAccountRepository implements AccountRepository {
 
     @Override
     public Optional<AccountRecord> loadAccount(UUID id) throws SQLException {
-        try (Connection conn = dataSource.getConnection()) {
-            PersistedAccountRow account = null;
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "SELECT name,created_at,updated_at,frozen FROM accounts WHERE id=?")) {
-                ps.setString(1, id.toString());
-                try (ResultSet rs = ps.executeQuery()) {
-                    if (rs.next()) {
-                        account = new PersistedAccountRow(
-                                rs.getString("name"),
-                                rs.getLong("created_at"),
-                                rs.getLong("updated_at"),
-                                rs.getBoolean("frozen"));
-                    }
-                }
-            }
-            if (account == null) {
-                return Optional.empty();
-            }
-            return Optional.of(buildRecord(conn, id, account));
-        }
+        return loadPointAccount("a.id=?", id.toString());
     }
 
-    private AccountRecord buildRecord(Connection conn, UUID id, PersistedAccountRow account) throws SQLException {
-        Map<String, BigDecimal> balances = loadBalances(conn, id);
-        if (balances.isEmpty()) {
-            balances.put(defaultCurrencyId, BigDecimal.ZERO);
-        }
-
-        AccountRecord record = new AccountRecord(
-                id,
-                account.name(),
-                defaultCurrencyId,
-                balances,
-                account.createdAt(),
-                account.updatedAt());
-        record.setFrozen(account.frozen());
-        record.clearDirty();
-        return record;
+    @Override
+    public Optional<AccountRecord> loadAccountByName(String normalizedName) throws SQLException {
+        return loadPointAccount("a.normalized_name=?", normalizeAccountName(normalizedName));
     }
 
-    private Map<String, BigDecimal> loadBalances(Connection conn, UUID accountId) throws SQLException {
-        Map<String, PersistedBalanceRow> balanceRows = new LinkedHashMap<>();
-        try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT currency_id,balance,updated_at FROM account_balances WHERE account_id=?")) {
-            ps.setString(1, accountId.toString());
+    private Optional<AccountRecord> loadPointAccount(String predicate, String value) throws SQLException {
+        String sql = "SELECT a.id AS account_id,a.name AS account_name,"
+                + "a.created_at AS account_created_at,a.updated_at AS account_updated_at,"
+                + "a.frozen AS account_frozen,b.currency_id AS balance_currency_id,"
+                + "b.balance AS balance_value,b.updated_at AS balance_updated_at "
+                + "FROM accounts a LEFT JOIN account_balances b ON b.account_id=a.id "
+                + "WHERE " + predicate + " ORDER BY b.currency_id";
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, value);
             try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    String currencyId = normalizePersistedCurrencyId(rs.getString("currency_id"));
-                    PersistedBalanceRow candidate = new PersistedBalanceRow(
-                            currencyId,
-                            rs.getBigDecimal("balance"),
-                            rs.getLong("updated_at"));
-                    String lookupKey = normalizeCurrencyLookupKey(currencyId);
-                    PersistedBalanceRow existing = balanceRows.get(lookupKey);
-                    if (existing == null || candidate.updatedAt() >= existing.updatedAt()) {
-                        balanceRows.put(lookupKey, candidate);
+                if (!rs.next()) return Optional.empty();
+                UUID id = UUID.fromString(rs.getString("account_id"));
+                PersistedAccountRow account = new PersistedAccountRow(
+                        rs.getString("account_name"),
+                        rs.getLong("account_created_at"),
+                        rs.getLong("account_updated_at"),
+                        rs.getBoolean("account_frozen"));
+                Map<String, PersistedBalanceRow> balances = new LinkedHashMap<>();
+                do {
+                    addPersistedBalance(rs, balances);
+                } while (rs.next());
+                return Optional.of(buildScannedRecord(id, account, balances));
+            }
+        }
+    }
+
+    private void addPersistedBalance(
+            ResultSet rs, Map<String, PersistedBalanceRow> balances) throws SQLException {
+        String rawCurrencyId = rs.getString("balance_currency_id");
+        if (rawCurrencyId == null) return;
+        String currencyId = normalizePersistedCurrencyId(rawCurrencyId);
+        PersistedBalanceRow candidate = new PersistedBalanceRow(
+                currencyId,
+                rs.getBigDecimal("balance_value"),
+                rs.getLong("balance_updated_at"));
+        String lookupKey = normalizeCurrencyLookupKey(currencyId);
+        PersistedBalanceRow existing = balances.get(lookupKey);
+        if (existing == null || candidate.updatedAt() >= existing.updatedAt()) {
+            balances.put(lookupKey, candidate);
+        }
+    }
+
+    @Override
+    public Map<UUID, String> loadNameMap() throws SQLException {
+        Map<UUID, String> names = new LinkedHashMap<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement("SELECT id,name FROM accounts ORDER BY id");
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) names.put(UUID.fromString(rs.getString("id")), rs.getString("name"));
+        }
+        return Map.copyOf(names);
+    }
+
+    @Override
+    public Map<UUID, String> loadNames(Collection<UUID> accountIds) throws SQLException {
+        if (accountIds.isEmpty()) return Map.of();
+        List<UUID> ids = List.copyOf(accountIds);
+        Map<UUID, String> names = new LinkedHashMap<>();
+        try (Connection conn = dataSource.getConnection()) {
+            for (int start = 0; start < ids.size(); start += 500) {
+                List<UUID> batch = ids.subList(start, Math.min(ids.size(), start + 500));
+                String placeholders = String.join(",", java.util.Collections.nCopies(batch.size(), "?"));
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "SELECT id,name FROM accounts WHERE id IN (" + placeholders + ')')) {
+                    for (int i = 0; i < batch.size(); i++) ps.setString(i + 1, batch.get(i).toString());
+                    try (ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) names.put(UUID.fromString(rs.getString("id")), rs.getString("name"));
                     }
                 }
             }
         }
+        return Map.copyOf(names);
+    }
 
-        Map<String, BigDecimal> balances = new LinkedHashMap<>();
-        for (PersistedBalanceRow row : balanceRows.values()) {
-            balances.put(row.currencyId(), row.balance());
+    @Override
+    public int countAccounts() throws SQLException {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement("SELECT COUNT(*) FROM accounts");
+             ResultSet rs = ps.executeQuery()) {
+            return rs.next() ? rs.getInt(1) : 0;
         }
-        return balances;
+    }
+
+    @Override
+    public boolean isNameClaimedByAnother(UUID accountId, String normalizedName) throws SQLException {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT id FROM accounts WHERE normalized_name=? AND id<>?")) {
+            ps.setString(1, normalizeAccountName(normalizedName));
+            ps.setString(2, accountId.toString());
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    @Override
+    public boolean insertAccount(AccountRecord record) throws SQLException {
+        try (Connection conn = dataSource.getConnection()) {
+            conn.setAutoCommit(false);
+            try (PreparedStatement accountPs = conn.prepareStatement(
+                    "INSERT INTO accounts(id,name,normalized_name,balance,created_at,updated_at,frozen) VALUES(?,?,?,?,?,?,?)");
+                 PreparedStatement balancePs = conn.prepareStatement(
+                    "INSERT INTO account_balances(account_id,currency_id,balance,updated_at) VALUES(?,?,?,?)")) {
+                bindAccount(accountPs, record);
+                accountPs.executeUpdate();
+                for (Map.Entry<String, BigDecimal> entry : record.getBalancesSnapshot().entrySet()) {
+                    balancePs.setString(1, record.getId().toString());
+                    balancePs.setString(2, entry.getKey());
+                    balancePs.setBigDecimal(3, entry.getValue());
+                    balancePs.setLong(4, record.getUpdatedAt());
+                    balancePs.addBatch();
+                }
+                balancePs.executeBatch();
+                conn.commit();
+                return true;
+            } catch (SQLIntegrityConstraintViolationException e) {
+                conn.rollback();
+                return false;
+            } catch (SQLException e) {
+                conn.rollback();
+                if (isConstraintViolation(e)) return false;
+                throw e;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        }
+    }
+
+    @Override
+    public boolean renameAccount(UUID accountId, String newName, long updatedAt) throws SQLException {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "UPDATE accounts SET name=?,normalized_name=?,updated_at=? WHERE id=?")) {
+            ps.setString(1, newName);
+            ps.setString(2, normalizeAccountName(newName));
+            ps.setLong(3, updatedAt);
+            ps.setString(4, accountId.toString());
+            try {
+                return ps.executeUpdate() == 1;
+            } catch (SQLIntegrityConstraintViolationException e) {
+                return false;
+            } catch (SQLException e) {
+                if (isConstraintViolation(e)) return false;
+                throw e;
+            }
+        }
+    }
+
+    @Override
+    public LeaderboardView loadLeaderboardPage(String currencyId, int offset, int limit) throws SQLException {
+        int safeOffset = Math.max(0, offset);
+        int safeLimit = Math.max(0, limit);
+        List<LeaderboardEntry> entries = new ArrayList<>(safeLimit);
+        String sql = "SELECT a.id,a.name,COALESCE(b.balance,0) AS leaderboard_balance "
+                + "FROM accounts a LEFT JOIN ("
+                + "SELECT account_id,balance FROM ("
+                + "SELECT account_id,balance,ROW_NUMBER() OVER ("
+                + "PARTITION BY account_id,LOWER(currency_id) ORDER BY updated_at DESC,currency_id"
+                + ") AS currency_position FROM account_balances WHERE LOWER(currency_id)=LOWER(?)"
+                + ") currency_balances WHERE currency_position=1"
+                + ") b ON b.account_id=a.id "
+                + "ORDER BY leaderboard_balance DESC,LOWER(a.name),a.id LIMIT ? OFFSET ?";
+        try (Connection conn = dataSource.getConnection()) {
+            boolean originalAutoCommit = conn.getAutoCommit();
+            conn.setAutoCommit(false);
+            try {
+                int total = countAccounts(conn);
+                try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                    ps.setString(1, currencyId);
+                    ps.setInt(2, safeLimit);
+                    ps.setInt(3, safeOffset);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            entries.add(new LeaderboardEntry(UUID.fromString(rs.getString("id")),
+                                    rs.getString("name"), rs.getBigDecimal("leaderboard_balance")));
+                        }
+                    }
+                }
+                conn.commit();
+                return new LeaderboardView(total, entries);
+            } catch (SQLException error) {
+                conn.rollback();
+                throw error;
+            } finally {
+                conn.setAutoCommit(originalAutoCommit);
+            }
+        }
+    }
+
+    @Override
+    public int loadLeaderboardRank(String currencyId, UUID accountId) throws SQLException {
+        String sql = "SELECT ranked_position FROM ("
+                + "SELECT a.id,ROW_NUMBER() OVER (ORDER BY COALESCE(b.balance,0) DESC,LOWER(a.name),a.id) AS ranked_position "
+                + "FROM accounts a LEFT JOIN ("
+                + "SELECT account_id,balance FROM ("
+                + "SELECT account_id,balance,ROW_NUMBER() OVER ("
+                + "PARTITION BY account_id,LOWER(currency_id) ORDER BY updated_at DESC,currency_id"
+                + ") AS currency_position FROM account_balances WHERE LOWER(currency_id)=LOWER(?)"
+                + ") currency_balances WHERE currency_position=1"
+                + ") b ON b.account_id=a.id"
+                + ") ranked WHERE id=?";
+        try (Connection conn = dataSource.getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, currencyId);
+            ps.setString(2, accountId.toString());
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getInt(1) : -1;
+            }
+        }
+    }
+
+    private static int countAccounts(Connection conn) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("SELECT COUNT(*) FROM accounts");
+             ResultSet rs = ps.executeQuery()) {
+            return rs.next() ? rs.getInt(1) : 0;
+        }
     }
 
     @Override
@@ -419,12 +612,7 @@ public class JdbcAccountRepository implements AccountRepository {
                  PreparedStatement insertBalancePs = conn.prepareStatement(
                          "INSERT INTO account_balances(account_id,currency_id,balance,updated_at) VALUES(?,?,?,?)")) {
                 for (AccountRecord r : records) {
-                    accountPs.setString(1, r.getId().toString());
-                    accountPs.setString(2, r.getLastKnownName());
-                    accountPs.setBigDecimal(3, r.getBalance());
-                    accountPs.setLong(4, r.getCreatedAt());
-                    accountPs.setLong(5, r.getUpdatedAt());
-                    accountPs.setBoolean(6, r.isFrozen());
+                    bindAccount(accountPs, r);
                     accountPs.addBatch();
 
                     deleteBalancesPs.setString(1, r.getId().toString());
@@ -452,6 +640,26 @@ public class JdbcAccountRepository implements AccountRepository {
                 conn.setAutoCommit(true);
             }
         }
+    }
+
+    private static void bindAccount(PreparedStatement ps, AccountRecord record) throws SQLException {
+        ps.setString(1, record.getId().toString());
+        ps.setString(2, record.getLastKnownName());
+        ps.setString(3, normalizeAccountName(record.getLastKnownName()));
+        ps.setBigDecimal(4, record.getBalance());
+        ps.setLong(5, record.getCreatedAt());
+        ps.setLong(6, record.getUpdatedAt());
+        ps.setBoolean(7, record.isFrozen());
+    }
+
+    private static String normalizeAccountName(String name) {
+        return name.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static boolean isConstraintViolation(SQLException exception) {
+        String state = exception.getSQLState();
+        return (state != null && state.startsWith("23"))
+                || exception.getErrorCode() == 19; // SQLite SQLITE_CONSTRAINT
     }
 
     @Override
@@ -490,14 +698,6 @@ public class JdbcAccountRepository implements AccountRepository {
 
     public DatabaseDialect dialect() {
         return dialect;
-    }
-
-    public int countAccounts() throws SQLException {
-        try (Connection conn = dataSource.getConnection();
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM accounts")) {
-            return rs.next() ? rs.getInt(1) : 0;
-        }
     }
 
     public int countTransactions() throws SQLException {

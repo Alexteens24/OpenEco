@@ -35,7 +35,7 @@ public class OpenEcoEconomyProvider implements Economy {
 
     public OpenEcoEconomyProvider(AccountService service) {
         this.service = service;
-        this.async = new OpenEcoAsyncEconomy(this);
+        this.async = new OpenEcoAsyncEconomy(this, service);
     }
 
     @Override

@@ -67,6 +67,13 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
+        if (args.length >= 2 && SUBCOMMANDS.contains(sub)
+                && sender.hasPermission("openeco.command.eco." + sub)
+                && CommandAccountResolver.deferColdLookup(plugin, service, messages, sender, args[1],
+                    () -> onCommand(sender, command, label, args.clone()))) {
+            return true;
+        }
+
         // delete only needs <player>
         if (sub.equals("delete")) {
             if (!sender.hasPermission("openeco.command.eco.delete")) {

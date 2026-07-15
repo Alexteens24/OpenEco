@@ -38,6 +38,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -45,6 +46,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -298,6 +300,35 @@ class AccountServicePersistenceIntegrationTest {
     }
 
     @Test
+    void refreshAccountRemovesCleanRecordDeletedOnAnotherServer() throws Exception {
+        String filename = "cross-server-delete-refresh-test";
+        UUID accountId = UUID.randomUUID();
+
+        JdbcAccountRepository writerRepository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), filename);
+        JdbcAccountRepository readerRepository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), filename);
+        try {
+            AccountService writer = newService(writerRepository);
+            AccountService reader = newService(readerRepository);
+            writer.loadAll();
+            assertTrue(writer.createAccount(accountId, "Alice"));
+            writer.flushAccount(accountId);
+
+            reader.loadAll();
+            assertTrue(reader.hasAccount(accountId));
+            writerRepository.delete(accountId);
+
+            reader.refreshAccount(accountId);
+
+            assertFalse(reader.hasAccount(accountId));
+            writer.shutdown();
+            reader.shutdown();
+        } finally {
+            writerRepository.close();
+            readerRepository.close();
+        }
+    }
+
+    @Test
     void refreshAccountSkipsIfLocalRecordIsDirty() throws Exception {
         String filename = "cross-server-refresh-dirty-test";
         UUID accountId = UUID.randomUUID();
@@ -425,21 +456,94 @@ class AccountServicePersistenceIntegrationTest {
     }
 
     @Test
-    void loadAllFailsWhenStoredNamesCollideIgnoringCase() throws Exception {
+    void persistenceRejectsStoredNamesThatCollideIgnoringCase() throws Exception {
         JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "load-collision-test");
         try {
-            repository.upsertBatch(List.of(
+            assertThrows(java.sql.SQLException.class, () -> repository.upsertBatch(List.of(
                     new dev.alexisbinh.openeco.model.AccountRecord(UUID.randomUUID(), "Alice", new BigDecimal("1.00"), 1L, 1L),
-                    new dev.alexisbinh.openeco.model.AccountRecord(UUID.randomUUID(), "alice", new BigDecimal("2.00"), 2L, 2L)));
+                    new dev.alexisbinh.openeco.model.AccountRecord(UUID.randomUUID(), "alice", new BigDecimal("2.00"), 2L, 2L))));
+            assertTrue(repository.loadAll().isEmpty());
+        } finally {
+            repository.close();
+        }
+    }
 
-            AccountService service = newService(repository);
+    @Test
+    void lazyModeStartsEmptyAndLoadsAccountsOnDemand() throws Exception {
+        JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "lazy-cache-test");
+        try {
+            UUID aliceId = UUID.randomUUID();
+            UUID bobId = UUID.randomUUID();
+            AccountService writer = newService(repository);
+            assertTrue(writer.createAccount(aliceId, "Alice"));
+            assertTrue(writer.createAccount(bobId, "Bob"));
+            assertTrue(writer.deposit(aliceId, new BigDecimal("20.00")).transactionSuccess());
+            writer.shutdown();
 
-            assertThrows(java.sql.SQLException.class, service::loadAll);
-            assertTrue(service.getUUIDNameMap().isEmpty());
-            assertEquals(0, service.getLeaderboardPage(0, 10).totalEntries());
+            YamlConfiguration lazyConfig = testConfig(0.0, -1);
+            lazyConfig.set("account-loading.mode", "lazy");
+            lazyConfig.set("account-loading.lazy.cache.enabled", true);
+            lazyConfig.set("account-loading.lazy.cache.maximum-size", 50_000);
+            lazyConfig.set("account-loading.lazy.cache.expire-after-access-minutes", 30);
+            AccountService reader = newServiceWithConfig(repository, lazyConfig);
+            reader.loadAll();
 
-            service.shutdown();
-            assertEquals(2, repository.loadAll().size());
+            assertTrue(reader.getCachedAccountNames().isEmpty());
+            assertEquals(2, reader.getAccountCount());
+            assertEquals(Map.of(aliceId, "Alice", bobId, "Bob"), reader.getUUIDNameMap());
+            assertEquals(0, new BigDecimal("25.00").compareTo(reader.getBalance(aliceId)));
+            assertEquals(List.of("Alice"), reader.getCachedAccountNames());
+            assertEquals("Bob", reader.findByName("bOb").orElseThrow().getLastKnownName());
+            assertEquals(2, reader.getLeaderboardPage(0, 10).totalEntries());
+            assertEquals(aliceId, reader.getLeaderboardPage(0, 10).entries().getFirst().accountId());
+            assertEquals(1, reader.getRankOf(aliceId));
+            assertFalse(reader.createAccount(UUID.randomUUID(), "ALICE"));
+            assertEquals(AccountService.RenameAccountStatus.RENAMED, reader.renameAccountDetailed(bobId, "Robert"));
+            assertTrue(repository.loadAccountByName("robert").isPresent());
+
+            reader.shutdown();
+        } finally {
+            repository.close();
+        }
+    }
+
+    @Test
+    void lazyModeWithoutRetentionKeepsOnlineAndDirtyRecordsUntilSafeToEvict() throws Exception {
+        JdbcAccountRepository repository = new JdbcAccountRepository(
+                DatabaseDialect.H2, tempDir.toString(), "lazy-no-retention-test");
+        try {
+            UUID accountId = UUID.randomUUID();
+            AccountService writer = newService(repository);
+            assertTrue(writer.createAccount(accountId, "Alice"));
+            writer.shutdown();
+
+            YamlConfiguration config = testConfig(0.0, -1);
+            config.set("account-loading.mode", "lazy");
+            config.set("account-loading.lazy.cache.enabled", false);
+            AccountService reader = newServiceWithConfig(repository, config);
+            reader.loadAll();
+
+            assertEquals(0, new BigDecimal("5.00").compareTo(reader.getBalance(accountId)));
+            assertEquals(List.of("Alice"), reader.getCachedAccountNames());
+            reader.markAccountOnline(accountId);
+            reader.maintainAccountCache();
+            assertEquals(List.of("Alice"), reader.getCachedAccountNames());
+
+            reader.markAccountOffline(accountId);
+            reader.maintainAccountCache();
+            assertTrue(reader.getCachedAccountNames().isEmpty());
+
+            assertTrue(reader.deposit(accountId, new BigDecimal("3.00")).transactionSuccess());
+            reader.maintainAccountCache();
+            assertEquals(List.of("Alice"), reader.getCachedAccountNames());
+
+            assertTrue(reader.flushDirty());
+            reader.maintainAccountCache();
+            assertTrue(reader.getCachedAccountNames().isEmpty());
+            assertEquals(0, new BigDecimal("8.00")
+                    .compareTo(repository.loadAccount(accountId).orElseThrow().getBalance()));
+
+            reader.shutdown();
         } finally {
             repository.close();
         }
@@ -537,6 +641,120 @@ class AccountServicePersistenceIntegrationTest {
             repository.allowTransactionInsert.countDown();
             executor.shutdownNow();
             executor.awaitTermination(2, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void failedDirtyFlushKeepsAccountEligibleForRetry() throws Exception {
+        BlockingRepository repository = new BlockingRepository(false, false, false, true);
+        AccountService service = newService(repository);
+        UUID accountId = UUID.randomUUID();
+
+        assertTrue(service.createAccount(accountId, "Alice"));
+        assertFalse(service.flushDirty());
+        assertTrue(getLiveRecord(service, accountId).isDirty());
+
+        service.shutdown();
+    }
+
+    @Test
+    void coldNameLoadDoesNotResurrectConcurrentlyDeletedAccount() throws Exception {
+        BlockingRepository repository = new BlockingRepository(false, false, false, false, true);
+        UUID accountId = UUID.randomUUID();
+        repository.upsertBatch(List.of(new AccountRecord(
+                accountId, "Alice", new BigDecimal("5.00"), 1L, 1L)));
+        YamlConfiguration config = testConfig(0.0, -1);
+        config.set("account-loading.mode", "lazy");
+        config.set("account-loading.lazy.cache.enabled", true);
+        config.set("account-loading.lazy.cache.maximum-size", 50_000);
+        config.set("account-loading.lazy.cache.expire-after-access-minutes", 30);
+        AccountService service = newServiceWithConfig(repository, config);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+
+        try {
+            Future<Optional<AccountRecord>> lookup = executor.submit(() -> service.findByName("Alice"));
+            assertTrue(repository.nameLoadStarted.await(2, TimeUnit.SECONDS));
+            assertTrue(service.deleteAccount(accountId));
+            repository.allowNameLoad.countDown();
+
+            assertTrue(lookup.get(2, TimeUnit.SECONDS).isEmpty());
+            assertFalse(service.hasAccount(accountId));
+            service.shutdown();
+        } finally {
+            repository.allowNameLoad.countDown();
+            executor.shutdownNow();
+            executor.awaitTermination(2, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void synchronousColdNameLookupsShareOneBoundedLoad() throws Exception {
+        BlockingRepository repository = new BlockingRepository(false, false, false, false, true);
+        UUID accountId = UUID.randomUUID();
+        repository.upsertBatch(List.of(new AccountRecord(
+                accountId, "Alice", new BigDecimal("5.00"), 1L, 1L)));
+        YamlConfiguration config = testConfig(0.0, -1);
+        config.set("account-loading.mode", "lazy");
+        config.set("account-loading.lazy.cache.enabled", true);
+        AccountService service = newServiceWithConfig(repository, config);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch secondLookupEntered = new CountDownLatch(1);
+
+        try {
+            Future<Optional<AccountRecord>> first = executor.submit(() -> service.findByName("Alice"));
+            assertTrue(repository.nameLoadStarted.await(2, TimeUnit.SECONDS));
+            Future<Optional<AccountRecord>> second = executor.submit(() -> {
+                secondLookupEntered.countDown();
+                return service.findByName("aLiCe");
+            });
+            assertTrue(secondLookupEntered.await(1, TimeUnit.SECONDS));
+            assertThrows(TimeoutException.class, () -> second.get(100, TimeUnit.MILLISECONDS));
+            assertEquals(1, repository.nameLoadCalls.get());
+
+            repository.allowNameLoad.countDown();
+            assertEquals(accountId, first.get(2, TimeUnit.SECONDS).orElseThrow().getId());
+            assertEquals(accountId, second.get(2, TimeUnit.SECONDS).orElseThrow().getId());
+            assertEquals(1, repository.nameLoadCalls.get());
+            service.shutdown();
+        } finally {
+            repository.allowNameLoad.countDown();
+            executor.shutdownNow();
+            executor.awaitTermination(2, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void crossServerLoginRejectsDeferredDirtyAndInUseRefreshes() throws Exception {
+        String filename = "cross-server-login-refresh-status-test";
+        UUID accountId = UUID.randomUUID();
+        JdbcAccountRepository repository = new JdbcAccountRepository(
+                DatabaseDialect.H2, tempDir.toString(), filename);
+        try {
+            AccountService writer = newService(repository);
+            assertTrue(writer.createAccount(accountId, "Alice"));
+            writer.flushAccount(accountId);
+
+            YamlConfiguration config = testConfig(0.0, -1);
+            config.set("cross-server.enabled", true);
+            AccountService reader = newServiceWithConfig(repository, config);
+            reader.loadAll();
+            assertTrue(reader.deposit(accountId, BigDecimal.ONE).transactionSuccess());
+
+            assertEquals(AccountService.RefreshStatus.DEFERRED_DIRTY, reader.refreshAccount(accountId));
+            assertThrows(dev.alexisbinh.openeco.api.OpenEcoApiException.class,
+                    () -> reader.prepareLoginAccount(accountId, "Alice"));
+
+            assertTrue(reader.flushDirty());
+            try (AccountService.AccountPin ignored = reader.pinAccount(accountId).orElseThrow()) {
+                assertEquals(AccountService.RefreshStatus.DEFERRED_IN_USE, reader.refreshAccount(accountId));
+                assertThrows(dev.alexisbinh.openeco.api.OpenEcoApiException.class,
+                        () -> reader.prepareLoginAccount(accountId, "Alice"));
+            }
+
+            writer.shutdown();
+            reader.shutdown();
+        } finally {
+            repository.close();
         }
     }
 
@@ -806,6 +1024,32 @@ class AccountServicePersistenceIntegrationTest {
         return newServiceWithConfig(repository, testConfig(0.0, retentionDays));
     }
 
+    @Test
+    void validatesLazyCacheLimitsOnlyWhenRetentionIsActive() {
+        BlockingRepository repository = new BlockingRepository();
+
+        YamlConfiguration eager = testConfig(0.0, -1);
+        eager.set("account-loading.mode", "eager");
+        eager.set("account-loading.lazy.cache.maximum-size", 0);
+        eager.set("account-loading.lazy.cache.expire-after-access-minutes", 0);
+        AccountService eagerService = assertDoesNotThrow(() -> newServiceWithConfig(repository, eager));
+        eagerService.shutdown();
+
+        YamlConfiguration noRetention = testConfig(0.0, -1);
+        noRetention.set("account-loading.mode", "lazy");
+        noRetention.set("account-loading.lazy.cache.enabled", false);
+        noRetention.set("account-loading.lazy.cache.maximum-size", 0);
+        noRetention.set("account-loading.lazy.cache.expire-after-access-minutes", 0);
+        AccountService noRetentionService = assertDoesNotThrow(() -> newServiceWithConfig(repository, noRetention));
+        noRetentionService.shutdown();
+
+        YamlConfiguration retained = testConfig(0.0, -1);
+        retained.set("account-loading.mode", "lazy");
+        retained.set("account-loading.lazy.cache.enabled", true);
+        retained.set("account-loading.lazy.cache.maximum-size", 0);
+        assertThrows(IllegalArgumentException.class, () -> newServiceWithConfig(repository, retained));
+    }
+
     private static YamlConfiguration testConfig(double taxPercent, int retentionDays) {
         YamlConfiguration config = new YamlConfiguration();
         config.set("currency.id", "openeco");
@@ -855,25 +1099,41 @@ class AccountServicePersistenceIntegrationTest {
         private final CountDownLatch allowUpsert = new CountDownLatch(1);
         private final CountDownLatch deleteStarted = new CountDownLatch(1);
         private final CountDownLatch allowDelete = new CountDownLatch(1);
+        private final CountDownLatch nameLoadStarted = new CountDownLatch(1);
+        private final CountDownLatch allowNameLoad = new CountDownLatch(1);
+        private final AtomicInteger nameLoadCalls = new AtomicInteger();
         private final boolean blockUpsert;
         private final boolean blockDelete;
         private final boolean failDelete;
+        private final boolean failUpsert;
+        private final boolean blockNameLoad;
         private final List<TransactionEntry> transactions = new ArrayList<>();
         private List<AccountRecord> lastUpsertedRecords = List.of();
         private int upsertCalls;
 
         private BlockingRepository() {
-            this(false, false, false);
+            this(false, false, false, false, false);
         }
 
         private BlockingRepository(boolean blockUpsert) {
-            this(blockUpsert, false, false);
+            this(blockUpsert, false, false, false, false);
         }
 
         private BlockingRepository(boolean blockUpsert, boolean blockDelete, boolean failDelete) {
+            this(blockUpsert, blockDelete, failDelete, false, false);
+        }
+
+        private BlockingRepository(boolean blockUpsert, boolean blockDelete, boolean failDelete, boolean failUpsert) {
+            this(blockUpsert, blockDelete, failDelete, failUpsert, false);
+        }
+
+        private BlockingRepository(boolean blockUpsert, boolean blockDelete, boolean failDelete,
+                                   boolean failUpsert, boolean blockNameLoad) {
             this.blockUpsert = blockUpsert;
             this.blockDelete = blockDelete;
             this.failDelete = failDelete;
+            this.failUpsert = failUpsert;
+            this.blockNameLoad = blockNameLoad;
         }
 
         @Override
@@ -888,8 +1148,33 @@ class AccountServicePersistenceIntegrationTest {
         }
 
         @Override
-        public void upsertBatch(Collection<AccountRecord> records) {
+        public Optional<AccountRecord> loadAccountByName(String normalizedName) throws SQLException {
+            nameLoadCalls.incrementAndGet();
+            Optional<AccountRecord> result;
+            synchronized (this) {
+                result = lastUpsertedRecords.stream()
+                        .filter(record -> record.getLastKnownName().equalsIgnoreCase(normalizedName))
+                        .findFirst()
+                        .map(AccountRecord::snapshot);
+            }
+            if (blockNameLoad) {
+                nameLoadStarted.countDown();
+                try {
+                    if (!allowNameLoad.await(5, TimeUnit.SECONDS)) {
+                        throw new SQLException("Timed out waiting to allow name load");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new SQLException("Interrupted while waiting to load by name", e);
+                }
+            }
+            return result;
+        }
+
+        @Override
+        public void upsertBatch(Collection<AccountRecord> records) throws SQLException {
             upsertStarted.countDown();
+            if (failUpsert) throw new SQLException("expected upsert failure");
             if (blockUpsert) {
                 try {
                     if (!allowUpsert.await(5, TimeUnit.SECONDS)) {

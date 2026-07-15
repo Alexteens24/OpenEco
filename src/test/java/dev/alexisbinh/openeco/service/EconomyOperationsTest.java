@@ -407,7 +407,7 @@ class EconomyOperationsTest {
         config = configWith(0.0, 60, null, 2); // 60 second cooldown
         ConcurrentHashMap<UUID, Long> cooldownMap = new ConcurrentHashMap<>();
         cooldownMap.put(aliceId, System.currentTimeMillis()); // just paid now
-        ops = new EconomyOperations(registry, () -> config, cooldownMap, logged::add, event -> { }, ignored -> { }, registry::getLiveRecord);
+        ops = new EconomyOperations(registry, () -> config, cooldownMap, logged::add, event -> { }, ignored -> { }, registry::acquireLease);
 
         PayResult result = ops.pay(aliceId, bobId, new BigDecimal("1.00"));
 
@@ -497,7 +497,7 @@ class EconomyOperationsTest {
         config = configWith(0.0, 60, null, 2);
         ConcurrentHashMap<UUID, Long> cooldownMap = new ConcurrentHashMap<>();
         cooldownMap.put(aliceId, System.currentTimeMillis());
-        ops = new EconomyOperations(registry, () -> config, cooldownMap, logged::add, event -> { }, ignored -> { }, registry::getLiveRecord);
+        ops = new EconomyOperations(registry, () -> config, cooldownMap, logged::add, event -> { }, ignored -> { }, registry::acquireLease);
 
         TransferPreviewResult result = ops.previewTransfer(aliceId, bobId, new BigDecimal("1.00"));
 
@@ -551,7 +551,7 @@ class EconomyOperationsTest {
         config = configWith(10.0, 60, null, 2, 0.10);
         ConcurrentHashMap<UUID, Long> cooldownMap = new ConcurrentHashMap<>();
         cooldownMap.put(aliceId, System.currentTimeMillis());
-        ops = new EconomyOperations(registry, () -> config, cooldownMap, logged::add, event -> { }, ignored -> { }, registry::getLiveRecord);
+        ops = new EconomyOperations(registry, () -> config, cooldownMap, logged::add, event -> { }, ignored -> { }, registry::acquireLease);
 
         DirectTransferResult result = ops.directTransfer(aliceId, bobId, new BigDecimal("0.05"));
 
@@ -664,7 +664,7 @@ class EconomyOperationsTest {
                 logged::add, event -> {
                     dispatchedEvents.add(event);
                     listener.accept(event);
-                }, ignored -> { }, registry::getLiveRecord);
+                }, ignored -> { }, registry::acquireLease);
     }
 
     private AccountRecord account(UUID id, String name, BigDecimal balance) {
