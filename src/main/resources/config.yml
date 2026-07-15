@@ -89,13 +89,15 @@ persistence:
   # Lower values reduce worst-case data loss after a crash but increase write pressure.
   autosave-interval-seconds: 30
 
-# Account working-set policy. Changing mode requires a restart.
+# Account loading policy. Changing mode or lazy cache retention requires a restart.
 account-cache:
   # eager loads every account at startup; lazy loads accounts on demand.
   mode: eager
-  # Lazy mode only: retain at most this many inactive clean accounts when possible.
+  # Lazy mode only: retain clean loaded accounts for reuse. Disable for near-zero clean-record retention.
+  enabled: true
+  # Lazy cached mode only: retain at most this many inactive clean accounts when possible.
   maximum-size: 50000
-  # Lazy mode only: evict inactive clean accounts after this many idle minutes.
+  # Lazy cached mode only: evict inactive clean accounts after this many idle minutes.
   expire-after-access-minutes: 30
 
 pay:

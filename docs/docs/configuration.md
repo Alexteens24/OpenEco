@@ -5,7 +5,7 @@ The `config.yml` file lives in `plugins/OpenEco/`. OpenEco auto-migrates legacy 
 Click any option below to view additional information.
 
 ::: tip Apply most changes without a restart
-After editing `config.yml`, run `/eco reload` to apply messages and most runtime rules. Storage backends, `cross-server.enabled`, and `account-cache.mode` still require a restart.
+After editing `config.yml`, run `/eco reload` to apply messages and most runtime rules. Storage backends, `cross-server.enabled`, `account-cache.mode`, and `account-cache.enabled` still require a restart.
 :::
 
 <ConfigGroup name="currencies">
@@ -153,7 +153,11 @@ Seconds between automatic background saves. Must be greater than `0`. Lower valu
 <ConfigGroup name="account-cache">
 
 <ConfigProperty name="mode" value="eager" type="string">
-`eager` loads every account at startup. `lazy` keeps only online and recently accessed accounts in RAM and reads cold accounts from the database. **Restart required.**
+`eager` loads every account at startup. `lazy` reads accounts from the database on demand. **Restart required.**
+</ConfigProperty>
+
+<ConfigProperty name="enabled" value="true" type="boolean">
+Controls record retention inside `lazy` mode. When `true`, clean loaded accounts are reused according to the size and expiry settings. When `false`, clean records are evicted on the short maintenance cycle; dirty and in-flight records remain temporarily for correctness. Ignored in `eager` mode. **Restart required.**
 </ConfigProperty>
 
 <ConfigProperty name="maximum-size" value="50000" type="number">
@@ -247,6 +251,7 @@ persistence:
 
 account-cache:
   mode: eager
+  enabled: true
   maximum-size: 50000
   expire-after-access-minutes: 30
 

@@ -77,6 +77,7 @@ history:
 
 account-cache:
   mode: eager                     # Use lazy for very large account sets
+  enabled: true                  # In lazy mode, retain the hot working set
   maximum-size: 50000
   expire-after-access-minutes: 30
 ```
@@ -84,7 +85,7 @@ account-cache:
 - Lower `persistence.autosave-interval-seconds` reduces worst-case balance loss after an unclean stop.
 - `pay.min-amount` helps prevent spammy micro-transfers.
 - `history.retention-days: -1` keeps all history; positive values prune in the background.
-- Start with `account-cache.mode: eager`. For large long-lived datasets, stage `lazy` mode and monitor cold DB latency before production rollout.
+- Start with `account-cache.mode: eager`. For large long-lived datasets, stage `lazy` mode and monitor cold DB latency. Keep `enabled: true` for a bounded hot set, or disable it when minimizing retained clean records matters more than repeated database reads.
 
 ## Backups
 

@@ -143,7 +143,7 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
         }
 
         if (player.hasPermission("openeco.command.history.others")
-                && (!service.isLazyAccountCacheEnabled() || service.isAccountNameCached(args[0]))) {
+                && (!service.isLazyAccountModeEnabled() || service.isAccountNameCached(args[0]))) {
             var target = service.findByName(args[0]);
             if (target.isPresent()) {
                 return createOtherRequest(target.get(), args, 1);

@@ -91,7 +91,7 @@ public class BalTopCommand implements CommandExecutor, TabCompleter {
         final int requestedPage = page;
         final int resolvedPageSize = pageSize;
         final String resolvedCurrencyId = currencyId;
-        if (plugin != null && service.isLazyAccountCacheEnabled()) {
+        if (plugin != null && service.isLazyAccountModeEnabled()) {
             plugin.getServer().getAsyncScheduler().runNow(plugin, task -> {
                 try {
                     LeaderboardResult result = loadLeaderboard(resolvedCurrencyId, resolvedPageSize, requestedPage);

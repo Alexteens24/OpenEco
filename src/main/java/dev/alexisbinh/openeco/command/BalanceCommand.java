@@ -70,7 +70,7 @@ public class BalanceCommand implements CommandExecutor, TabCompleter {
 
         if (args.length == 1 && sender instanceof Player player && service.hasCurrency(args[0])
                 && (!sender.hasPermission("openeco.command.balance.others")
-                || (service.isLazyAccountCacheEnabled()
+                || (service.isLazyAccountModeEnabled()
                     ? !service.isAccountNameCached(args[0])
                     : service.findByName(args[0]).isEmpty()))) {
             if (!player.hasPermission("openeco.command.balance")) {

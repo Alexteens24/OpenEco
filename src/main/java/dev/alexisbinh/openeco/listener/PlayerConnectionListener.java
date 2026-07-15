@@ -49,7 +49,7 @@ public class PlayerConnectionListener implements Listener {
     public void onPreLogin(AsyncPlayerPreLoginEvent event) {
         if (service.isCrossServerEnabled()) {
             service.refreshAccount(event.getUniqueId());
-        } else if (service.isLazyAccountCacheEnabled()) {
+        } else if (service.isLazyAccountModeEnabled()) {
             try {
                 service.preloadAccount(event.getUniqueId()).join();
             } catch (RuntimeException e) {
@@ -128,7 +128,7 @@ public class PlayerConnectionListener implements Listener {
     public void onQuit(PlayerQuitEvent event) {
         UUID uuid = event.getPlayer().getUniqueId();
         service.markAccountOffline(uuid);
-        if (service.isCrossServerEnabled() || service.isLazyAccountCacheEnabled()) {
+        if (service.isCrossServerEnabled() || service.isLazyAccountModeEnabled()) {
             plugin.getServer().getAsyncScheduler().runNow(plugin, task -> service.flushAccount(uuid));
         }
     }

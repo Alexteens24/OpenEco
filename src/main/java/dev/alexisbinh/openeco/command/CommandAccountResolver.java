@@ -20,7 +20,7 @@ final class CommandAccountResolver {
 
     static boolean deferColdLookup(JavaPlugin plugin, AccountService service, Messages messages,
                                    CommandSender sender, String accountName, Runnable retry) {
-        if (plugin == null || !service.isLazyAccountCacheEnabled() || service.isAccountNameCached(accountName)) {
+        if (plugin == null || !service.isLazyAccountModeEnabled() || service.isAccountNameCached(accountName)) {
             return false;
         }
         service.findByNameAsync(accountName).whenComplete((account, error) -> dispatch(plugin, sender, () -> {

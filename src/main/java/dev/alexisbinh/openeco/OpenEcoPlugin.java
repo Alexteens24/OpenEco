@@ -320,12 +320,13 @@ public class OpenEcoPlugin extends JavaPlugin {
             accountCacheMaintenanceTask.cancel();
             accountCacheMaintenanceTask = null;
         }
-        if (!service.isLazyAccountCacheEnabled()) return;
+        if (!service.isLazyAccountModeEnabled()) return;
+        long intervalSeconds = service.getAccountCacheMaintenanceIntervalSeconds();
         accountCacheMaintenanceTask = getServer().getAsyncScheduler().runAtFixedRate(
                 this,
                 task -> service.maintainAccountCache(),
-                60,
-                60,
+                intervalSeconds,
+                intervalSeconds,
                 TimeUnit.SECONDS);
     }
 

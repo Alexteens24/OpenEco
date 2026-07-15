@@ -452,6 +452,7 @@ class AccountServicePersistenceIntegrationTest {
 
             YamlConfiguration lazyConfig = testConfig(0.0, -1);
             lazyConfig.set("account-cache.mode", "lazy");
+            lazyConfig.set("account-cache.enabled", true);
             lazyConfig.set("account-cache.maximum-size", 50_000);
             lazyConfig.set("account-cache.expire-after-access-minutes", 30);
             AccountService reader = newServiceWithConfig(repository, lazyConfig);
@@ -469,6 +470,44 @@ class AccountServicePersistenceIntegrationTest {
             assertFalse(reader.createAccount(UUID.randomUUID(), "ALICE"));
             assertEquals(AccountService.RenameAccountStatus.RENAMED, reader.renameAccountDetailed(bobId, "Robert"));
             assertTrue(repository.loadAccountByName("robert").isPresent());
+
+            reader.shutdown();
+        } finally {
+            repository.close();
+        }
+    }
+
+    @Test
+    void lazyModeWithoutRetentionEvictsCleanRecordsButKeepsDirtyRecordsUntilFlush() throws Exception {
+        JdbcAccountRepository repository = new JdbcAccountRepository(
+                DatabaseDialect.H2, tempDir.toString(), "lazy-no-retention-test");
+        try {
+            UUID accountId = UUID.randomUUID();
+            AccountService writer = newService(repository);
+            assertTrue(writer.createAccount(accountId, "Alice"));
+            writer.shutdown();
+
+            YamlConfiguration config = testConfig(0.0, -1);
+            config.set("account-cache.mode", "lazy");
+            config.set("account-cache.enabled", false);
+            AccountService reader = newServiceWithConfig(repository, config);
+            reader.loadAll();
+
+            assertEquals(0, new BigDecimal("5.00").compareTo(reader.getBalance(accountId)));
+            assertEquals(List.of("Alice"), reader.getCachedAccountNames());
+            reader.markAccountOnline(accountId);
+            reader.maintainAccountCache();
+            assertTrue(reader.getCachedAccountNames().isEmpty());
+
+            assertTrue(reader.deposit(accountId, new BigDecimal("3.00")).transactionSuccess());
+            reader.maintainAccountCache();
+            assertEquals(List.of("Alice"), reader.getCachedAccountNames());
+
+            assertTrue(reader.flushDirty());
+            reader.maintainAccountCache();
+            assertTrue(reader.getCachedAccountNames().isEmpty());
+            assertEquals(0, new BigDecimal("8.00")
+                    .compareTo(repository.loadAccount(accountId).orElseThrow().getBalance()));
 
             reader.shutdown();
         } finally {
@@ -592,6 +631,7 @@ class AccountServicePersistenceIntegrationTest {
                 accountId, "Alice", new BigDecimal("5.00"), 1L, 1L)));
         YamlConfiguration config = testConfig(0.0, -1);
         config.set("account-cache.mode", "lazy");
+        config.set("account-cache.enabled", true);
         config.set("account-cache.maximum-size", 50_000);
         config.set("account-cache.expire-after-access-minutes", 30);
         AccountService service = newServiceWithConfig(repository, config);

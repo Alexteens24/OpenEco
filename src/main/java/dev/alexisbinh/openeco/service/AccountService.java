@@ -103,7 +103,8 @@ public class AccountService {
         thread.setDaemon(true);
         return thread;
     });
-    private volatile boolean lazyAccountCache;
+    private volatile boolean lazyAccountMode;
+    private volatile boolean lazyCacheEnabled;
     private volatile int accountCacheMaximumSize;
     private volatile long accountCacheExpireNanos;
     private boolean accountCacheModeInitialized;
@@ -145,16 +146,21 @@ public class AccountService {
         if (cacheMode == null || (!cacheMode.equalsIgnoreCase("eager") && !cacheMode.equalsIgnoreCase("lazy"))) {
             throw new IllegalArgumentException("account-cache.mode must be eager or lazy");
         }
+        boolean requestedLazyMode = cacheMode.equalsIgnoreCase("lazy");
+        boolean requestedCacheEnabled = config.getBoolean("account-cache.enabled", true);
         int maximumSize = config.getInt("account-cache.maximum-size", 50_000);
         long expireMinutes = config.getLong("account-cache.expire-after-access-minutes", 30L);
         if (maximumSize <= 0) throw new IllegalArgumentException("account-cache.maximum-size must be greater than 0");
         if (expireMinutes <= 0) throw new IllegalArgumentException(
                 "account-cache.expire-after-access-minutes must be greater than 0");
-        boolean requestedLazyMode = cacheMode.equalsIgnoreCase("lazy");
-        if (accountCacheModeInitialized && requestedLazyMode != lazyAccountCache) {
+        if (accountCacheModeInitialized && requestedLazyMode != lazyAccountMode) {
             throw new IllegalArgumentException("account-cache.mode requires a server restart");
         }
-        this.lazyAccountCache = requestedLazyMode;
+        if (accountCacheModeInitialized && lazyAccountMode && requestedCacheEnabled != lazyCacheEnabled) {
+            throw new IllegalArgumentException("account-cache.enabled requires a server restart");
+        }
+        this.lazyAccountMode = requestedLazyMode;
+        this.lazyCacheEnabled = requestedCacheEnabled;
         this.accountCacheModeInitialized = true;
         this.accountCacheMaximumSize = maximumSize;
         this.accountCacheExpireNanos = TimeUnit.MINUTES.toNanos(expireMinutes);
@@ -167,17 +173,26 @@ public class AccountService {
         return crossServerEnabled;
     }
 
-    public boolean isLazyAccountCacheEnabled() {
-        return lazyAccountCache;
+    public boolean isLazyAccountModeEnabled() {
+        return lazyAccountMode;
+    }
+
+    public boolean isLazyAccountRetentionEnabled() {
+        return lazyAccountMode && lazyCacheEnabled;
+    }
+
+    public long getAccountCacheMaintenanceIntervalSeconds() {
+        return isLazyAccountRetentionEnabled() ? 60L : 1L;
     }
 
     // ── Startup ─────────────────────────────────────────────────────────────
 
     public void loadAll() throws SQLException {
         clearStartupState();
-        if (lazyAccountCache) {
-            log.info("Lazy account cache enabled; " + repository.countAccounts()
-                    + " stored accounts will be loaded on demand.");
+        if (lazyAccountMode) {
+            log.info("Lazy account loading enabled; " + repository.countAccounts()
+                    + " stored accounts will be loaded on demand"
+                    + (lazyCacheEnabled ? " and retained in the working-set cache." : " without clean-record retention."));
             return;
         }
         try {
@@ -232,9 +247,9 @@ public class AccountService {
 
     public Optional<AccountRecord> findByName(String name) {
         Optional<AccountRecord> cached = accountRegistry.findSnapshotByName(name);
-        if (cached.isPresent() || !lazyAccountCache || name == null) return cached;
+        if (cached.isPresent() || !lazyAccountMode || name == null) return cached;
         String normalized = AccountRegistry.normalizeName(name);
-        if (isNegativeCached(missingNames, normalized)) return Optional.empty();
+        if (lazyCacheEnabled && isNegativeCached(missingNames, normalized)) return Optional.empty();
         while (true) {
             long observedIdentityVersion = accountIdentityVersion.get();
             try {
@@ -244,7 +259,7 @@ public class AccountService {
                     if (live.isPresent()) return live;
                     if (observedIdentityVersion != accountIdentityVersion.get()) continue;
                     if (loaded.isEmpty()) {
-                        missingNames.put(normalized, System.nanoTime());
+                        if (lazyCacheEnabled) missingNames.put(normalized, System.nanoTime());
                         return Optional.empty();
                     }
                     AccountRecord record = prepareLoadedRecord(loaded.get());
@@ -306,7 +321,7 @@ public class AccountService {
                     now);
             record.markDirty();
             synchronized (accountIdentityLock) {
-                if (lazyAccountCache) {
+                if (lazyAccountMode) {
                     try {
                         if (!repository.insertAccount(record.snapshot())) return CreateAccountStatus.NAME_IN_USE;
                         record.clearDirty();
@@ -390,7 +405,7 @@ public class AccountService {
                     }
 
                     boolean wasDirty = record.isDirty();
-                    if (lazyAccountCache) {
+                    if (lazyAccountMode) {
                         try {
                             if (!repository.renameAccount(id, validatedName, System.currentTimeMillis())) {
                                 return RenameAccountStatus.NAME_IN_USE;
@@ -403,7 +418,7 @@ public class AccountService {
                         return RenameAccountStatus.NAME_IN_USE;
                     }
                     accountIdentityVersion.incrementAndGet();
-                    if (lazyAccountCache && !wasDirty) record.clearDirty();
+                    if (lazyAccountMode && !wasDirty) record.clearDirty();
                 }
                 missingNames.remove(AccountRegistry.normalizeName(validatedName));
                 markAllLeaderboardsDirty();
@@ -475,7 +490,7 @@ public class AccountService {
     }
 
     public Map<UUID, String> getUUIDNameMap() {
-        if (!lazyAccountCache) return accountRegistry.getUUIDNameMap();
+        if (!lazyAccountMode) return accountRegistry.getUUIDNameMap();
         try {
             return repository.loadNameMap();
         } catch (SQLException e) {
@@ -484,7 +499,7 @@ public class AccountService {
     }
 
     public int getAccountCount() {
-        if (!lazyAccountCache) return accountRegistry.size();
+        if (!lazyAccountMode) return accountRegistry.size();
         try {
             return repository.countAccounts();
         } catch (SQLException e) {
@@ -494,7 +509,7 @@ public class AccountService {
     }
 
     public List<String> getAccountNames() {
-        if (lazyAccountCache) return accountRegistry.getCachedAccountNames();
+        if (lazyAccountMode) return accountRegistry.getCachedAccountNames();
         return new ArrayList<>(getUUIDNameMap().values());
     }
 
@@ -690,7 +705,7 @@ public class AccountService {
 
     public LeaderboardView getLeaderboardPage(String currencyId, int offset, int limit) {
         String resolvedCurrencyId = resolveCurrencyIdOrFallback(currencyId);
-        if (lazyAccountCache) {
+        if (lazyAccountMode) {
             try {
                 return repository.loadLeaderboardPage(resolvedCurrencyId, offset, limit);
             } catch (SQLException e) {
@@ -701,7 +716,7 @@ public class AccountService {
     }
 
     public @Nullable LeaderboardEntry getLeaderboardEntry(int rank, String currencyId) {
-        if (lazyAccountCache) {
+        if (lazyAccountMode) {
             if (rank < 1) return null;
             LeaderboardView page = getLeaderboardPage(currencyId, Math.max(0, rank - 1), 1);
             return page.entries().isEmpty() ? null : page.entries().getFirst();
@@ -714,7 +729,7 @@ public class AccountService {
     }
 
     public int getRankOf(UUID accountId, String currencyId) {
-        if (lazyAccountCache) {
+        if (lazyAccountMode) {
             try {
                 return repository.loadLeaderboardRank(resolveCurrencyIdOrFallback(currencyId), accountId);
             } catch (SQLException e) {
@@ -727,7 +742,7 @@ public class AccountService {
     public void refreshLeaderboards() {
         if (!leaderboardRefreshRunning.compareAndSet(false, true)) return;
         try {
-            if (lazyAccountCache) {
+            if (lazyAccountMode) {
                 if (lazyLeaderboardDirty.getAndSet(false) && !flushDirty()) {
                     lazyLeaderboardDirty.set(true);
                 }
@@ -962,8 +977,8 @@ public class AccountService {
 
     private @Nullable AccountRecord getOrLoadLiveRecord(UUID id) {
         AccountRecord cached = accountRegistry.getLiveRecord(id);
-        if (cached != null || !lazyAccountCache) return cached;
-        if (isNegativeCached(missingAccounts, id)) return null;
+        if (cached != null || !lazyAccountMode) return cached;
+        if (lazyCacheEnabled && isNegativeCached(missingAccounts, id)) return null;
         try {
             return loadAccountAsync(id).join().orElse(null);
         } catch (CompletionException e) {
@@ -976,7 +991,7 @@ public class AccountService {
         if (accountRegistry.isNameClaimedByAnother(id, name)) {
             return true;
         }
-        if (!lazyAccountCache) return false;
+        if (!lazyAccountMode) return false;
         try {
             return repository.isNameClaimedByAnother(id, AccountRegistry.normalizeName(name));
         } catch (SQLException e) {
@@ -1003,17 +1018,17 @@ public class AccountService {
     }
 
     private void markAllLeaderboardsDirty() {
-        if (lazyAccountCache) lazyLeaderboardDirty.set(true);
+        if (lazyAccountMode) lazyLeaderboardDirty.set(true);
         leaderboardCache.markAllDirty();
     }
 
     private void markLeaderboardDirty(String currencyId) {
-        if (lazyAccountCache) lazyLeaderboardDirty.set(true);
+        if (lazyAccountMode) lazyLeaderboardDirty.set(true);
         leaderboardCache.markDirty(currencyId);
     }
 
     public void markAccountOnline(UUID id) {
-        accountRegistry.markOnline(id);
+        if (isLazyAccountRetentionEnabled() || !lazyAccountMode) accountRegistry.markOnline(id);
     }
 
     public void markAccountOffline(UUID id) {
@@ -1021,10 +1036,12 @@ public class AccountService {
     }
 
     public void maintainAccountCache() {
-        if (!lazyAccountCache) return;
+        if (!lazyAccountMode) return;
         int evicted;
         synchronized (persistenceLock) {
-            evicted = accountRegistry.evict(accountCacheExpireNanos, accountCacheMaximumSize);
+            long expiry = lazyCacheEnabled ? accountCacheExpireNanos : 0L;
+            int maximumSize = lazyCacheEnabled ? accountCacheMaximumSize : 0;
+            evicted = accountRegistry.evict(expiry, maximumSize);
         }
         long cutoff = System.nanoTime() - NEGATIVE_CACHE_TTL_NANOS;
         missingAccounts.entrySet().removeIf(entry -> entry.getValue() < cutoff);
@@ -1035,7 +1052,9 @@ public class AccountService {
     private CompletableFuture<Optional<AccountRecord>> loadAccountAsync(UUID id) {
         AccountRecord cached = accountRegistry.getLiveRecord(id);
         if (cached != null) return CompletableFuture.completedFuture(Optional.of(cached));
-        if (isNegativeCached(missingAccounts, id)) return CompletableFuture.completedFuture(Optional.empty());
+        if (lazyCacheEnabled && isNegativeCached(missingAccounts, id)) {
+            return CompletableFuture.completedFuture(Optional.empty());
+        }
         CompletableFuture<Optional<AccountRecord>> future = accountLoads.computeIfAbsent(id,
                 ignored -> CompletableFuture.supplyAsync(() -> {
             while (true) {
@@ -1047,7 +1066,7 @@ public class AccountService {
                         if (live != null) return Optional.of(live);
                         if (observedIdentityVersion != accountIdentityVersion.get()) continue;
                         if (loaded.isEmpty()) {
-                            missingAccounts.put(id, System.nanoTime());
+                            if (lazyCacheEnabled) missingAccounts.put(id, System.nanoTime());
                             return Optional.<AccountRecord>empty();
                         }
                         AccountRecord record = prepareLoadedRecord(loaded.get());
