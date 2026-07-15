@@ -10,7 +10,7 @@ OpenEco supports eager in-memory state and an opt-in lazy working-set cache. Bot
 
 In the default `eager` mode, accounts and balances are read with one ordered streaming join and retained in the in-memory registry.
 
-In `lazy` mode, startup does not scan account balances and cold UUID/name lookups load from JDBC. With `account-cache.enabled: true`, recently accessed accounts form a bounded hot set and clean offline entries expire after the configured idle period. With caching disabled, clean records are removed on a short maintenance cycle while dirty and in-flight records remain temporarily for correctness. Concurrent UUID misses are coalesced in both variants. Synchronous Vault and OpenEco API calls can therefore wait for database I/O on a cold lookup.
+In `lazy` mode, startup does not scan account balances and cold UUID/name lookups load from JDBC. With `account-loading.lazy.cache.enabled: true`, recently accessed accounts form a bounded hot set and clean offline entries expire after the configured idle period. With caching disabled, clean records are removed on a short maintenance cycle while dirty and in-flight records remain temporarily for correctness. Concurrent UUID misses are coalesced in both variants. Synchronous Vault and OpenEco API calls can therefore wait for database I/O on a cold lookup.
 
 Explicit bulk APIs such as `getUUIDNameMap()` still materialize the requested full result for compatibility. Addons that iterate every account can therefore create temporary memory and database load even when lazy caching is enabled.
 

@@ -105,9 +105,9 @@ public class AccountService {
     });
     private volatile boolean lazyAccountMode;
     private volatile boolean lazyCacheEnabled;
-    private volatile int accountCacheMaximumSize;
-    private volatile long accountCacheExpireNanos;
-    private boolean accountCacheModeInitialized;
+    private volatile int lazyCacheMaximumSize;
+    private volatile long lazyCacheExpireNanos;
+    private boolean accountLoadingModeInitialized;
 
     // Pay cooldown tracker
     private final ConcurrentHashMap<UUID, Long> lastPayTime = new ConcurrentHashMap<>();
@@ -142,28 +142,29 @@ public class AccountService {
 
     private void readConfig(FileConfiguration config) {
         EconomyConfigSnapshot updated = EconomyConfigSnapshot.from(config);
-        String cacheMode = config.getString("account-cache.mode", "eager");
-        if (cacheMode == null || (!cacheMode.equalsIgnoreCase("eager") && !cacheMode.equalsIgnoreCase("lazy"))) {
-            throw new IllegalArgumentException("account-cache.mode must be eager or lazy");
+        String loadingMode = config.getString("account-loading.mode", "eager");
+        if (loadingMode == null || (!loadingMode.equalsIgnoreCase("eager") && !loadingMode.equalsIgnoreCase("lazy"))) {
+            throw new IllegalArgumentException("account-loading.mode must be eager or lazy");
         }
-        boolean requestedLazyMode = cacheMode.equalsIgnoreCase("lazy");
-        boolean requestedCacheEnabled = config.getBoolean("account-cache.enabled", true);
-        int maximumSize = config.getInt("account-cache.maximum-size", 50_000);
-        long expireMinutes = config.getLong("account-cache.expire-after-access-minutes", 30L);
-        if (maximumSize <= 0) throw new IllegalArgumentException("account-cache.maximum-size must be greater than 0");
+        boolean requestedLazyMode = loadingMode.equalsIgnoreCase("lazy");
+        boolean requestedCacheEnabled = config.getBoolean("account-loading.lazy.cache.enabled", true);
+        int maximumSize = config.getInt("account-loading.lazy.cache.maximum-size", 50_000);
+        long expireMinutes = config.getLong("account-loading.lazy.cache.expire-after-access-minutes", 30L);
+        if (maximumSize <= 0) throw new IllegalArgumentException(
+                "account-loading.lazy.cache.maximum-size must be greater than 0");
         if (expireMinutes <= 0) throw new IllegalArgumentException(
-                "account-cache.expire-after-access-minutes must be greater than 0");
-        if (accountCacheModeInitialized && requestedLazyMode != lazyAccountMode) {
-            throw new IllegalArgumentException("account-cache.mode requires a server restart");
+                "account-loading.lazy.cache.expire-after-access-minutes must be greater than 0");
+        if (accountLoadingModeInitialized && requestedLazyMode != lazyAccountMode) {
+            throw new IllegalArgumentException("account-loading.mode requires a server restart");
         }
-        if (accountCacheModeInitialized && lazyAccountMode && requestedCacheEnabled != lazyCacheEnabled) {
-            throw new IllegalArgumentException("account-cache.enabled requires a server restart");
+        if (accountLoadingModeInitialized && lazyAccountMode && requestedCacheEnabled != lazyCacheEnabled) {
+            throw new IllegalArgumentException("account-loading.lazy.cache.enabled requires a server restart");
         }
         this.lazyAccountMode = requestedLazyMode;
         this.lazyCacheEnabled = requestedCacheEnabled;
-        this.accountCacheModeInitialized = true;
-        this.accountCacheMaximumSize = maximumSize;
-        this.accountCacheExpireNanos = TimeUnit.MINUTES.toNanos(expireMinutes);
+        this.accountLoadingModeInitialized = true;
+        this.lazyCacheMaximumSize = maximumSize;
+        this.lazyCacheExpireNanos = TimeUnit.MINUTES.toNanos(expireMinutes);
         this.config = updated;
         syncConfiguredCurrencies(updated);
         leaderboardCache.configureCurrencies(updated.currencies().all().stream().map(CurrencyDefinition::id).toList());
@@ -1039,8 +1040,8 @@ public class AccountService {
         if (!lazyAccountMode) return;
         int evicted;
         synchronized (persistenceLock) {
-            long expiry = lazyCacheEnabled ? accountCacheExpireNanos : 0L;
-            int maximumSize = lazyCacheEnabled ? accountCacheMaximumSize : 0;
+            long expiry = lazyCacheEnabled ? lazyCacheExpireNanos : 0L;
+            int maximumSize = lazyCacheEnabled ? lazyCacheMaximumSize : 0;
             evicted = accountRegistry.evict(expiry, maximumSize);
         }
         long cutoff = System.nanoTime() - NEGATIVE_CACHE_TTL_NANOS;

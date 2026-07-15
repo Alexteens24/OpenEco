@@ -451,10 +451,10 @@ class AccountServicePersistenceIntegrationTest {
             writer.shutdown();
 
             YamlConfiguration lazyConfig = testConfig(0.0, -1);
-            lazyConfig.set("account-cache.mode", "lazy");
-            lazyConfig.set("account-cache.enabled", true);
-            lazyConfig.set("account-cache.maximum-size", 50_000);
-            lazyConfig.set("account-cache.expire-after-access-minutes", 30);
+            lazyConfig.set("account-loading.mode", "lazy");
+            lazyConfig.set("account-loading.lazy.cache.enabled", true);
+            lazyConfig.set("account-loading.lazy.cache.maximum-size", 50_000);
+            lazyConfig.set("account-loading.lazy.cache.expire-after-access-minutes", 30);
             AccountService reader = newServiceWithConfig(repository, lazyConfig);
             reader.loadAll();
 
@@ -488,8 +488,8 @@ class AccountServicePersistenceIntegrationTest {
             writer.shutdown();
 
             YamlConfiguration config = testConfig(0.0, -1);
-            config.set("account-cache.mode", "lazy");
-            config.set("account-cache.enabled", false);
+            config.set("account-loading.mode", "lazy");
+            config.set("account-loading.lazy.cache.enabled", false);
             AccountService reader = newServiceWithConfig(repository, config);
             reader.loadAll();
 
@@ -630,10 +630,10 @@ class AccountServicePersistenceIntegrationTest {
         repository.upsertBatch(List.of(new AccountRecord(
                 accountId, "Alice", new BigDecimal("5.00"), 1L, 1L)));
         YamlConfiguration config = testConfig(0.0, -1);
-        config.set("account-cache.mode", "lazy");
-        config.set("account-cache.enabled", true);
-        config.set("account-cache.maximum-size", 50_000);
-        config.set("account-cache.expire-after-access-minutes", 30);
+        config.set("account-loading.mode", "lazy");
+        config.set("account-loading.lazy.cache.enabled", true);
+        config.set("account-loading.lazy.cache.maximum-size", 50_000);
+        config.set("account-loading.lazy.cache.expire-after-access-minutes", 30);
         AccountService service = newServiceWithConfig(repository, config);
         ExecutorService executor = Executors.newSingleThreadExecutor();
 
