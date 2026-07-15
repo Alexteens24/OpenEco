@@ -74,11 +74,17 @@ baltop:
 
 history:
   retention-days: -1
+
+account-cache:
+  mode: eager                     # Use lazy for very large account sets
+  maximum-size: 50000
+  expire-after-access-minutes: 30
 ```
 
 - Lower `persistence.autosave-interval-seconds` reduces worst-case balance loss after an unclean stop.
 - `pay.min-amount` helps prevent spammy micro-transfers.
 - `history.retention-days: -1` keeps all history; positive values prune in the background.
+- Start with `account-cache.mode: eager`. For large long-lived datasets, stage `lazy` mode and monitor cold DB latency before production rollout.
 
 ## Backups
 
@@ -118,7 +124,7 @@ The FastStats integration submits built-in Bukkit platform metrics plus these Op
 | Source ID | Type | Value |
 |---|---|---|
 | `storage_backend` | String | Active database type |
-| `account_count` | Number | Number of loaded economy accounts |
+| `account_count` | Number | Total number of stored economy accounts |
 | `currency_count` | Number | Number of configured currencies |
 | `cross_server_enabled` | Boolean | Whether proxy-assisted handoff is enabled |
 | `integrations` | String array | Detected Vault and PlaceholderAPI integrations |

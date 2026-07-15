@@ -65,7 +65,7 @@ The API does not move your work onto a safe thread.
 
 OpenEco uses result objects for normal business-rule failures (insufficient funds, account not found, balance limit, cooldown, cancelled events).
 
-`OpenEcoApiException` is reserved for API-level failures such as history read failures.
+`OpenEcoApiException` reports storage-backed API failures such as cold account, leaderboard, or history reads.
 
 ## Accounts
 

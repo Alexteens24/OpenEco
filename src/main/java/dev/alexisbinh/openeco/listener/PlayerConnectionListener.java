@@ -47,8 +47,15 @@ public class PlayerConnectionListener implements Listener {
     /** Cross-server: re-read account from DB before the player finishes connecting. */
     @EventHandler(priority = EventPriority.LOWEST)
     public void onPreLogin(AsyncPlayerPreLoginEvent event) {
-        if (!service.isCrossServerEnabled()) return;
-        service.refreshAccount(event.getUniqueId());
+        if (service.isCrossServerEnabled()) {
+            service.refreshAccount(event.getUniqueId());
+        } else if (service.isLazyAccountCacheEnabled()) {
+            try {
+                service.preloadAccount(event.getUniqueId()).join();
+            } catch (RuntimeException e) {
+                log.warning("Failed to preload economy account for " + event.getUniqueId() + ": " + e.getMessage());
+            }
+        }
     }
 
     @EventHandler
@@ -66,6 +73,7 @@ public class PlayerConnectionListener implements Listener {
         } else {
             handleCreateFailure(event, uuid, name, service.createAccountDetailed(uuid, name));
         }
+        service.markAccountOnline(uuid);
     }
 
     private void handleCreateFailure(PlayerJoinEvent event, UUID accountId, String name,
@@ -118,8 +126,10 @@ public class PlayerConnectionListener implements Listener {
     /** Cross-server: flush account to DB when the player disconnects (before joining another server). */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onQuit(PlayerQuitEvent event) {
-        if (!service.isCrossServerEnabled()) return;
         UUID uuid = event.getPlayer().getUniqueId();
-        plugin.getServer().getAsyncScheduler().runNow(plugin, task -> service.flushAccount(uuid));
+        service.markAccountOffline(uuid);
+        if (service.isCrossServerEnabled() || service.isLazyAccountCacheEnabled()) {
+            plugin.getServer().getAsyncScheduler().runNow(plugin, task -> service.flushAccount(uuid));
+        }
     }
 }

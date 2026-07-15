@@ -28,6 +28,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
 import java.util.UUID;
@@ -38,6 +39,68 @@ class JdbcAccountRepositoryIntegrationTest {
 
     @TempDir
     Path tempDir;
+
+    @Test
+    void legacySchemaRejectsCaseInsensitiveDuplicateNamesBeforeAddingUniqueIndex() throws Exception {
+        String filename = "legacy-duplicate-name-test";
+        try (Connection connection = DriverManager.getConnection(DatabaseDialect.H2.getJdbcUrl(tempDir.toString(), filename));
+             Statement stmt = connection.createStatement()) {
+            stmt.execute("""
+                CREATE TABLE accounts (
+                    id VARCHAR(36) NOT NULL PRIMARY KEY,
+                    name VARCHAR(16) NOT NULL,
+                    balance DECIMAL(30,8) NOT NULL DEFAULT 0,
+                    created_at BIGINT NOT NULL,
+                    updated_at BIGINT NOT NULL
+                )
+                """);
+            stmt.execute("""
+                CREATE TABLE transactions (
+                    type VARCHAR(16) NOT NULL,
+                    counterpart_id VARCHAR(36),
+                    target_id VARCHAR(36) NOT NULL,
+                    amount DECIMAL(30,8) NOT NULL,
+                    balance_before DECIMAL(30,8) NOT NULL,
+                    balance_after DECIMAL(30,8) NOT NULL,
+                    ts BIGINT NOT NULL
+                )
+                """);
+            stmt.execute("INSERT INTO accounts VALUES('" + UUID.randomUUID() + "','Alice',0,1,1)");
+            stmt.execute("INSERT INTO accounts VALUES('" + UUID.randomUUID() + "','alice',0,1,1)");
+        }
+
+        SQLException error = assertThrows(SQLException.class,
+                () -> new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), filename));
+        assertTrue(error.getMessage().contains("Duplicate stored account name"));
+    }
+
+    @Test
+    void lazyLookupAndLeaderboardQueriesWorkOnLocalDialects() throws Exception {
+        for (DatabaseDialect dialect : List.of(DatabaseDialect.SQLITE, DatabaseDialect.H2)) {
+            String filename = "lazy-query-" + dialect.name().toLowerCase() + (dialect == DatabaseDialect.SQLITE ? ".db" : "");
+            JdbcAccountRepository repository = new JdbcAccountRepository(
+                    dialect, tempDir.toString(), filename, "openeco");
+            try {
+                UUID aliceId = UUID.randomUUID();
+                UUID bobId = UUID.randomUUID();
+                AccountRecord alice = new AccountRecord(aliceId, "Alice", new BigDecimal("20.00"), 1L, 1L);
+                AccountRecord bob = new AccountRecord(bobId, "Bob", new BigDecimal("10.00"), 1L, 1L);
+                repository.upsertBatch(List.of(alice, bob));
+
+                assertEquals(aliceId, repository.loadAccountByName("aLiCe").orElseThrow().getId());
+                assertTrue(repository.isNameClaimedByAnother(bobId, "alice"));
+                assertFalse(repository.insertAccount(
+                        new AccountRecord(UUID.randomUUID(), "ALICE", BigDecimal.ZERO, 1L, 1L)));
+                assertEquals(List.of(aliceId, bobId), repository.loadLeaderboardPage("openeco", 0, 10)
+                        .entries().stream().map(entry -> entry.accountId()).toList());
+                assertEquals(1, repository.loadLeaderboardRank("openeco", aliceId));
+                assertEquals(2, repository.loadLeaderboardRank("openeco", bobId));
+                assertEquals(-1, repository.loadLeaderboardRank("openeco", UUID.randomUUID()));
+            } finally {
+                repository.close();
+            }
+        }
+    }
 
     @Test
     void upsertLoadHistoryAndDeleteWorkAgainstH2() throws Exception {

@@ -5,7 +5,7 @@ The `config.yml` file lives in `plugins/OpenEco/`. OpenEco auto-migrates legacy 
 Click any option below to view additional information.
 
 ::: tip Apply most changes without a restart
-After editing `config.yml`, run `/eco reload` to apply messages and most runtime rules. Storage backends and `cross-server.enabled` still require a restart.
+After editing `config.yml`, run `/eco reload` to apply messages and most runtime rules. Storage backends, `cross-server.enabled`, and `account-cache.mode` still require a restart.
 :::
 
 <ConfigGroup name="currencies">
@@ -150,6 +150,22 @@ Seconds between automatic background saves. Must be greater than `0`. Lower valu
 
 </ConfigGroup>
 
+<ConfigGroup name="account-cache">
+
+<ConfigProperty name="mode" value="eager" type="string">
+`eager` loads every account at startup. `lazy` keeps only online and recently accessed accounts in RAM and reads cold accounts from the database. **Restart required.**
+</ConfigProperty>
+
+<ConfigProperty name="maximum-size" value="50000" type="number">
+Lazy mode soft limit for clean inactive accounts retained in RAM. Online or dirty accounts are never evicted, so the cache may temporarily exceed this value.
+</ConfigProperty>
+
+<ConfigProperty name="expire-after-access-minutes" value="30" type="number">
+Lazy mode idle time before a clean offline account becomes eligible for eviction.
+</ConfigProperty>
+
+</ConfigGroup>
+
 <ConfigGroup name="pay">
 
 <ConfigProperty name="cooldown-seconds" value="0" type="number">
@@ -228,6 +244,11 @@ storage:
 
 persistence:
   autosave-interval-seconds: 30
+
+account-cache:
+  mode: eager
+  maximum-size: 50000
+  expire-after-access-minutes: 30
 
 pay:
   cooldown-seconds: 0

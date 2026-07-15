@@ -25,6 +25,7 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
+import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.Collections;
 import java.util.List;
@@ -33,8 +34,14 @@ public class BalanceCommand implements CommandExecutor, TabCompleter {
 
     private final AccountService service;
     private final Messages messages;
+    private final JavaPlugin plugin;
 
     public BalanceCommand(AccountService service, Messages messages) {
+        this(null, service, messages);
+    }
+
+    public BalanceCommand(JavaPlugin plugin, AccountService service, Messages messages) {
+        this.plugin = plugin;
         this.service = service;
         this.messages = messages;
     }
@@ -62,7 +69,10 @@ public class BalanceCommand implements CommandExecutor, TabCompleter {
         }
 
         if (args.length == 1 && sender instanceof Player player && service.hasCurrency(args[0])
-                && (!sender.hasPermission("openeco.command.balance.others") || service.findByName(args[0]).isEmpty())) {
+                && (!sender.hasPermission("openeco.command.balance.others")
+                || (service.isLazyAccountCacheEnabled()
+                    ? !service.isAccountNameCached(args[0])
+                    : service.findByName(args[0]).isEmpty()))) {
             if (!player.hasPermission("openeco.command.balance")) {
                 messages.send(sender, "no-permission");
                 return true;
@@ -88,6 +98,9 @@ public class BalanceCommand implements CommandExecutor, TabCompleter {
                 return true;
             }
         }
+
+        if (CommandAccountResolver.deferColdLookup(plugin, service, messages, sender, targetName,
+                () -> onCommand(sender, command, label, args.clone()))) return true;
 
         var optAccount = service.findByName(targetName);
         if (optAccount.isEmpty()) {
@@ -133,4 +146,3 @@ public class BalanceCommand implements CommandExecutor, TabCompleter {
         return Collections.emptyList();
     }
 }
-

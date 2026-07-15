@@ -35,6 +35,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -61,6 +62,15 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
                              @NotNull String label, @NotNull String[] args) {
         if (args.length > 3) {
             sender.sendMessage("§cUsage: /history [self|player] [page] [currency]");
+            return true;
+        }
+
+        boolean playerSelfArgument = sender instanceof Player && args.length > 0
+                && (args[0].equalsIgnoreCase("self") || isPageNumber(args[0]) || service.hasCurrency(args[0]));
+        if (args.length > 0 && !playerSelfArgument
+                && sender.hasPermission("openeco.command.history.others")
+                && CommandAccountResolver.deferColdLookup(plugin, service, messages, sender, args[0],
+                    () -> onCommand(sender, command, label, args.clone()))) {
             return true;
         }
 
@@ -92,7 +102,7 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
                 int totalPages = Math.max(1, (int) Math.ceil((double) totalEntries / pageSize));
                 int page = Math.min(requestedPage, totalPages);
                 List<TransactionEntry> entries = service.getTransactions(targetId, currencyId, page, pageSize);
-                Map<UUID, String> nameMap = service.getUUIDNameMap();
+                Map<UUID, String> nameMap = loadCounterpartNames(entries);
 
                 dispatchReply(sender, () -> {
                     messages.send(sender, "history-header",
@@ -107,7 +117,7 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
                         sender.sendMessage(formatEntry(entry, nameMap, currencyId));
                     }
                 });
-            } catch (SQLException ex) {
+            } catch (SQLException | RuntimeException ex) {
                 plugin.getLogger().warning("Failed to load transaction history for " + targetId + ": " + ex.getMessage());
                 dispatchReply(sender, () -> messages.send(sender, "history-error"));
             }
@@ -132,7 +142,8 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
             return createSelfRequest(player, args, 1);
         }
 
-        if (player.hasPermission("openeco.command.history.others")) {
+        if (player.hasPermission("openeco.command.history.others")
+                && (!service.isLazyAccountCacheEnabled() || service.isAccountNameCached(args[0]))) {
             var target = service.findByName(args[0]);
             if (target.isPresent()) {
                 return createOtherRequest(target.get(), args, 1);
@@ -182,6 +193,17 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
     private HistoryRequest createOtherRequest(AccountRecord target, String[] args, int startIndex) {
         ParsedArguments parsed = parseArguments(args, startIndex);
         return new HistoryRequest(target.getId(), target.getLastKnownName(), parsed.page(), parsed.currencyId());
+    }
+
+    private Map<UUID, String> loadCounterpartNames(List<TransactionEntry> entries) {
+        Map<UUID, String> names = new HashMap<>();
+        for (TransactionEntry entry : entries) {
+            UUID counterpartId = entry.getCounterpartId();
+            if (counterpartId == null || names.containsKey(counterpartId)) continue;
+            service.getAccount(counterpartId)
+                    .ifPresent(account -> names.put(counterpartId, account.getLastKnownName()));
+        }
+        return names;
     }
 
     private ParsedArguments parseArguments(String[] args, int startIndex) {
