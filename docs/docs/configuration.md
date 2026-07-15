@@ -162,10 +162,12 @@ Controls record retention inside `lazy` mode. When `true`, clean loaded accounts
 
 <ConfigProperty name="lazy.cache.maximum-size" value="50000" type="number">
 Lazy mode soft limit for clean inactive accounts retained in RAM. Online or dirty accounts are never evicted, so the cache may temporarily exceed this value.
+Ignored unless lazy mode and lazy cache retention are both enabled.
 </ConfigProperty>
 
 <ConfigProperty name="lazy.cache.expire-after-access-minutes" value="30" type="number">
 Lazy mode idle time before a clean offline account becomes eligible for eviction.
+Ignored unless lazy mode and lazy cache retention are both enabled.
 </ConfigProperty>
 
 </ConfigGroup>

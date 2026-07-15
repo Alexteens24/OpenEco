@@ -29,6 +29,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
 final class AccountRegistry {
@@ -37,12 +38,14 @@ final class AccountRegistry {
     private final ConcurrentHashMap<String, UUID> nameIndex = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<UUID, Long> lastAccessNanos = new ConcurrentHashMap<>();
     private final Set<UUID> onlineAccounts = ConcurrentHashMap.newKeySet();
+    private final ConcurrentHashMap<UUID, AtomicInteger> activeLeases = new ConcurrentHashMap<>();
 
     void clear() {
         accounts.clear();
         nameIndex.clear();
         lastAccessNanos.clear();
         onlineAccounts.clear();
+        activeLeases.clear();
     }
 
     boolean addLoaded(AccountRecord record) {
@@ -187,6 +190,33 @@ final class AccountRegistry {
         return accounts.get(id) == record;
     }
 
+    AccountLease tryAcquireLease(UUID id, AccountRecord record) {
+        synchronized (record) {
+            if (!isLive(id, record)) return null;
+            activeLeases.compute(id, (ignored, count) -> {
+                if (count == null) return new AtomicInteger(1);
+                count.incrementAndGet();
+                return count;
+            });
+            touch(id);
+            return new AccountLease(this, id, record);
+        }
+    }
+
+    AccountLease acquireLease(UUID id) {
+        AccountRecord record = getLiveRecord(id);
+        return record == null ? null : tryAcquireLease(id, record);
+    }
+
+    void releaseLease(UUID id) {
+        activeLeases.computeIfPresent(id, (ignored, count) -> count.decrementAndGet() <= 0 ? null : count);
+    }
+
+    boolean hasActiveLease(UUID id) {
+        AtomicInteger count = activeLeases.get(id);
+        return count != null && count.get() > 0;
+    }
+
     Map<UUID, String> getUUIDNameMap() {
         Map<UUID, String> map = new HashMap<>(accounts.size());
         for (AccountRecord record : accounts.values()) {
@@ -232,11 +262,11 @@ final class AccountRegistry {
             boolean oversized = accounts.size() > maximumSize;
             if (!expired && !oversized) continue;
             UUID id = candidate.getKey();
-            if (onlineAccounts.contains(id)) continue;
+            if (onlineAccounts.contains(id) || hasActiveLease(id)) continue;
             AccountRecord record = accounts.get(id);
             if (record == null) continue;
             synchronized (record) {
-                if (record.isDirty() || onlineAccounts.contains(id)) continue;
+                if (record.isDirty() || onlineAccounts.contains(id) || hasActiveLease(id)) continue;
                 if (remove(id, record)) removed++;
             }
         }

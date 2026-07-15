@@ -20,6 +20,12 @@ final class CommandAccountResolver {
 
     static boolean deferColdLookup(JavaPlugin plugin, AccountService service, Messages messages,
                                    CommandSender sender, String accountName, Runnable retry) {
+        return deferColdLookup(plugin, service, messages, sender, accountName,
+                () -> messages.send(sender, "account-not-found", Placeholder.unparsed("player", accountName)), retry);
+    }
+
+    static boolean deferColdLookup(JavaPlugin plugin, AccountService service, Messages messages,
+                                   CommandSender sender, String accountName, Runnable missing, Runnable retry) {
         if (plugin == null || !service.isLazyAccountModeEnabled() || service.isAccountNameCached(accountName)) {
             return false;
         }
@@ -27,9 +33,16 @@ final class CommandAccountResolver {
             if (error != null) {
                 messages.send(sender, "storage-error");
             } else if (account.isEmpty()) {
-                messages.send(sender, "account-not-found", Placeholder.unparsed("player", accountName));
+                missing.run();
             } else {
-                retry.run();
+                AccountService.AccountPin pin = service.pinAccount(account.get().getId()).orElse(null);
+                if (pin == null) {
+                    messages.send(sender, "storage-error");
+                    return;
+                }
+                try (pin) {
+                    retry.run();
+                }
             }
         }));
         return true;

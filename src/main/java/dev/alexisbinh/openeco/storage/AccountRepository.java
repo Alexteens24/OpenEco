@@ -56,6 +56,14 @@ public interface AccountRepository extends TransactionRepository {
         return Map.copyOf(result);
     }
 
+    default Map<UUID, String> loadNames(Collection<UUID> accountIds) throws SQLException {
+        java.util.LinkedHashMap<UUID, String> result = new java.util.LinkedHashMap<>();
+        for (UUID accountId : accountIds) {
+            loadAccount(accountId).ifPresent(record -> result.put(accountId, record.getLastKnownName()));
+        }
+        return Map.copyOf(result);
+    }
+
     default int countAccounts() throws SQLException {
         return loadAll().size();
     }

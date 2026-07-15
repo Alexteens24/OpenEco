@@ -114,6 +114,23 @@ class ConfigMigratorTest {
     }
 
     @Test
+    void migratesExperimentalAccountCacheSettings() {
+        YamlConfiguration current = new YamlConfiguration();
+        current.set("account-cache.mode", "lazy");
+        current.set("account-cache.enabled", false);
+        current.set("account-cache.maximum-size", 1234);
+        current.set("account-cache.expire-after-access-minutes", 7);
+
+        YamlConfiguration migrated = ConfigMigrator.rewrite(current, loadBundledDefaultConfig());
+
+        assertEquals("lazy", migrated.getString("account-loading.mode"));
+        assertFalse(migrated.getBoolean("account-loading.lazy.cache.enabled"));
+        assertEquals(1234, migrated.getInt("account-loading.lazy.cache.maximum-size"));
+        assertEquals(7, migrated.getLong("account-loading.lazy.cache.expire-after-access-minutes"));
+        assertFalse(migrated.contains("account-cache"));
+    }
+
+    @Test
     void keepsCustomCurrenciesInsideTheCurrenciesSection() {
         YamlConfiguration current = new YamlConfiguration();
         current.set("currencies.default", "gems");

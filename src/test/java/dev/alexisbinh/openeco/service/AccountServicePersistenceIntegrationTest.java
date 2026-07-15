@@ -299,6 +299,35 @@ class AccountServicePersistenceIntegrationTest {
     }
 
     @Test
+    void refreshAccountRemovesCleanRecordDeletedOnAnotherServer() throws Exception {
+        String filename = "cross-server-delete-refresh-test";
+        UUID accountId = UUID.randomUUID();
+
+        JdbcAccountRepository writerRepository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), filename);
+        JdbcAccountRepository readerRepository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), filename);
+        try {
+            AccountService writer = newService(writerRepository);
+            AccountService reader = newService(readerRepository);
+            writer.loadAll();
+            assertTrue(writer.createAccount(accountId, "Alice"));
+            writer.flushAccount(accountId);
+
+            reader.loadAll();
+            assertTrue(reader.hasAccount(accountId));
+            writerRepository.delete(accountId);
+
+            reader.refreshAccount(accountId);
+
+            assertFalse(reader.hasAccount(accountId));
+            writer.shutdown();
+            reader.shutdown();
+        } finally {
+            writerRepository.close();
+            readerRepository.close();
+        }
+    }
+
+    @Test
     void refreshAccountSkipsIfLocalRecordIsDirty() throws Exception {
         String filename = "cross-server-refresh-dirty-test";
         UUID accountId = UUID.randomUUID();
@@ -917,6 +946,32 @@ class AccountServicePersistenceIntegrationTest {
 
     private static AccountService newServiceWithRetention(JdbcAccountRepository repository, int retentionDays) {
         return newServiceWithConfig(repository, testConfig(0.0, retentionDays));
+    }
+
+    @Test
+    void validatesLazyCacheLimitsOnlyWhenRetentionIsActive() {
+        BlockingRepository repository = new BlockingRepository();
+
+        YamlConfiguration eager = testConfig(0.0, -1);
+        eager.set("account-loading.mode", "eager");
+        eager.set("account-loading.lazy.cache.maximum-size", 0);
+        eager.set("account-loading.lazy.cache.expire-after-access-minutes", 0);
+        AccountService eagerService = assertDoesNotThrow(() -> newServiceWithConfig(repository, eager));
+        eagerService.shutdown();
+
+        YamlConfiguration noRetention = testConfig(0.0, -1);
+        noRetention.set("account-loading.mode", "lazy");
+        noRetention.set("account-loading.lazy.cache.enabled", false);
+        noRetention.set("account-loading.lazy.cache.maximum-size", 0);
+        noRetention.set("account-loading.lazy.cache.expire-after-access-minutes", 0);
+        AccountService noRetentionService = assertDoesNotThrow(() -> newServiceWithConfig(repository, noRetention));
+        noRetentionService.shutdown();
+
+        YamlConfiguration retained = testConfig(0.0, -1);
+        retained.set("account-loading.mode", "lazy");
+        retained.set("account-loading.lazy.cache.enabled", true);
+        retained.set("account-loading.lazy.cache.maximum-size", 0);
+        assertThrows(IllegalArgumentException.class, () -> newServiceWithConfig(repository, retained));
     }
 
     private static YamlConfiguration testConfig(double taxPercent, int retentionDays) {

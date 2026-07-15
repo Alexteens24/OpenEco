@@ -90,7 +90,7 @@ jobs:
           if-no-files-found: warn
 
   remote-storage:
-    name: Remote Storage Streaming
+    name: Remote Storage Integration
     runs-on: ubuntu-latest
     needs: wrapper-validation
 
@@ -142,7 +142,7 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
-      - name: Test streaming account scans
+      - name: Test remote storage operations
         env:
           OPEN_ECO_REMOTE_TESTS: 'true'
         run: ./gradlew --no-daemon :test --tests '*RemoteAccountScanIntegrationTest'

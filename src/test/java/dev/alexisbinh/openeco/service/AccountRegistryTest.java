@@ -149,4 +149,20 @@ class AccountRegistryTest {
         assertTrue(registry.hasAccount(dirty.getId()));
         assertFalse(registry.hasAccount(idle.getId()));
     }
+
+    @Test
+    void evictionKeepsAccountUntilActiveLeaseCloses() {
+        AccountRegistry registry = new AccountRegistry();
+        AccountRecord record = new AccountRecord(UUID.randomUUID(), "Leased", BigDecimal.ZERO, 1L, 1L);
+        assertTrue(registry.create(record));
+
+        AccountLease lease = registry.acquireLease(record.getId());
+        assertNotNull(lease);
+        assertEquals(0, registry.evict(Long.MAX_VALUE, 0));
+        assertTrue(registry.hasAccount(record.getId()));
+
+        lease.close();
+        assertEquals(1, registry.evict(Long.MAX_VALUE, 0));
+        assertFalse(registry.hasAccount(record.getId()));
+    }
 }

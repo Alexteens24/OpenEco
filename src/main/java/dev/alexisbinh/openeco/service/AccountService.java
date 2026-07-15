@@ -47,11 +47,14 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 import java.util.logging.Logger;
 
 public class AccountService {
@@ -81,6 +84,11 @@ public class AccountService {
         FAILED
     }
 
+    public enum LoginAccountStatus {
+        READY,
+        READY_WITH_STALE_NAME
+    }
+
     private final AccountRepository repository;
     private final Logger log;
     private final Object persistenceLock = new Object();
@@ -96,13 +104,11 @@ public class AccountService {
     private final AtomicBoolean lazyLeaderboardDirty = new AtomicBoolean();
     private final AtomicLong accountIdentityVersion = new AtomicLong();
     private final ConcurrentHashMap<UUID, CompletableFuture<Optional<AccountRecord>>> accountLoads = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, CompletableFuture<Optional<AccountRecord>>> nameLoads = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<UUID, Long> missingAccounts = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Long> missingNames = new ConcurrentHashMap<>();
-    private final ExecutorService accountLoader = Executors.newFixedThreadPool(4, runnable -> {
-        Thread thread = new Thread(runnable, "OpenEco-account-loader");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private final ExecutorService accountLoader;
+    private final ExecutorService integrationExecutor;
     private volatile boolean lazyAccountMode;
     private volatile boolean lazyCacheEnabled;
     private volatile int lazyCacheMaximumSize;
@@ -113,7 +119,7 @@ public class AccountService {
     private final ConcurrentHashMap<UUID, Long> lastPayTime = new ConcurrentHashMap<>();
 
     public AccountService(AccountRepository repository, JavaPlugin plugin, FileConfiguration config) {
-        this(repository, plugin.getLogger(), plugin.getName(), config, new BukkitEventDispatcher());
+        this(repository, plugin.getLogger(), plugin.getName(), config, new BukkitEventDispatcher(plugin));
     }
 
     AccountService(AccountRepository repository, Logger log, String threadNamePrefix,
@@ -121,6 +127,8 @@ public class AccountService {
         this.repository = repository;
         this.log = log;
         this.eventDispatcher = eventDispatcher;
+        this.accountLoader = boundedExecutor(threadNamePrefix + "-account-loader", 512);
+        this.integrationExecutor = boundedExecutor(threadNamePrefix + "-integration", 256);
         this.transactionHistoryService = new TransactionHistoryService(repository, threadNamePrefix, this.log);
         this.economyOperations = new EconomyOperations(
                 accountRegistry,
@@ -129,7 +137,7 @@ public class AccountService {
                 this::logTransaction,
                 eventDispatcher,
                 this::markLeaderboardDirty,
-                this::getOrLoadLiveRecord);
+                this::acquireAccountLease);
         readConfig(config);
         this.crossServerEnabled = config.getBoolean("cross-server.enabled", false);
     }
@@ -150,9 +158,9 @@ public class AccountService {
         boolean requestedCacheEnabled = config.getBoolean("account-loading.lazy.cache.enabled", true);
         int maximumSize = config.getInt("account-loading.lazy.cache.maximum-size", 50_000);
         long expireMinutes = config.getLong("account-loading.lazy.cache.expire-after-access-minutes", 30L);
-        if (maximumSize <= 0) throw new IllegalArgumentException(
+        if (requestedLazyMode && requestedCacheEnabled && maximumSize <= 0) throw new IllegalArgumentException(
                 "account-loading.lazy.cache.maximum-size must be greater than 0");
-        if (expireMinutes <= 0) throw new IllegalArgumentException(
+        if (requestedLazyMode && requestedCacheEnabled && expireMinutes <= 0) throw new IllegalArgumentException(
                 "account-loading.lazy.cache.expire-after-access-minutes must be greater than 0");
         if (accountLoadingModeInitialized && requestedLazyMode != lazyAccountMode) {
             throw new IllegalArgumentException("account-loading.mode requires a server restart");
@@ -184,6 +192,10 @@ public class AccountService {
 
     public long getAccountCacheMaintenanceIntervalSeconds() {
         return isLazyAccountRetentionEnabled() ? 60L : 1L;
+    }
+
+    public long getLeaderboardRefreshIntervalMillis() {
+        return config.balTopCacheTtlMs();
     }
 
     // ── Startup ─────────────────────────────────────────────────────────────
@@ -228,7 +240,9 @@ public class AccountService {
     // ── Account management ───────────────────────────────────────────────────
 
     public boolean hasAccount(UUID id) {
-        return getOrLoadLiveRecord(id) != null;
+        try (AccountLease lease = acquireAccountLease(id)) {
+            return lease != null;
+        }
     }
 
     public Optional<AccountRecord> getAccount(UUID id) {
@@ -237,12 +251,11 @@ public class AccountService {
             return snapshot;
         }
 
-        AccountRecord record = getOrLoadLiveRecord(id);
-        if (record == null) {
-            return Optional.empty();
-        }
-        synchronized (record) {
-            return Optional.of(record.snapshot());
+        try (AccountLease lease = acquireAccountLease(id)) {
+            if (lease == null) return Optional.empty();
+            synchronized (lease.record()) {
+                return Optional.of(lease.record().snapshot());
+            }
         }
     }
 
@@ -276,15 +289,86 @@ public class AccountService {
     }
 
     public CompletableFuture<Optional<AccountRecord>> findByNameAsync(String name) {
-        return CompletableFuture.supplyAsync(() -> findByName(name), accountLoader);
+        if (name == null) return CompletableFuture.completedFuture(Optional.empty());
+        String normalized = AccountRegistry.normalizeName(name);
+        CompletableFuture<Optional<AccountRecord>> future = nameLoads.computeIfAbsent(normalized,
+                ignored -> submit(accountLoader, () -> findByName(name), "account name lookup queue is full"));
+        future.whenComplete((ignoredResult, ignoredError) -> nameLoads.remove(normalized, future));
+        return future;
+    }
+
+    public Map<UUID, String> loadAccountNames(java.util.Collection<UUID> accountIds) throws SQLException {
+        return repository.loadNames(accountIds);
+    }
+
+    public <T> CompletableFuture<T> supplyAsync(Supplier<T> supplier) {
+        return submit(integrationExecutor, supplier, "async integration queue is full");
     }
 
     public boolean isAccountNameCached(String name) {
         return accountRegistry.findSnapshotByName(name).isPresent();
     }
 
+    public boolean isAccountNameKnownMissing(String name) {
+        return name != null && lazyCacheEnabled
+                && isNegativeCached(missingNames, AccountRegistry.normalizeName(name));
+    }
+
     public CompletableFuture<Optional<AccountRecord>> preloadAccount(UUID id) {
         return loadAccountAsync(id).thenApply(optional -> optional.map(AccountRecord::snapshot));
+    }
+
+    public interface AccountPin extends AutoCloseable {
+        @Override
+        void close();
+    }
+
+    public Optional<AccountPin> pinAccount(UUID id) {
+        AccountLease lease = acquireAccountLease(id);
+        return lease == null ? Optional.empty() : Optional.of(lease::close);
+    }
+
+    /** Prepares and pins the account before Bukkit admits the player to the server. */
+    public PreparedLoginAccount prepareLoginAccount(UUID id, String name) {
+        if (crossServerEnabled) refreshAccountOrThrow(id);
+
+        Optional<AccountRecord> existing = getAccount(id);
+        LoginAccountStatus status = LoginAccountStatus.READY;
+        if (existing.isEmpty()) {
+            CreateAccountStatus created = createAccountDetailed(id, name);
+            if (created != CreateAccountStatus.CREATED && created != CreateAccountStatus.ALREADY_EXISTS) {
+                throw new OpenEcoApiException("Could not create account for login: " + created);
+            }
+        } else if (!existing.get().getLastKnownName().equals(name)) {
+            RenameAccountStatus renamed = renameAccountDetailed(id, name);
+            if (renamed == RenameAccountStatus.NOT_FOUND) {
+                CreateAccountStatus created = createAccountDetailed(id, name);
+                if (created != CreateAccountStatus.CREATED && created != CreateAccountStatus.ALREADY_EXISTS) {
+                    throw new OpenEcoApiException("Could not restore account for login: " + created);
+                }
+            } else if (renamed != RenameAccountStatus.RENAMED && renamed != RenameAccountStatus.UNCHANGED) {
+                status = LoginAccountStatus.READY_WITH_STALE_NAME;
+                log.warning("Keeping the previous economy account name for " + id
+                        + " because login rename returned " + renamed + '.');
+            }
+        }
+
+        AccountPin pin = pinAccount(id)
+                .orElseThrow(() -> new OpenEcoApiException("Economy account disappeared during login preparation"));
+        try {
+            if (!lazyAccountMode) flushAccountOrThrow(id);
+            return new PreparedLoginAccount(status, pin);
+        } catch (RuntimeException error) {
+            pin.close();
+            throw error;
+        }
+    }
+
+    public record PreparedLoginAccount(LoginAccountStatus status, AccountPin pin) implements AutoCloseable {
+        @Override
+        public void close() {
+            pin.close();
+        }
     }
 
     /** Creates an account if it doesn't exist yet. Returns true if created. */
@@ -526,8 +610,9 @@ public class AccountService {
 
     public BigDecimal getBalance(UUID id, String currencyId) {
         String resolvedCurrencyId = resolveCurrencyIdOrFallback(currencyId);
-        AccountRecord record = getOrLoadLiveRecord(id);
-        return record == null ? BigDecimal.ZERO : record.getBalance(resolvedCurrencyId);
+        try (AccountLease lease = acquireAccountLease(id)) {
+            return lease == null ? BigDecimal.ZERO : lease.record().getBalance(resolvedCurrencyId);
+        }
     }
 
     public boolean has(UUID id, BigDecimal amount) {
@@ -549,9 +634,9 @@ public class AccountService {
             return false;
         }
 
-        AccountRecord record = getOrLoadLiveRecord(id);
-        if (record == null) return false;
-        return record.getBalance(currency.id()).compareTo(scaled) >= 0;
+        try (AccountLease lease = acquireAccountLease(id)) {
+            return lease != null && lease.record().getBalance(currency.id()).compareTo(scaled) >= 0;
+        }
     }
 
     public BalanceCheckResult canDeposit(UUID id, BigDecimal amount) {
@@ -758,28 +843,33 @@ public class AccountService {
     // ── Account freeze ────────────────────────────────────────────────────────
 
     public boolean freezeAccount(UUID id) {
-        AccountRecord record = getOrLoadLiveRecord(id);
-        if (record == null) return false;
-        synchronized (record) {
-            if (!accountRegistry.isLive(id, record)) return false;
-            record.setFrozen(true);
-            return true;
+        try (AccountLease lease = acquireAccountLease(id)) {
+            if (lease == null) return false;
+            AccountRecord record = lease.record();
+            synchronized (record) {
+                if (!accountRegistry.isLive(id, record)) return false;
+                record.setFrozen(true);
+                return true;
+            }
         }
     }
 
     public boolean unfreezeAccount(UUID id) {
-        AccountRecord record = getOrLoadLiveRecord(id);
-        if (record == null) return false;
-        synchronized (record) {
-            if (!accountRegistry.isLive(id, record)) return false;
-            record.setFrozen(false);
-            return true;
+        try (AccountLease lease = acquireAccountLease(id)) {
+            if (lease == null) return false;
+            AccountRecord record = lease.record();
+            synchronized (record) {
+                if (!accountRegistry.isLive(id, record)) return false;
+                record.setFrozen(false);
+                return true;
+            }
         }
     }
 
     public boolean isFrozen(UUID id) {
-        AccountRecord record = getOrLoadLiveRecord(id);
-        return record != null && record.isFrozen();
+        try (AccountLease lease = acquireAccountLease(id)) {
+            return lease != null && lease.record().isFrozen();
+        }
     }
 
     // ── Formatting / currency ─────────────────────────────────────────────────
@@ -896,6 +986,14 @@ public class AccountService {
      * Intended for cross-server use: call async before the player disconnects.
      */
     public void flushAccount(UUID id) {
+        try {
+            flushAccountOrThrow(id);
+        } catch (OpenEcoApiException error) {
+            log.warning("Cross-server flush failed for " + id + ": " + error.getMessage());
+        }
+    }
+
+    private void flushAccountOrThrow(UUID id) {
         synchronized (persistenceLock) {
             AccountRecord live = accountRegistry.getLiveRecord(id);
             if (live == null) return;
@@ -913,17 +1011,17 @@ public class AccountService {
                 if (current != null) {
                     current.markDirty();
                 }
-                return;
+                throw new OpenEcoApiException("Pending transaction writes did not drain in time");
             }
 
             try {
                 repository.upsertBatch(List.of(snap));
             } catch (SQLException e) {
-                log.warning("Cross-server flush failed for " + id + ": " + e.getMessage());
                 AccountRecord current = accountRegistry.getLiveRecord(id);
                 if (current != null) {
                     current.markDirty();
                 }
+                throw new OpenEcoApiException("Failed to flush account " + id, e);
             }
         }
     }
@@ -934,42 +1032,82 @@ public class AccountService {
      */
     public void refreshAccount(UUID id) {
         try {
-            Optional<AccountRecord> fresh = repository.loadAccount(id);
-            if (fresh.isEmpty()) return;
-            AccountRecord freshRecord = fresh.get();
-            alignLoadedRecordCurrencies(freshRecord, config);
-
-            synchronized (persistenceLock) {
-                synchronized (accountIdentityLock) {
-                    AccountRecord live = accountRegistry.getLiveRecord(id);
-                    if (live != null && live.isDirty()) {
-                        log.info("Cross-server refresh skipped for " + id
-                                + " because the in-memory account has unsaved local changes.");
-                        return;
-                    }
-                    if (!accountRegistry.refreshInPlace(freshRecord)) {
-                        log.warning("Cross-server refresh skipped for " + id
-                                + " because refreshed account name '" + freshRecord.getLastKnownName()
-                                + "' is already claimed by another in-memory account.");
-                        return;
-                    }
-                    accountIdentityVersion.incrementAndGet();
-                }
-            }
-            markAllLeaderboardsDirty();
-        } catch (SQLException e) {
-            log.warning("Cross-server refresh failed for " + id + ": " + e.getMessage());
+            refreshAccountOrThrow(id);
+        } catch (OpenEcoApiException error) {
+            log.warning("Cross-server refresh failed for " + id + ": " + error.getMessage());
         }
     }
 
-    public void shutdown() {
-        accountLoader.shutdown();
+    private void refreshAccountOrThrow(UUID id) {
         try {
-            if (!accountLoader.awaitTermination(5, TimeUnit.SECONDS)) accountLoader.shutdownNow();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            accountLoader.shutdownNow();
+            while (true) {
+                long observedIdentityVersion = accountIdentityVersion.get();
+                Optional<AccountRecord> fresh = repository.loadAccount(id);
+                if (fresh.isEmpty()) {
+                    synchronized (persistenceLock) {
+                        synchronized (accountIdentityLock) {
+                            if (observedIdentityVersion != accountIdentityVersion.get()) continue;
+                            AccountRecord live = accountRegistry.getLiveRecord(id);
+                            if (live == null) return;
+                            synchronized (live) {
+                                if (live.isDirty() || accountRegistry.hasActiveLease(id)) {
+                                    log.info("Cross-server deletion refresh deferred for " + id
+                                            + " because the local account is dirty or in use.");
+                                    return;
+                                }
+                                if (accountRegistry.remove(id, live)) {
+                                    accountIdentityVersion.incrementAndGet();
+                                    if (lazyCacheEnabled) missingAccounts.put(id, System.nanoTime());
+                                    markAllLeaderboardsDirty();
+                                }
+                            }
+                        }
+                    }
+                    return;
+                }
+                AccountRecord freshRecord = fresh.get();
+                alignLoadedRecordCurrencies(freshRecord, config);
+
+                synchronized (persistenceLock) {
+                    synchronized (accountIdentityLock) {
+                        if (observedIdentityVersion != accountIdentityVersion.get()) continue;
+                        AccountRecord live = accountRegistry.getLiveRecord(id);
+                        if (live != null) {
+                            synchronized (live) {
+                                if (live.isDirty() || accountRegistry.hasActiveLease(id)) {
+                                    log.info("Cross-server refresh skipped for " + id
+                                            + " because the in-memory account is dirty or in use.");
+                                    return;
+                                }
+                                if (!accountRegistry.refreshInPlace(freshRecord)) {
+                                    logRefreshNameConflict(id, freshRecord);
+                                    return;
+                                }
+                            }
+                        } else if (!accountRegistry.refreshInPlace(freshRecord)) {
+                            logRefreshNameConflict(id, freshRecord);
+                            return;
+                        }
+                        accountIdentityVersion.incrementAndGet();
+                    }
+                }
+                markAllLeaderboardsDirty();
+                return;
+            }
+        } catch (SQLException e) {
+            throw new OpenEcoApiException("Failed to refresh account " + id, e);
         }
+    }
+
+    private void logRefreshNameConflict(UUID id, AccountRecord freshRecord) {
+        log.warning("Cross-server refresh skipped for " + id
+                + " because refreshed account name '" + freshRecord.getLastKnownName()
+                + "' is already claimed by another in-memory account.");
+    }
+
+    public void shutdown() {
+        shutdownExecutor(integrationExecutor);
+        shutdownExecutor(accountLoader);
         transactionHistoryService.shutdown();
         flushDirty();
     }
@@ -985,6 +1123,15 @@ public class AccountService {
         } catch (CompletionException e) {
             Throwable cause = e.getCause();
             throw new OpenEcoApiException("Failed to load account " + id, cause != null ? cause : e);
+        }
+    }
+
+    private @Nullable AccountLease acquireAccountLease(UUID id) {
+        while (true) {
+            AccountRecord record = getOrLoadLiveRecord(id);
+            if (record == null) return null;
+            AccountLease lease = accountRegistry.tryAcquireLease(id, record);
+            if (lease != null) return lease;
         }
     }
 
@@ -1057,7 +1204,7 @@ public class AccountService {
             return CompletableFuture.completedFuture(Optional.empty());
         }
         CompletableFuture<Optional<AccountRecord>> future = accountLoads.computeIfAbsent(id,
-                ignored -> CompletableFuture.supplyAsync(() -> {
+                ignored -> submit(accountLoader, () -> {
             while (true) {
                 long observedIdentityVersion = accountIdentityVersion.get();
                 try {
@@ -1082,9 +1229,51 @@ public class AccountService {
                     throw new CompletionException(e);
                 }
             }
-        }, accountLoader));
+        }, "account load queue is full"));
         future.whenComplete((ignoredResult, ignoredError) -> accountLoads.remove(id, future));
         return future;
+    }
+
+    private static ExecutorService boundedExecutor(String threadName, int queueCapacity) {
+        return new ThreadPoolExecutor(
+                4,
+                4,
+                0L,
+                TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(queueCapacity),
+                runnable -> {
+                    Thread thread = new Thread(runnable, threadName);
+                    thread.setDaemon(true);
+                    return thread;
+                },
+                new ThreadPoolExecutor.AbortPolicy());
+    }
+
+    private static <T> CompletableFuture<T> submit(
+            ExecutorService executor, Supplier<T> supplier, String rejectionMessage) {
+        CompletableFuture<T> future = new CompletableFuture<>();
+        try {
+            executor.execute(() -> {
+                try {
+                    future.complete(supplier.get());
+                } catch (Throwable error) {
+                    future.completeExceptionally(error);
+                }
+            });
+        } catch (RejectedExecutionException error) {
+            future.completeExceptionally(new OpenEcoApiException(rejectionMessage, error));
+        }
+        return future;
+    }
+
+    private static void shutdownExecutor(ExecutorService executor) {
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) executor.shutdownNow();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            executor.shutdownNow();
+        }
     }
 
     private AccountRecord prepareLoadedRecord(AccountRecord record) throws SQLException {

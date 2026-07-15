@@ -149,6 +149,7 @@ messages:
   console-player-only: "<red>Console must specify a player name."
   account-not-found: "<red>No account found for: <yellow><player>"
   account-sync-failed: "<red>Your economy account could not be synchronized. Contact an administrator if economy features do not work."
+  login-storage-error: "<red>Your economy account could not be loaded. Please try joining again later."
   storage-error: "<red>Economy storage is temporarily unavailable. Please try again."
   account-name-conflict: "<red>Your economy account could not use the name <yellow><player><red> because it is already linked to another account. Contact an administrator."
   self-pay: "<red>You cannot pay yourself."

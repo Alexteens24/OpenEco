@@ -425,6 +425,27 @@ public class JdbcAccountRepository implements AccountRepository {
     }
 
     @Override
+    public Map<UUID, String> loadNames(Collection<UUID> accountIds) throws SQLException {
+        if (accountIds.isEmpty()) return Map.of();
+        List<UUID> ids = List.copyOf(accountIds);
+        Map<UUID, String> names = new LinkedHashMap<>();
+        try (Connection conn = dataSource.getConnection()) {
+            for (int start = 0; start < ids.size(); start += 500) {
+                List<UUID> batch = ids.subList(start, Math.min(ids.size(), start + 500));
+                String placeholders = String.join(",", java.util.Collections.nCopies(batch.size(), "?"));
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "SELECT id,name FROM accounts WHERE id IN (" + placeholders + ')')) {
+                    for (int i = 0; i < batch.size(); i++) ps.setString(i + 1, batch.get(i).toString());
+                    try (ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) names.put(UUID.fromString(rs.getString("id")), rs.getString("name"));
+                    }
+                }
+            }
+        }
+        return Map.copyOf(names);
+    }
+
+    @Override
     public int countAccounts() throws SQLException {
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement("SELECT COUNT(*) FROM accounts");
@@ -503,32 +524,54 @@ public class JdbcAccountRepository implements AccountRepository {
     public LeaderboardView loadLeaderboardPage(String currencyId, int offset, int limit) throws SQLException {
         int safeOffset = Math.max(0, offset);
         int safeLimit = Math.max(0, limit);
-        int total = countAccounts();
         List<LeaderboardEntry> entries = new ArrayList<>(safeLimit);
         String sql = "SELECT a.id,a.name,COALESCE(b.balance,0) AS leaderboard_balance "
-                + "FROM accounts a LEFT JOIN account_balances b "
-                + "ON b.account_id=a.id AND LOWER(b.currency_id)=LOWER(?) "
+                + "FROM accounts a LEFT JOIN ("
+                + "SELECT account_id,balance FROM ("
+                + "SELECT account_id,balance,ROW_NUMBER() OVER ("
+                + "PARTITION BY account_id,LOWER(currency_id) ORDER BY updated_at DESC,currency_id"
+                + ") AS currency_position FROM account_balances WHERE LOWER(currency_id)=LOWER(?)"
+                + ") currency_balances WHERE currency_position=1"
+                + ") b ON b.account_id=a.id "
                 + "ORDER BY leaderboard_balance DESC,LOWER(a.name),a.id LIMIT ? OFFSET ?";
-        try (Connection conn = dataSource.getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, currencyId);
-            ps.setInt(2, safeLimit);
-            ps.setInt(3, safeOffset);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    entries.add(new LeaderboardEntry(UUID.fromString(rs.getString("id")),
-                            rs.getString("name"), rs.getBigDecimal("leaderboard_balance")));
+        try (Connection conn = dataSource.getConnection()) {
+            boolean originalAutoCommit = conn.getAutoCommit();
+            conn.setAutoCommit(false);
+            try {
+                int total = countAccounts(conn);
+                try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                    ps.setString(1, currencyId);
+                    ps.setInt(2, safeLimit);
+                    ps.setInt(3, safeOffset);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            entries.add(new LeaderboardEntry(UUID.fromString(rs.getString("id")),
+                                    rs.getString("name"), rs.getBigDecimal("leaderboard_balance")));
+                        }
+                    }
                 }
+                conn.commit();
+                return new LeaderboardView(total, entries);
+            } catch (SQLException error) {
+                conn.rollback();
+                throw error;
+            } finally {
+                conn.setAutoCommit(originalAutoCommit);
             }
         }
-        return new LeaderboardView(total, entries);
     }
 
     @Override
     public int loadLeaderboardRank(String currencyId, UUID accountId) throws SQLException {
         String sql = "SELECT ranked_position FROM ("
                 + "SELECT a.id,ROW_NUMBER() OVER (ORDER BY COALESCE(b.balance,0) DESC,LOWER(a.name),a.id) AS ranked_position "
-                + "FROM accounts a LEFT JOIN account_balances b "
-                + "ON b.account_id=a.id AND LOWER(b.currency_id)=LOWER(?)"
+                + "FROM accounts a LEFT JOIN ("
+                + "SELECT account_id,balance FROM ("
+                + "SELECT account_id,balance,ROW_NUMBER() OVER ("
+                + "PARTITION BY account_id,LOWER(currency_id) ORDER BY updated_at DESC,currency_id"
+                + ") AS currency_position FROM account_balances WHERE LOWER(currency_id)=LOWER(?)"
+                + ") currency_balances WHERE currency_position=1"
+                + ") b ON b.account_id=a.id"
                 + ") ranked WHERE id=?";
         try (Connection conn = dataSource.getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, currencyId);
@@ -536,6 +579,13 @@ public class JdbcAccountRepository implements AccountRepository {
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? rs.getInt(1) : -1;
             }
+        }
+    }
+
+    private static int countAccounts(Connection conn) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("SELECT COUNT(*) FROM accounts");
+             ResultSet rs = ps.executeQuery()) {
+            return rs.next() ? rs.getInt(1) : 0;
         }
     }
 

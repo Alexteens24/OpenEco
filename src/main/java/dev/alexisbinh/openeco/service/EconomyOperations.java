@@ -45,7 +45,7 @@ final class EconomyOperations {
     private final Consumer<TransactionEntry> transactionLogger;
     private final EventDispatcher eventDispatcher;
     private final Consumer<String> leaderboardDirtyMarker;
-    private final Function<UUID, AccountRecord> accountLoader;
+    private final Function<UUID, AccountLease> accountLoader;
 
     EconomyOperations(AccountRegistry accountRegistry,
                       Supplier<EconomyConfigSnapshot> configSupplier,
@@ -53,7 +53,7 @@ final class EconomyOperations {
                       Consumer<TransactionEntry> transactionLogger,
                       EventDispatcher eventDispatcher,
                       Consumer<String> leaderboardDirtyMarker,
-                      Function<UUID, AccountRecord> accountLoader) {
+                      Function<UUID, AccountLease> accountLoader) {
         this.accountRegistry = accountRegistry;
         this.configSupplier = configSupplier;
         this.lastPayTime = lastPayTime;
@@ -79,25 +79,26 @@ final class EconomyOperations {
             return new BalanceCheckResult(BalanceCheckResult.Status.INVALID_AMOUNT, scaled, BigDecimal.ZERO, BigDecimal.ZERO);
         }
 
-        AccountRecord record = requireRecord(id);
-        if (record == null) {
-            return new BalanceCheckResult(BalanceCheckResult.Status.ACCOUNT_NOT_FOUND, scaled, BigDecimal.ZERO, BigDecimal.ZERO);
-        }
-
-        synchronized (record) {
-            if (!accountRegistry.isLive(id, record)) {
+        try (AccountLease lease = requireLease(id)) {
+            if (lease == null) {
                 return new BalanceCheckResult(BalanceCheckResult.Status.ACCOUNT_NOT_FOUND, scaled, BigDecimal.ZERO, BigDecimal.ZERO);
             }
-            BigDecimal before = record.getBalance(currency.id());
-            if (record.isFrozen()) {
-                return new BalanceCheckResult(BalanceCheckResult.Status.FROZEN, scaled, before, before);
-            }
+            AccountRecord record = lease.record();
+            synchronized (record) {
+                if (!accountRegistry.isLive(id, record)) {
+                    return new BalanceCheckResult(BalanceCheckResult.Status.ACCOUNT_NOT_FOUND, scaled, BigDecimal.ZERO, BigDecimal.ZERO);
+                }
+                BigDecimal before = record.getBalance(currency.id());
+                if (record.isFrozen()) {
+                    return new BalanceCheckResult(BalanceCheckResult.Status.FROZEN, scaled, before, before);
+                }
 
-            BigDecimal newBalance = before.add(scaled);
-            if (currency.maxBalance() != null && newBalance.compareTo(currency.maxBalance()) > 0) {
-                return new BalanceCheckResult(BalanceCheckResult.Status.BALANCE_LIMIT, scaled, before, before);
+                BigDecimal newBalance = before.add(scaled);
+                if (currency.maxBalance() != null && newBalance.compareTo(currency.maxBalance()) > 0) {
+                    return new BalanceCheckResult(BalanceCheckResult.Status.BALANCE_LIMIT, scaled, before, before);
+                }
+                return new BalanceCheckResult(BalanceCheckResult.Status.ALLOWED, scaled, before, newBalance);
             }
-            return new BalanceCheckResult(BalanceCheckResult.Status.ALLOWED, scaled, before, newBalance);
         }
     }
 
@@ -117,23 +118,24 @@ final class EconomyOperations {
             return new BalanceCheckResult(BalanceCheckResult.Status.INVALID_AMOUNT, scaled, BigDecimal.ZERO, BigDecimal.ZERO);
         }
 
-        AccountRecord record = requireRecord(id);
-        if (record == null) {
-            return new BalanceCheckResult(BalanceCheckResult.Status.ACCOUNT_NOT_FOUND, scaled, BigDecimal.ZERO, BigDecimal.ZERO);
-        }
-
-        synchronized (record) {
-            if (!accountRegistry.isLive(id, record)) {
+        try (AccountLease lease = requireLease(id)) {
+            if (lease == null) {
                 return new BalanceCheckResult(BalanceCheckResult.Status.ACCOUNT_NOT_FOUND, scaled, BigDecimal.ZERO, BigDecimal.ZERO);
             }
-            BigDecimal before = record.getBalance(currency.id());
-            if (record.isFrozen()) {
-                return new BalanceCheckResult(BalanceCheckResult.Status.FROZEN, scaled, before, before);
+            AccountRecord record = lease.record();
+            synchronized (record) {
+                if (!accountRegistry.isLive(id, record)) {
+                    return new BalanceCheckResult(BalanceCheckResult.Status.ACCOUNT_NOT_FOUND, scaled, BigDecimal.ZERO, BigDecimal.ZERO);
+                }
+                BigDecimal before = record.getBalance(currency.id());
+                if (record.isFrozen()) {
+                    return new BalanceCheckResult(BalanceCheckResult.Status.FROZEN, scaled, before, before);
+                }
+                if (before.compareTo(scaled) < 0) {
+                    return new BalanceCheckResult(BalanceCheckResult.Status.INSUFFICIENT_FUNDS, scaled, before, before);
+                }
+                return new BalanceCheckResult(BalanceCheckResult.Status.ALLOWED, scaled, before, before.subtract(scaled));
             }
-            if (before.compareTo(scaled) < 0) {
-                return new BalanceCheckResult(BalanceCheckResult.Status.INSUFFICIENT_FUNDS, scaled, before, before);
-            }
-            return new BalanceCheckResult(BalanceCheckResult.Status.ALLOWED, scaled, before, before.subtract(scaled));
         }
     }
 
@@ -153,13 +155,14 @@ final class EconomyOperations {
             return failure(scaled, BigDecimal.ZERO, "Amount must be positive");
         }
 
-        AccountRecord record = requireRecord(id);
-        if (record == null) {
-            return failure(scaled, BigDecimal.ZERO, "Account not found");
-        }
+        try (AccountLease lease = requireLease(id)) {
+            if (lease == null) {
+                return failure(scaled, BigDecimal.ZERO, "Account not found");
+            }
+            AccountRecord record = lease.record();
 
-        BalanceChangeEvent event;
-        BigDecimal previewBalance;
+            BalanceChangeEvent event;
+            BigDecimal previewBalance;
 
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) {
@@ -204,9 +207,10 @@ final class EconomyOperations {
                     TransactionType.GIVE, null, id, scaled, before, newBalance, System.currentTimeMillis(), null, null, currency.id()));
             completedEvent = new BalanceChangedEvent(id, before, newBalance, BalanceChangeEvent.Reason.GIVE, currency.id());
         }
-        eventDispatcher.dispatch(completedEvent);
-        leaderboardDirtyMarker.accept(currency.id());
-        return success(scaled, completedEvent.getNewBalance());
+            eventDispatcher.dispatch(completedEvent);
+            leaderboardDirtyMarker.accept(currency.id());
+            return success(scaled, completedEvent.getNewBalance());
+        }
     }
 
     EconomyOperationResponse withdraw(UUID id, BigDecimal amount) {
@@ -225,13 +229,14 @@ final class EconomyOperations {
             return failure(scaled, BigDecimal.ZERO, "Amount must be positive");
         }
 
-        AccountRecord record = requireRecord(id);
-        if (record == null) {
-            return failure(scaled, BigDecimal.ZERO, "Account not found");
-        }
+        try (AccountLease lease = requireLease(id)) {
+            if (lease == null) {
+                return failure(scaled, BigDecimal.ZERO, "Account not found");
+            }
+            AccountRecord record = lease.record();
 
-        BalanceChangeEvent event;
-        BigDecimal previewBalance;
+            BalanceChangeEvent event;
+            BigDecimal previewBalance;
 
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) {
@@ -275,9 +280,10 @@ final class EconomyOperations {
                     TransactionType.TAKE, null, id, scaled, before, newBalance, System.currentTimeMillis(), null, null, currency.id()));
             completedEvent = new BalanceChangedEvent(id, before, newBalance, BalanceChangeEvent.Reason.TAKE, currency.id());
         }
-        eventDispatcher.dispatch(completedEvent);
-        leaderboardDirtyMarker.accept(currency.id());
-        return success(scaled, completedEvent.getNewBalance());
+            eventDispatcher.dispatch(completedEvent);
+            leaderboardDirtyMarker.accept(currency.id());
+            return success(scaled, completedEvent.getNewBalance());
+        }
     }
 
     EconomyOperationResponse set(UUID id, BigDecimal amount) {
@@ -295,14 +301,15 @@ final class EconomyOperations {
             return failure(BigDecimal.ZERO, BigDecimal.ZERO, "Unknown currency");
         }
 
-        AccountRecord record = requireRecord(id);
-        if (record == null) {
-            return failure(amount, BigDecimal.ZERO, "Account not found");
-        }
+        try (AccountLease lease = requireLease(id)) {
+            if (lease == null) {
+                return failure(amount, BigDecimal.ZERO, "Account not found");
+            }
+            AccountRecord record = lease.record();
 
-        BigDecimal scaled = scale(amount, currency);
-        BalanceChangeEvent event;
-        BigDecimal previewBalance;
+            BigDecimal scaled = scale(amount, currency);
+            BalanceChangeEvent event;
+            BigDecimal previewBalance;
 
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) {
@@ -345,9 +352,10 @@ final class EconomyOperations {
                     TransactionType.SET, null, id, scaled, before, scaled, System.currentTimeMillis(), null, null, currency.id()));
             completedEvent = new BalanceChangedEvent(id, before, scaled, BalanceChangeEvent.Reason.SET, currency.id());
         }
-        eventDispatcher.dispatch(completedEvent);
-        leaderboardDirtyMarker.accept(currency.id());
-        return success(scaled, completedEvent.getNewBalance());
+            eventDispatcher.dispatch(completedEvent);
+            leaderboardDirtyMarker.accept(currency.id());
+            return success(scaled, completedEvent.getNewBalance());
+        }
     }
 
     EconomyOperationResponse reset(UUID id) {
@@ -361,14 +369,15 @@ final class EconomyOperations {
             return failure(BigDecimal.ZERO, BigDecimal.ZERO, "Unknown currency");
         }
 
-        AccountRecord record = requireRecord(id);
-        if (record == null) {
-            return failure(BigDecimal.ZERO, BigDecimal.ZERO, "Account not found");
-        }
+        try (AccountLease lease = requireLease(id)) {
+            if (lease == null) {
+                return failure(BigDecimal.ZERO, BigDecimal.ZERO, "Account not found");
+            }
+            AccountRecord record = lease.record();
 
-        BigDecimal startingBalance = currency.startingBalance();
-        BalanceChangeEvent event;
-        BigDecimal previewBalance;
+            BigDecimal startingBalance = currency.startingBalance();
+            BalanceChangeEvent event;
+            BigDecimal previewBalance;
 
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) {
@@ -404,9 +413,10 @@ final class EconomyOperations {
                     System.currentTimeMillis(), null, null, currency.id()));
             completedEvent = new BalanceChangedEvent(id, before, startingBalance, BalanceChangeEvent.Reason.RESET, currency.id());
         }
-        eventDispatcher.dispatch(completedEvent);
-        leaderboardDirtyMarker.accept(currency.id());
-        return success(startingBalance, completedEvent.getNewBalance());
+            eventDispatcher.dispatch(completedEvent);
+            leaderboardDirtyMarker.accept(currency.id());
+            return success(startingBalance, completedEvent.getNewBalance());
+        }
     }
 
     TransferCheckResult canTransfer(UUID fromId, UUID toId, BigDecimal rawAmount) {
@@ -428,21 +438,22 @@ final class EconomyOperations {
             return new TransferCheckResult(TransferCheckResult.Status.SELF_TRANSFER, scaled);
         }
 
-        AccountRecord fromRecord = requireRecord(fromId);
-        AccountRecord toRecord = requireRecord(toId);
-        if (fromRecord == null || toRecord == null) {
-            return new TransferCheckResult(TransferCheckResult.Status.ACCOUNT_NOT_FOUND, scaled);
-        }
+        try (LeasedAccounts accounts = requireAccounts(fromId, toId)) {
+            if (accounts == null) {
+                return new TransferCheckResult(TransferCheckResult.Status.ACCOUNT_NOT_FOUND, scaled);
+            }
+            AccountRecord fromRecord = accounts.from();
+            AccountRecord toRecord = accounts.to();
 
-        BigDecimal tax = computeTax(scaled, currentConfig, currency);
-        BigDecimal received = scaled.subtract(tax);
+            BigDecimal tax = computeTax(scaled, currentConfig, currency);
+            BigDecimal received = scaled.subtract(tax);
 
         boolean fromFirst = fromId.compareTo(toId) < 0;
         AccountRecord first = fromFirst ? fromRecord : toRecord;
         AccountRecord second = fromFirst ? toRecord : fromRecord;
 
-        synchronized (first) {
-            synchronized (second) {
+            synchronized (first) {
+                synchronized (second) {
                 if (!accountRegistry.isLive(fromId, fromRecord) || !accountRegistry.isLive(toId, toRecord)) {
                     return new TransferCheckResult(TransferCheckResult.Status.ACCOUNT_NOT_FOUND, scaled);
                 }
@@ -457,6 +468,7 @@ final class EconomyOperations {
                     return new TransferCheckResult(TransferCheckResult.Status.BALANCE_LIMIT, scaled);
                 }
                 return new TransferCheckResult(TransferCheckResult.Status.ALLOWED, scaled);
+                }
             }
         }
     }
@@ -527,24 +539,25 @@ final class EconomyOperations {
                     minimumAmount);
         }
 
-        AccountRecord fromRecord = requireRecord(fromId);
-        AccountRecord toRecord = requireRecord(toId);
-        if (fromRecord == null || toRecord == null) {
-            return new TransferPreviewResult(
-                    TransferPreviewResult.Status.ACCOUNT_NOT_FOUND,
-                    scaled,
-                    received,
-                    tax,
-                    0,
-                    null);
-        }
+        try (LeasedAccounts accounts = requireAccounts(fromId, toId)) {
+            if (accounts == null) {
+                return new TransferPreviewResult(
+                        TransferPreviewResult.Status.ACCOUNT_NOT_FOUND,
+                        scaled,
+                        received,
+                        tax,
+                        0,
+                        null);
+            }
+            AccountRecord fromRecord = accounts.from();
+            AccountRecord toRecord = accounts.to();
 
         boolean fromFirst = fromId.compareTo(toId) < 0;
         AccountRecord first = fromFirst ? fromRecord : toRecord;
         AccountRecord second = fromFirst ? toRecord : fromRecord;
 
-        synchronized (first) {
-            synchronized (second) {
+            synchronized (first) {
+                synchronized (second) {
                 if (!accountRegistry.isLive(fromId, fromRecord) || !accountRegistry.isLive(toId, toRecord)) {
                     return new TransferPreviewResult(
                             TransferPreviewResult.Status.ACCOUNT_NOT_FOUND,
@@ -593,6 +606,7 @@ final class EconomyOperations {
                         tax,
                         0,
                         null);
+                }
             }
         }
     }
@@ -616,14 +630,15 @@ final class EconomyOperations {
             return DirectTransferResult.failure(DirectTransferResult.Status.SELF_TRANSFER, scaled, "Cannot transfer to self");
         }
 
-        AccountRecord fromRecord = requireRecord(fromId);
-        AccountRecord toRecord = requireRecord(toId);
-        if (fromRecord == null || toRecord == null) {
-            return DirectTransferResult.failure(DirectTransferResult.Status.ACCOUNT_NOT_FOUND, scaled, "Account not found");
-        }
-        if (fromRecord.isFrozen() || toRecord.isFrozen()) {
-            return DirectTransferResult.failure(DirectTransferResult.Status.FROZEN, scaled, "Account is frozen");
-        }
+        try (LeasedAccounts accounts = requireAccounts(fromId, toId)) {
+            if (accounts == null) {
+                return DirectTransferResult.failure(DirectTransferResult.Status.ACCOUNT_NOT_FOUND, scaled, "Account not found");
+            }
+            AccountRecord fromRecord = accounts.from();
+            AccountRecord toRecord = accounts.to();
+            if (fromRecord.isFrozen() || toRecord.isFrozen()) {
+                return DirectTransferResult.failure(DirectTransferResult.Status.FROZEN, scaled, "Account is frozen");
+            }
 
         boolean fromFirst = fromId.compareTo(toId) < 0;
         AccountRecord first = fromFirst ? fromRecord : toRecord;
@@ -666,10 +681,11 @@ final class EconomyOperations {
                         toId, toBefore, toAfter, BalanceChangeEvent.Reason.PAY_RECEIVED, currency.id());
             }
         }
-        eventDispatcher.dispatch(fromChangedEvent);
-        eventDispatcher.dispatch(toChangedEvent);
-        leaderboardDirtyMarker.accept(currency.id());
-        return DirectTransferResult.success(scaled, fromChangedEvent.getNewBalance(), toChangedEvent.getNewBalance());
+            eventDispatcher.dispatch(fromChangedEvent);
+            eventDispatcher.dispatch(toChangedEvent);
+            leaderboardDirtyMarker.accept(currency.id());
+            return DirectTransferResult.success(scaled, fromChangedEvent.getNewBalance(), toChangedEvent.getNewBalance());
+        }
     }
 
     PayResult pay(UUID fromId, UUID toId, BigDecimal rawAmount) {
@@ -708,14 +724,15 @@ final class EconomyOperations {
             return PayResult.tooLow(minimumAmount);
         }
 
-        AccountRecord fromRecord = requireRecord(fromId);
-        AccountRecord toRecord = requireRecord(toId);
-        if (fromRecord == null || toRecord == null) {
-            return PayResult.accountNotFound();
-        }
-        if (fromRecord.isFrozen() || toRecord.isFrozen()) {
-            return PayResult.frozen();
-        }
+        try (LeasedAccounts accounts = requireAccounts(fromId, toId)) {
+            if (accounts == null) {
+                return PayResult.accountNotFound();
+            }
+            AccountRecord fromRecord = accounts.from();
+            AccountRecord toRecord = accounts.to();
+            if (fromRecord.isFrozen() || toRecord.isFrozen()) {
+                return PayResult.frozen();
+            }
 
         BigDecimal tax = computeTax(scaled, currentConfig, currency);
         BigDecimal received = scaled.subtract(tax);
@@ -785,25 +802,50 @@ final class EconomyOperations {
                         currency.id());
             }
         }
-        eventDispatcher.dispatch(completedEvent);
-        eventDispatcher.dispatch(new BalanceChangedEvent(fromId, completedEvent.getFromBalanceBefore(),
-                    completedEvent.getFromBalanceAfter(), BalanceChangeEvent.Reason.PAY_SENT, currency.id()));
-        eventDispatcher.dispatch(new BalanceChangedEvent(toId, completedEvent.getToBalanceBefore(),
-                    completedEvent.getToBalanceAfter(), BalanceChangeEvent.Reason.PAY_RECEIVED, currency.id()));
-        leaderboardDirtyMarker.accept(currency.id());
-        return PayResult.success(scaled, received, tax);
+            eventDispatcher.dispatch(completedEvent);
+            eventDispatcher.dispatch(new BalanceChangedEvent(fromId, completedEvent.getFromBalanceBefore(),
+                        completedEvent.getFromBalanceAfter(), BalanceChangeEvent.Reason.PAY_SENT, currency.id()));
+            eventDispatcher.dispatch(new BalanceChangedEvent(toId, completedEvent.getToBalanceBefore(),
+                        completedEvent.getToBalanceAfter(), BalanceChangeEvent.Reason.PAY_RECEIVED, currency.id()));
+            leaderboardDirtyMarker.accept(currency.id());
+            return PayResult.success(scaled, received, tax);
+        }
     }
 
     private static CurrencyDefinition resolveCurrency(EconomyConfigSnapshot config, String currencyId) {
         return config.currencies().find(currencyId).orElse(null);
     }
 
-    private AccountRecord requireRecord(UUID id) {
-        AccountRecord record = accountRegistry.getLiveRecord(id);
-        if (record != null) {
-            return record;
-        }
+    private AccountLease requireLease(UUID id) {
         return accountLoader.apply(id);
+    }
+
+    private LeasedAccounts requireAccounts(UUID fromId, UUID toId) {
+        boolean fromFirst = fromId.compareTo(toId) < 0;
+        AccountLease first = requireLease(fromFirst ? fromId : toId);
+        if (first == null) return null;
+        AccountLease second = requireLease(fromFirst ? toId : fromId);
+        if (second == null) {
+            first.close();
+            return null;
+        }
+        return fromFirst ? new LeasedAccounts(first, second) : new LeasedAccounts(second, first);
+    }
+
+    private record LeasedAccounts(AccountLease fromLease, AccountLease toLease) implements AutoCloseable {
+        AccountRecord from() {
+            return fromLease.record();
+        }
+
+        AccountRecord to() {
+            return toLease.record();
+        }
+
+        @Override
+        public void close() {
+            toLease.close();
+            fromLease.close();
+        }
     }
 
     private String defaultCurrencyId() {

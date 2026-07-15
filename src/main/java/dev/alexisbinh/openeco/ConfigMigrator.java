@@ -61,6 +61,19 @@ final class ConfigMigrator {
                 "autosave-interval", "persistence.autosave-interval-seconds");
         migrateRenamedSetting(currentConfig, targetConfig,
                 "baltop.cache-ttl-seconds", "baltop.refresh-interval-seconds");
+        migrateRenamedSetting(currentConfig, targetConfig,
+                "account-cache.mode", "account-loading.mode");
+        migrateRenamedSetting(currentConfig, targetConfig,
+                "account-cache.enabled", "account-loading.lazy.cache.enabled");
+        migrateRenamedSetting(currentConfig, targetConfig,
+                "account-cache.maximum-size", "account-loading.lazy.cache.maximum-size");
+        migrateRenamedSetting(currentConfig, targetConfig,
+                "account-cache.expire-after-access-minutes",
+                "account-loading.lazy.cache.expire-after-access-minutes");
+        ConfigurationSection legacyAccountCache = targetConfig.getConfigurationSection("account-cache");
+        if (legacyAccountCache != null && legacyAccountCache.getKeys(false).isEmpty()) {
+            targetConfig.set("account-cache", null);
+        }
     }
 
     private static void migrateRenamedSetting(FileConfiguration source, YamlConfiguration target,

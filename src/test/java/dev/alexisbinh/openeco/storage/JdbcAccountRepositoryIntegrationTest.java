@@ -87,14 +87,33 @@ class JdbcAccountRepositoryIntegrationTest {
                 AccountRecord bob = new AccountRecord(bobId, "Bob", new BigDecimal("10.00"), 1L, 1L);
                 repository.upsertBatch(List.of(alice, bob));
 
+                if (dialect == DatabaseDialect.H2) {
+                    try (Connection connection = DriverManager.getConnection(
+                            dialect.getJdbcUrl(tempDir.toString(), filename));
+                         PreparedStatement duplicate = connection.prepareStatement(
+                                 "INSERT INTO account_balances(account_id,currency_id,balance,updated_at) VALUES(?,?,?,?)")) {
+                        duplicate.setString(1, aliceId.toString());
+                        duplicate.setString(2, "OpenEco");
+                        duplicate.setBigDecimal(3, BigDecimal.ONE);
+                        duplicate.setLong(4, 2L);
+                        duplicate.executeUpdate();
+                    }
+                    assertEquals(List.of(bobId, aliceId), repository.loadLeaderboardPage("OPENeco", 0, 10)
+                            .entries().stream().map(entry -> entry.accountId()).toList());
+                    assertEquals(2, repository.loadLeaderboardPage("openeco", 0, 10).entries().size());
+                    assertEquals(2, repository.loadLeaderboardRank("openeco", aliceId));
+                }
+
                 assertEquals(aliceId, repository.loadAccountByName("aLiCe").orElseThrow().getId());
                 assertTrue(repository.isNameClaimedByAnother(bobId, "alice"));
                 assertFalse(repository.insertAccount(
                         new AccountRecord(UUID.randomUUID(), "ALICE", BigDecimal.ZERO, 1L, 1L)));
-                assertEquals(List.of(aliceId, bobId), repository.loadLeaderboardPage("openeco", 0, 10)
-                        .entries().stream().map(entry -> entry.accountId()).toList());
-                assertEquals(1, repository.loadLeaderboardRank("openeco", aliceId));
-                assertEquals(2, repository.loadLeaderboardRank("openeco", bobId));
+                if (dialect == DatabaseDialect.SQLITE) {
+                    assertEquals(List.of(aliceId, bobId), repository.loadLeaderboardPage("openeco", 0, 10)
+                            .entries().stream().map(entry -> entry.accountId()).toList());
+                    assertEquals(1, repository.loadLeaderboardRank("openeco", aliceId));
+                    assertEquals(2, repository.loadLeaderboardRank("openeco", bobId));
+                }
                 assertEquals(-1, repository.loadLeaderboardRank("openeco", UUID.randomUUID()));
             } finally {
                 repository.close();

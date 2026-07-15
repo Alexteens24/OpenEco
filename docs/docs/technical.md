@@ -10,7 +10,9 @@ OpenEco supports eager in-memory state and an opt-in lazy working-set cache. Bot
 
 In the default `eager` mode, accounts and balances are read with one ordered streaming join and retained in the in-memory registry.
 
-In `lazy` mode, startup does not scan account balances and cold UUID/name lookups load from JDBC. With `account-loading.lazy.cache.enabled: true`, recently accessed accounts form a bounded hot set and clean offline entries expire after the configured idle period. With caching disabled, clean records are removed on a short maintenance cycle while dirty and in-flight records remain temporarily for correctness. Concurrent UUID misses are coalesced in both variants. Synchronous Vault and OpenEco API calls can therefore wait for database I/O on a cold lookup.
+In `lazy` mode, startup does not scan account balances and cold UUID/name lookups load from JDBC. With `account-loading.lazy.cache.enabled: true`, recently accessed accounts form a bounded hot set and clean offline entries expire after the configured idle period. With caching disabled, clean records are removed on a short maintenance cycle while dirty, online, login-pinned, and actively leased records remain for correctness. Concurrent UUID and normalized-name misses are coalesced, and loader queues are bounded. Synchronous Vault and OpenEco API calls can therefore wait for database I/O on a cold lookup; VaultUnlocked's async facade uses a separate bounded worker pool.
+
+Lazy PlaceholderAPI requests never wait for a cold database read. They return the most recent bounded snapshot (or a safe zero/blank fallback) and refresh it asynchronously. Player account creation/rename and required storage checks run during async pre-login; a storage failure denies login instead of admitting a player with an unusable economy account.
 
 Explicit bulk APIs such as `getUUIDNameMap()` still materialize the requested full result for compatibility. Addons that iterate every account can therefore create temporary memory and database load even when lazy caching is enabled.
 
@@ -37,7 +39,7 @@ Eager mode uses lightweight per-currency snapshots. Lazy mode flushes dirty bala
 When `cross-server.enabled` is true:
 
 1. Account flush on backend disconnect.
-2. Account refresh on backend join completion.
+2. Account refresh during async pre-login, including remote deletion detection.
 3. `openeco:sync` plugin messaging channel for proxy-triggered flush/refresh.
 
 This is handoff sync, not real-time global replication. Balances are not broadcast live to every backend.
@@ -66,7 +68,7 @@ These use the hot account registry; in lazy mode a cold synchronous call may fir
 
 - Player commands (`/balance`, `/pay`, `/eco`, …)
 - Vault v1 and VaultUnlocked v2 providers
-- PlaceholderAPI expansion
+- PlaceholderAPI expansion (non-blocking snapshots in lazy mode)
 - `OpenEcoApi` for addon integrations
 
 For architecture and component details, see [Development](/docs/development).
