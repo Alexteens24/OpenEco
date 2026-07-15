@@ -89,6 +89,15 @@ public class AccountService {
         READY_WITH_STALE_NAME
     }
 
+    public enum RefreshStatus {
+        REFRESHED,
+        REMOTE_MISSING,
+        DEFERRED_DIRTY,
+        DEFERRED_IN_USE,
+        NAME_CONFLICT,
+        FAILED
+    }
+
     private final AccountRepository repository;
     private final Logger log;
     private final Object persistenceLock = new Object();
@@ -260,16 +269,42 @@ public class AccountService {
     }
 
     public Optional<AccountRecord> findByName(String name) {
+        try {
+            return loadByNameAsync(name).join();
+        } catch (CompletionException error) {
+            Throwable cause = error.getCause();
+            if (cause instanceof OpenEcoApiException apiError) throw apiError;
+            throw new OpenEcoApiException("Failed to load account by name", cause != null ? cause : error);
+        }
+    }
+
+    public CompletableFuture<Optional<AccountRecord>> findByNameAsync(String name) {
+        return loadByNameAsync(name);
+    }
+
+    private CompletableFuture<Optional<AccountRecord>> loadByNameAsync(String name) {
         Optional<AccountRecord> cached = accountRegistry.findSnapshotByName(name);
-        if (cached.isPresent() || !lazyAccountMode || name == null) return cached;
+        if (cached.isPresent() || !lazyAccountMode || name == null) {
+            return CompletableFuture.completedFuture(cached);
+        }
         String normalized = AccountRegistry.normalizeName(name);
-        if (lazyCacheEnabled && isNegativeCached(missingNames, normalized)) return Optional.empty();
+        if (lazyCacheEnabled && isNegativeCached(missingNames, normalized)) {
+            return CompletableFuture.completedFuture(Optional.empty());
+        }
+        CompletableFuture<Optional<AccountRecord>> future = nameLoads.computeIfAbsent(normalized,
+                ignored -> submit(accountLoader, () -> loadNameFromRepository(normalized),
+                        "account name lookup queue is full"));
+        future.whenComplete((ignoredResult, ignoredError) -> nameLoads.remove(normalized, future));
+        return future;
+    }
+
+    private Optional<AccountRecord> loadNameFromRepository(String normalized) {
         while (true) {
             long observedIdentityVersion = accountIdentityVersion.get();
             try {
                 Optional<AccountRecord> loaded = repository.loadAccountByName(normalized);
                 synchronized (accountIdentityLock) {
-                    Optional<AccountRecord> live = accountRegistry.findSnapshotByName(name);
+                    Optional<AccountRecord> live = accountRegistry.findSnapshotByName(normalized);
                     if (live.isPresent()) return live;
                     if (observedIdentityVersion != accountIdentityVersion.get()) continue;
                     if (loaded.isEmpty()) {
@@ -277,7 +312,10 @@ public class AccountService {
                         return Optional.empty();
                     }
                     AccountRecord record = prepareLoadedRecord(loaded.get());
-                    accountRegistry.addLoaded(record);
+                    if (!accountRegistry.addLoaded(record)) {
+                        return accountRegistry.findSnapshotByName(normalized)
+                                .or(() -> accountRegistry.getSnapshot(record.getId()));
+                    }
                     missingAccounts.remove(record.getId());
                     missingNames.remove(normalized);
                     return accountRegistry.getSnapshot(record.getId());
@@ -286,15 +324,6 @@ public class AccountService {
                 throw new OpenEcoApiException("Failed to load account by name", e);
             }
         }
-    }
-
-    public CompletableFuture<Optional<AccountRecord>> findByNameAsync(String name) {
-        if (name == null) return CompletableFuture.completedFuture(Optional.empty());
-        String normalized = AccountRegistry.normalizeName(name);
-        CompletableFuture<Optional<AccountRecord>> future = nameLoads.computeIfAbsent(normalized,
-                ignored -> submit(accountLoader, () -> findByName(name), "account name lookup queue is full"));
-        future.whenComplete((ignoredResult, ignoredError) -> nameLoads.remove(normalized, future));
-        return future;
     }
 
     public Map<UUID, String> loadAccountNames(java.util.Collection<UUID> accountIds) throws SQLException {
@@ -330,7 +359,14 @@ public class AccountService {
 
     /** Prepares and pins the account before Bukkit admits the player to the server. */
     public PreparedLoginAccount prepareLoginAccount(UUID id, String name) {
-        if (crossServerEnabled) refreshAccountOrThrow(id);
+        if (crossServerEnabled) {
+            RefreshStatus refreshStatus = refreshForLogin(id);
+            if (refreshStatus == RefreshStatus.DEFERRED_DIRTY
+                    || refreshStatus == RefreshStatus.DEFERRED_IN_USE
+                    || refreshStatus == RefreshStatus.NAME_CONFLICT) {
+                throw new OpenEcoApiException("Cross-server account refresh did not complete: " + refreshStatus);
+            }
+        }
 
         Optional<AccountRecord> existing = getAccount(id);
         LoginAccountStatus status = LoginAccountStatus.READY;
@@ -993,6 +1029,25 @@ public class AccountService {
         }
     }
 
+    private RefreshStatus refreshForLogin(UUID id) {
+        RefreshStatus status = RefreshStatus.FAILED;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            status = refreshAccountOrThrow(id);
+            if (status != RefreshStatus.DEFERRED_IN_USE && status != RefreshStatus.DEFERRED_DIRTY) {
+                return status;
+            }
+            if (attempt < 2) {
+                try {
+                    Thread.sleep(25L);
+                } catch (InterruptedException error) {
+                    Thread.currentThread().interrupt();
+                    throw new OpenEcoApiException("Interrupted while waiting to refresh login account", error);
+                }
+            }
+        }
+        return status;
+    }
+
     private void flushAccountOrThrow(UUID id) {
         synchronized (persistenceLock) {
             AccountRecord live = accountRegistry.getLiveRecord(id);
@@ -1030,15 +1085,16 @@ public class AccountService {
      * Re-reads a single account from the database and refreshes the in-memory record.
      * Intended for cross-server use: call async when a player connects from another server.
      */
-    public void refreshAccount(UUID id) {
+    public RefreshStatus refreshAccount(UUID id) {
         try {
-            refreshAccountOrThrow(id);
+            return refreshAccountOrThrow(id);
         } catch (OpenEcoApiException error) {
             log.warning("Cross-server refresh failed for " + id + ": " + error.getMessage());
+            return RefreshStatus.FAILED;
         }
     }
 
-    private void refreshAccountOrThrow(UUID id) {
+    private RefreshStatus refreshAccountOrThrow(UUID id) {
         try {
             while (true) {
                 long observedIdentityVersion = accountIdentityVersion.get();
@@ -1048,12 +1104,17 @@ public class AccountService {
                         synchronized (accountIdentityLock) {
                             if (observedIdentityVersion != accountIdentityVersion.get()) continue;
                             AccountRecord live = accountRegistry.getLiveRecord(id);
-                            if (live == null) return;
+                            if (live == null) return RefreshStatus.REMOTE_MISSING;
                             synchronized (live) {
-                                if (live.isDirty() || accountRegistry.hasActiveLease(id)) {
+                                if (live.isDirty()) {
                                     log.info("Cross-server deletion refresh deferred for " + id
-                                            + " because the local account is dirty or in use.");
-                                    return;
+                                            + " because the local account is dirty.");
+                                    return RefreshStatus.DEFERRED_DIRTY;
+                                }
+                                if (accountRegistry.hasActiveLease(id)) {
+                                    log.info("Cross-server deletion refresh deferred for " + id
+                                            + " because the local account is in use.");
+                                    return RefreshStatus.DEFERRED_IN_USE;
                                 }
                                 if (accountRegistry.remove(id, live)) {
                                     accountIdentityVersion.incrementAndGet();
@@ -1063,7 +1124,7 @@ public class AccountService {
                             }
                         }
                     }
-                    return;
+                    return RefreshStatus.REMOTE_MISSING;
                 }
                 AccountRecord freshRecord = fresh.get();
                 alignLoadedRecordCurrencies(freshRecord, config);
@@ -1074,25 +1135,30 @@ public class AccountService {
                         AccountRecord live = accountRegistry.getLiveRecord(id);
                         if (live != null) {
                             synchronized (live) {
-                                if (live.isDirty() || accountRegistry.hasActiveLease(id)) {
+                                if (live.isDirty()) {
                                     log.info("Cross-server refresh skipped for " + id
-                                            + " because the in-memory account is dirty or in use.");
-                                    return;
+                                            + " because the in-memory account is dirty.");
+                                    return RefreshStatus.DEFERRED_DIRTY;
+                                }
+                                if (accountRegistry.hasActiveLease(id)) {
+                                    log.info("Cross-server refresh skipped for " + id
+                                            + " because the in-memory account is in use.");
+                                    return RefreshStatus.DEFERRED_IN_USE;
                                 }
                                 if (!accountRegistry.refreshInPlace(freshRecord)) {
                                     logRefreshNameConflict(id, freshRecord);
-                                    return;
+                                    return RefreshStatus.NAME_CONFLICT;
                                 }
                             }
                         } else if (!accountRegistry.refreshInPlace(freshRecord)) {
                             logRefreshNameConflict(id, freshRecord);
-                            return;
+                            return RefreshStatus.NAME_CONFLICT;
                         }
                         accountIdentityVersion.incrementAndGet();
                     }
                 }
                 markAllLeaderboardsDirty();
-                return;
+                return RefreshStatus.REFRESHED;
             }
         } catch (SQLException e) {
             throw new OpenEcoApiException("Failed to refresh account " + id, e);
@@ -1176,7 +1242,7 @@ public class AccountService {
     }
 
     public void markAccountOnline(UUID id) {
-        if (isLazyAccountRetentionEnabled() || !lazyAccountMode) accountRegistry.markOnline(id);
+        accountRegistry.markOnline(id);
     }
 
     public void markAccountOffline(UUID id) {

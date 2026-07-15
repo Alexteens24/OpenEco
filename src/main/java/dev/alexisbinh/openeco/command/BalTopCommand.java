@@ -110,14 +110,18 @@ public class BalTopCommand implements CommandExecutor, TabCompleter {
     }
 
     private LeaderboardResult loadLeaderboard(String currencyId, int pageSize, int requestedPage) {
-        LeaderboardView summary = service.getLeaderboardPage(currencyId, 0, 0);
-        int totalPages = (int) Math.ceil((double) summary.totalEntries() / pageSize);
+        int requestedStart = pageOffset(requestedPage, pageSize);
+        LeaderboardView view = service.getLeaderboardPage(currencyId, requestedStart, pageSize);
+        int totalPages = (int) Math.ceil((double) view.totalEntries() / pageSize);
         if (totalPages == 0) totalPages = 1;
         int page = Math.min(requestedPage, totalPages);
+        if (page == requestedPage) {
+            return new LeaderboardResult(page, totalPages, requestedStart, view);
+        }
 
-        int start = (page - 1) * pageSize;
-        LeaderboardView view = service.getLeaderboardPage(currencyId, start, pageSize);
-        return new LeaderboardResult(page, totalPages, start, view);
+        int clampedStart = pageOffset(page, pageSize);
+        LeaderboardView clampedView = service.getLeaderboardPage(currencyId, clampedStart, pageSize);
+        return new LeaderboardResult(page, totalPages, clampedStart, clampedView);
     }
 
     private void sendLeaderboard(CommandSender sender, String currencyId, LeaderboardResult result) {
@@ -177,6 +181,10 @@ public class BalTopCommand implements CommandExecutor, TabCompleter {
         } catch (NumberFormatException e) {
             return 1;
         }
+    }
+
+    private static int pageOffset(int page, int pageSize) {
+        return (int) Math.min(Integer.MAX_VALUE, (long) (page - 1) * pageSize);
     }
 
     private record LeaderboardResult(int page, int totalPages, int start, LeaderboardView view) {

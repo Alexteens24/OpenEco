@@ -46,6 +46,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -507,7 +508,7 @@ class AccountServicePersistenceIntegrationTest {
     }
 
     @Test
-    void lazyModeWithoutRetentionEvictsCleanRecordsButKeepsDirtyRecordsUntilFlush() throws Exception {
+    void lazyModeWithoutRetentionKeepsOnlineAndDirtyRecordsUntilSafeToEvict() throws Exception {
         JdbcAccountRepository repository = new JdbcAccountRepository(
                 DatabaseDialect.H2, tempDir.toString(), "lazy-no-retention-test");
         try {
@@ -525,6 +526,10 @@ class AccountServicePersistenceIntegrationTest {
             assertEquals(0, new BigDecimal("5.00").compareTo(reader.getBalance(accountId)));
             assertEquals(List.of("Alice"), reader.getCachedAccountNames());
             reader.markAccountOnline(accountId);
+            reader.maintainAccountCache();
+            assertEquals(List.of("Alice"), reader.getCachedAccountNames());
+
+            reader.markAccountOffline(accountId);
             reader.maintainAccountCache();
             assertTrue(reader.getCachedAccountNames().isEmpty());
 
@@ -679,6 +684,77 @@ class AccountServicePersistenceIntegrationTest {
             repository.allowNameLoad.countDown();
             executor.shutdownNow();
             executor.awaitTermination(2, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void synchronousColdNameLookupsShareOneBoundedLoad() throws Exception {
+        BlockingRepository repository = new BlockingRepository(false, false, false, false, true);
+        UUID accountId = UUID.randomUUID();
+        repository.upsertBatch(List.of(new AccountRecord(
+                accountId, "Alice", new BigDecimal("5.00"), 1L, 1L)));
+        YamlConfiguration config = testConfig(0.0, -1);
+        config.set("account-loading.mode", "lazy");
+        config.set("account-loading.lazy.cache.enabled", true);
+        AccountService service = newServiceWithConfig(repository, config);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch secondLookupEntered = new CountDownLatch(1);
+
+        try {
+            Future<Optional<AccountRecord>> first = executor.submit(() -> service.findByName("Alice"));
+            assertTrue(repository.nameLoadStarted.await(2, TimeUnit.SECONDS));
+            Future<Optional<AccountRecord>> second = executor.submit(() -> {
+                secondLookupEntered.countDown();
+                return service.findByName("aLiCe");
+            });
+            assertTrue(secondLookupEntered.await(1, TimeUnit.SECONDS));
+            assertThrows(TimeoutException.class, () -> second.get(100, TimeUnit.MILLISECONDS));
+            assertEquals(1, repository.nameLoadCalls.get());
+
+            repository.allowNameLoad.countDown();
+            assertEquals(accountId, first.get(2, TimeUnit.SECONDS).orElseThrow().getId());
+            assertEquals(accountId, second.get(2, TimeUnit.SECONDS).orElseThrow().getId());
+            assertEquals(1, repository.nameLoadCalls.get());
+            service.shutdown();
+        } finally {
+            repository.allowNameLoad.countDown();
+            executor.shutdownNow();
+            executor.awaitTermination(2, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void crossServerLoginRejectsDeferredDirtyAndInUseRefreshes() throws Exception {
+        String filename = "cross-server-login-refresh-status-test";
+        UUID accountId = UUID.randomUUID();
+        JdbcAccountRepository repository = new JdbcAccountRepository(
+                DatabaseDialect.H2, tempDir.toString(), filename);
+        try {
+            AccountService writer = newService(repository);
+            assertTrue(writer.createAccount(accountId, "Alice"));
+            writer.flushAccount(accountId);
+
+            YamlConfiguration config = testConfig(0.0, -1);
+            config.set("cross-server.enabled", true);
+            AccountService reader = newServiceWithConfig(repository, config);
+            reader.loadAll();
+            assertTrue(reader.deposit(accountId, BigDecimal.ONE).transactionSuccess());
+
+            assertEquals(AccountService.RefreshStatus.DEFERRED_DIRTY, reader.refreshAccount(accountId));
+            assertThrows(dev.alexisbinh.openeco.api.OpenEcoApiException.class,
+                    () -> reader.prepareLoginAccount(accountId, "Alice"));
+
+            assertTrue(reader.flushDirty());
+            try (AccountService.AccountPin ignored = reader.pinAccount(accountId).orElseThrow()) {
+                assertEquals(AccountService.RefreshStatus.DEFERRED_IN_USE, reader.refreshAccount(accountId));
+                assertThrows(dev.alexisbinh.openeco.api.OpenEcoApiException.class,
+                        () -> reader.prepareLoginAccount(accountId, "Alice"));
+            }
+
+            writer.shutdown();
+            reader.shutdown();
+        } finally {
+            repository.close();
         }
     }
 
@@ -1025,6 +1101,7 @@ class AccountServicePersistenceIntegrationTest {
         private final CountDownLatch allowDelete = new CountDownLatch(1);
         private final CountDownLatch nameLoadStarted = new CountDownLatch(1);
         private final CountDownLatch allowNameLoad = new CountDownLatch(1);
+        private final AtomicInteger nameLoadCalls = new AtomicInteger();
         private final boolean blockUpsert;
         private final boolean blockDelete;
         private final boolean failDelete;
@@ -1072,6 +1149,7 @@ class AccountServicePersistenceIntegrationTest {
 
         @Override
         public Optional<AccountRecord> loadAccountByName(String normalizedName) throws SQLException {
+            nameLoadCalls.incrementAndGet();
             Optional<AccountRecord> result;
             synchronized (this) {
                 result = lastUpsertedRecords.stream()

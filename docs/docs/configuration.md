@@ -157,7 +157,7 @@ Seconds between automatic background saves. Must be greater than `0`. Lower valu
 </ConfigProperty>
 
 <ConfigProperty name="lazy.cache.enabled" value="true" type="boolean">
-Controls record retention inside `lazy` mode. When `true`, clean loaded accounts are reused according to the size and expiry settings. When `false`, clean records are evicted on the short maintenance cycle; dirty and in-flight records remain temporarily for correctness. Ignored in `eager` mode. **Restart required.**
+Controls record retention inside `lazy` mode. When `true`, clean loaded accounts are reused according to the size and expiry settings. When `false`, clean offline records are evicted on the short maintenance cycle; online, dirty, login-pinned, and actively leased records remain for correctness. Ignored in `eager` mode. **Restart required.**
 </ConfigProperty>
 
 <ConfigProperty name="lazy.cache.maximum-size" value="50000" type="number">

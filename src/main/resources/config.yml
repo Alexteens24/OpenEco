@@ -95,7 +95,7 @@ account-loading:
   mode: eager
   lazy:
     cache:
-      # Retain clean loaded accounts for reuse. Disable for near-zero clean-record retention.
+      # Retain clean offline accounts for reuse. Online and in-flight accounts are always retained.
       enabled: true
       # Retain at most this many inactive clean accounts when possible.
       maximum-size: 50000
