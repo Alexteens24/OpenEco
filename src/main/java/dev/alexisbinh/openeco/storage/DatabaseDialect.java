@@ -23,9 +23,9 @@ public enum DatabaseDialect {
     SQLITE {
         @Override
         public String upsertSql() {
-            return "INSERT INTO accounts(id,name,balance,created_at,updated_at,frozen) VALUES(?,?,?,?,?,?) "
+            return "INSERT INTO accounts(id,name,name_key,balance,created_at,updated_at,frozen) VALUES(?,?,?,?,?,?,?) "
                  + "ON CONFLICT(id) DO UPDATE SET "
-                 + "name=excluded.name, balance=excluded.balance, updated_at=excluded.updated_at, frozen=excluded.frozen";
+                 + "name=excluded.name, name_key=excluded.name_key, balance=excluded.balance, updated_at=excluded.updated_at, frozen=excluded.frozen";
         }
 
         @Override
@@ -49,7 +49,7 @@ public enum DatabaseDialect {
     H2 {
         @Override
         public String upsertSql() {
-            return "MERGE INTO accounts(id,name,balance,created_at,updated_at,frozen) KEY(id) VALUES(?,?,?,?,?,?)";
+            return "MERGE INTO accounts(id,name,name_key,balance,created_at,updated_at,frozen) KEY(id) VALUES(?,?,?,?,?,?,?)";
         }
 
         @Override
@@ -76,9 +76,9 @@ public enum DatabaseDialect {
 
         @Override
         public String upsertSql() {
-            return "INSERT INTO accounts(id,name,balance,created_at,updated_at,frozen) VALUES(?,?,?,?,?,?) AS new "
+            return "INSERT INTO accounts(id,name,name_key,balance,created_at,updated_at,frozen) VALUES(?,?,?,?,?,?,?) AS new "
                  + "ON DUPLICATE KEY UPDATE "
-                 + "name=new.name, balance=new.balance, updated_at=new.updated_at, frozen=new.frozen";
+                 + "name=new.name, name_key=new.name_key, balance=new.balance, updated_at=new.updated_at, frozen=new.frozen";
         }
 
         @Override
@@ -102,9 +102,9 @@ public enum DatabaseDialect {
     MARIADB {
         @Override
         public String upsertSql() {
-            return "INSERT INTO accounts(id,name,balance,created_at,updated_at,frozen) VALUES(?,?,?,?,?,?) "
+            return "INSERT INTO accounts(id,name,name_key,balance,created_at,updated_at,frozen) VALUES(?,?,?,?,?,?,?) "
                  + "ON DUPLICATE KEY UPDATE "
-                 + "name=VALUES(name), balance=VALUES(balance), updated_at=VALUES(updated_at), frozen=VALUES(frozen)";
+                 + "name=VALUES(name), name_key=VALUES(name_key), balance=VALUES(balance), updated_at=VALUES(updated_at), frozen=VALUES(frozen)";
         }
 
         @Override
@@ -123,9 +123,9 @@ public enum DatabaseDialect {
     POSTGRESQL {
         @Override
         public String upsertSql() {
-            return "INSERT INTO accounts(id,name,balance,created_at,updated_at,frozen) VALUES(?,?,?,?,?,?) "
+            return "INSERT INTO accounts(id,name,name_key,balance,created_at,updated_at,frozen) VALUES(?,?,?,?,?,?,?) "
                  + "ON CONFLICT(id) DO UPDATE SET "
-                 + "name=excluded.name, balance=excluded.balance, updated_at=excluded.updated_at, frozen=excluded.frozen";
+                 + "name=excluded.name, name_key=excluded.name_key, balance=excluded.balance, updated_at=excluded.updated_at, frozen=excluded.frozen";
         }
 
         @Override

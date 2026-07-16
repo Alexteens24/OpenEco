@@ -203,6 +203,20 @@ class OpenEcoApiImplTest {
     }
 
     @Test
+    void depositMapsPolicyRejectionWithoutThrowing() {
+        UUID accountId = UUID.randomUUID();
+        BigDecimal amount = new BigDecimal("10.00");
+        AccountRecord account = new AccountRecord(accountId, "Alice", new BigDecimal("25.00"), 1L, 2L);
+        when(service.getAccount(accountId)).thenReturn(Optional.of(account));
+        when(service.deposit(accountId, amount)).thenReturn(new EconomyOperationResponse(
+                amount, account.getBalance(), EconomyOperationResponse.ResponseType.FAILURE, "Policy rejected"));
+
+        BalanceChangeResult result = api.deposit(accountId, amount);
+
+        assertEquals(BalanceChangeResult.Status.POLICY_REJECTED, result.status());
+    }
+
+    @Test
     void previewTransferDelegatesToService() {
         UUID fromId = UUID.randomUUID();
         UUID toId = UUID.randomUUID();

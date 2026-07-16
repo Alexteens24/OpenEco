@@ -18,6 +18,9 @@ package dev.alexisbinh.openeco.enhancements;
 
 import dev.alexisbinh.openeco.api.CurrencyInfo;
 import dev.alexisbinh.openeco.api.OpenEcoApi;
+import dev.alexisbinh.openeco.api.OpenEcoAsyncApi;
+import dev.alexisbinh.openeco.api.EconomyPolicyRegistry;
+import dev.alexisbinh.openeco.api.ClusterJobCoordinator;
 import dev.alexisbinh.openeco.enhancements.exchange.ExchangeCommand;
 import dev.alexisbinh.openeco.enhancements.interest.InterestTask;
 import dev.alexisbinh.openeco.enhancements.paylimit.PayLimitListener;
@@ -37,6 +40,9 @@ public class OpenEcoEnhancementsPlugin extends JavaPlugin {
 
     private OpenEcoApi api;
     private ScheduledTask interestTask;
+    private ClusterJobCoordinator clusterJobCoordinator;
+    private OpenEcoAsyncApi asyncApi;
+    private boolean multiWriter;
 
     @Override
     public void onEnable() {
@@ -50,15 +56,38 @@ public class OpenEcoEnhancementsPlugin extends JavaPlugin {
             return;
         }
         api = rsp.getProvider();
+        RegisteredServiceProvider<ClusterJobCoordinator> jobRegistration =
+                getServer().getServicesManager().getRegistration(ClusterJobCoordinator.class);
+        clusterJobCoordinator = jobRegistration == null ? null : jobRegistration.getProvider();
+        multiWriter = false;
+        org.bukkit.plugin.Plugin corePlugin = getServer().getPluginManager().getPlugin("openeco");
+        if (corePlugin instanceof JavaPlugin core) {
+            multiWriter = core.getConfig().getBoolean("cross-server.enabled", false)
+                    && "multi-writer".equalsIgnoreCase(core.getConfig().getString("cross-server.mode", "multi-writer"));
+        }
+        RegisteredServiceProvider<EconomyPolicyRegistry> policyRegistration =
+                getServer().getServicesManager().getRegistration(EconomyPolicyRegistry.class);
+        if (multiWriter && policyRegistration != null) {
+            policyRegistration.getProvider().register("openeco-enhancements", new EnhancementsPolicyProvider(this));
+            getLogger().info("Network-wide mutation policies registered.");
+        }
+        if (multiWriter) {
+            RegisteredServiceProvider<OpenEcoAsyncApi> asyncRegistration =
+                    getServer().getServicesManager().getRegistration(OpenEcoAsyncApi.class);
+            asyncApi = asyncRegistration == null ? null : asyncRegistration.getProvider();
+            if (asyncApi == null) {
+                getLogger().warning("OpenEcoAsyncApi unavailable; interest payouts may block the global scheduler.");
+            }
+        }
 
         // ── Pay Limit ────────────────────────────────────────────────────────
-        if (getConfig().getBoolean("pay-limit.enabled", false)) {
+        if (!multiWriter && getConfig().getBoolean("pay-limit.enabled", false)) {
             getServer().getPluginManager().registerEvents(new PayLimitListener(api, this), this);
             getLogger().info("Pay limit enabled.");
         }
 
         // ── Permission Balance Cap ────────────────────────────────────────────
-        if (getConfig().getBoolean("perm-cap.enabled", false)) {
+        if (!multiWriter && getConfig().getBoolean("perm-cap.enabled", false)) {
             warnIfPermCapExceedsGlobalLimit(getConfig().getMapList("perm-cap.tiers"), api, getLogger());
             getServer().getPluginManager().registerEvents(new PermCapListener(api, this), this);
             getLogger().info("Permission balance cap enabled.");
@@ -85,6 +114,9 @@ public class OpenEcoEnhancementsPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        RegisteredServiceProvider<EconomyPolicyRegistry> registration =
+                getServer().getServicesManager().getRegistration(EconomyPolicyRegistry.class);
+        if (registration != null) registration.getProvider().unregister("openeco-enhancements");
         if (interestTask != null) {
             interestTask.cancel();
         }
@@ -103,7 +135,7 @@ public class OpenEcoEnhancementsPlugin extends JavaPlugin {
             return;
         }
         long intervalMs = intervalSeconds * 1000L;
-        InterestTask task = new InterestTask(api, this);
+        InterestTask task = new InterestTask(api, this, clusterJobCoordinator, multiWriter ? asyncApi : null);
         interestTask = getServer().getAsyncScheduler().runAtFixedRate(
                 this, st -> task.run(), intervalMs, intervalMs, TimeUnit.MILLISECONDS);
         getLogger().info("Interest task scheduled every " + intervalSeconds + "s.");

@@ -68,13 +68,13 @@ Use network mode only when you run multiple backend servers behind a Velocity pr
 ### Checklist
 
 1. Use **MySQL, MariaDB, or PostgreSQL** — SQLite and H2 are not supported for cross-server mode.
-2. Set `cross-server.enabled: true` on **every** backend.
-3. Install the **OpenEco Proxy** JAR on Velocity.
+2. Set `cross-server.enabled: true` and `cross-server.mode: multi-writer` on **every** backend.
+3. Optionally install the **OpenEco Proxy** JAR on Velocity; it is mandatory only for legacy `handoff` mode.
 4. Restart the proxy and all backends after toggling cross-server mode.
 5. Test at least one server switch and one `/ecosync <player>` before production use.
 
-::: warning Not a distributed ledger
-Network mode flushes and refreshes accounts during player handoff. It does not broadcast balances live to every backend or protect against simultaneous writes from multiple servers.
+::: tip Consistency model
+Multi-writer mutations are safe and database-authoritative. Reads use per-backend caches and can lag by the configured polling interval. Optional Redis reduces that delay while JDBC polling prevents missed updates.
 :::
 
 ### Typical network layout

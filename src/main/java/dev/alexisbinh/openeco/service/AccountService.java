@@ -17,19 +17,27 @@
 package dev.alexisbinh.openeco.service;
 
 import dev.alexisbinh.openeco.api.BalanceCheckResult;
+import dev.alexisbinh.openeco.api.ExchangeResult;
+import dev.alexisbinh.openeco.api.MutationPolicyContext;
 import dev.alexisbinh.openeco.api.TransferPreviewResult;
 import dev.alexisbinh.openeco.event.AccountCreateEvent;
 import dev.alexisbinh.openeco.event.AccountDeleteEvent;
 import dev.alexisbinh.openeco.event.AccountDeletedEvent;
 import dev.alexisbinh.openeco.event.AccountRenameEvent;
 import dev.alexisbinh.openeco.event.AccountRenamedEvent;
+import dev.alexisbinh.openeco.event.BalanceChangeEvent;
+import dev.alexisbinh.openeco.event.BalanceChangedEvent;
+import dev.alexisbinh.openeco.event.PayCompletedEvent;
+import dev.alexisbinh.openeco.event.PayEvent;
 import dev.alexisbinh.openeco.model.AccountRecord;
 import dev.alexisbinh.openeco.model.DirectTransferResult;
 import dev.alexisbinh.openeco.model.PayResult;
 import dev.alexisbinh.openeco.model.TransactionEntry;
 import dev.alexisbinh.openeco.model.TransactionType;
 import dev.alexisbinh.openeco.api.TransferCheckResult;
+import dev.alexisbinh.openeco.crossserver.MultiWriterChangeNotifier;
 import dev.alexisbinh.openeco.storage.AccountRepository;
+import dev.alexisbinh.openeco.storage.MultiWriterRepository;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.Nullable;
@@ -39,11 +47,13 @@ import java.math.RoundingMode;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Logger;
 
@@ -81,9 +91,16 @@ public class AccountService {
     private final TransactionHistoryService transactionHistoryService;
     private final EventDispatcher eventDispatcher;
     private final EconomyOperations economyOperations;
+    private final EconomyPolicyRegistryImpl policyRegistry = new EconomyPolicyRegistryImpl();
     private volatile EconomyConfigSnapshot config;
     private volatile boolean crossServerEnabled;
+    private final CrossServerMode crossServerMode;
+    private final @Nullable MultiWriterRepository multiWriterRepository;
+    private final ClusterJobCoordinatorImpl clusterJobCoordinator;
+    private volatile long changeCursor;
+    private volatile MultiWriterChangeNotifier changeNotifier = (id, version, kind) -> { };
     private final AtomicBoolean leaderboardRefreshRunning = new AtomicBoolean();
+    private final AtomicBoolean changePollRunning = new AtomicBoolean();
 
     // Pay cooldown tracker
     private final ConcurrentHashMap<UUID, Long> lastPayTime = new ConcurrentHashMap<>();
@@ -108,6 +125,13 @@ public class AccountService {
                 this::getOrLoadLiveRecord);
         readConfig(config);
         this.crossServerEnabled = config.getBoolean("cross-server.enabled", false);
+        this.crossServerMode = CrossServerMode.fromConfig(config.getString("cross-server.mode", "multi-writer"));
+        this.multiWriterRepository = crossServerEnabled && crossServerMode == CrossServerMode.MULTI_WRITER
+                && repository instanceof MultiWriterRepository writer ? writer : null;
+        if (crossServerEnabled && crossServerMode == CrossServerMode.MULTI_WRITER && multiWriterRepository == null) {
+            throw new IllegalArgumentException("multi-writer mode requires a compatible remote JDBC repository");
+        }
+        this.clusterJobCoordinator = new ClusterJobCoordinatorImpl(multiWriterRepository, log);
     }
 
     // ── Config ──────────────────────────────────────────────────────────────
@@ -127,11 +151,34 @@ public class AccountService {
         return crossServerEnabled;
     }
 
+    public CrossServerMode getCrossServerMode() {
+        return crossServerMode;
+    }
+
+    public boolean isMultiWriterEnabled() {
+        return crossServerEnabled && crossServerMode == CrossServerMode.MULTI_WRITER;
+    }
+
+    public void setChangeNotifier(@Nullable MultiWriterChangeNotifier notifier) {
+        changeNotifier = notifier == null ? (id, version, kind) -> { } : notifier;
+    }
+
+    public EconomyPolicyRegistryImpl getPolicyRegistry() {
+        return policyRegistry;
+    }
+
+    public ClusterJobCoordinatorImpl getClusterJobCoordinator() {
+        return clusterJobCoordinator;
+    }
+
     // ── Startup ─────────────────────────────────────────────────────────────
 
     public void loadAll() throws SQLException {
         clearStartupState();
         try {
+            if (multiWriterRepository != null) {
+                changeCursor = multiWriterRepository.currentChangeSequence();
+            }
             int[] loaded = {0};
             repository.loadBatches(ACCOUNT_LOAD_BATCH_SIZE, records -> {
                 for (AccountRecord record : records) {
@@ -195,6 +242,9 @@ public class AccountService {
         if (validatedName == null) {
             return CreateAccountStatus.INVALID_NAME;
         }
+        if (multiWriterRepository != null) {
+            return createAccountMultiWriter(id, validatedName);
+        }
 
         AccountCreateEvent createdEvent;
 
@@ -240,6 +290,9 @@ public class AccountService {
         String validatedName = sanitizeAccountName(newName);
         if (validatedName == null) {
             return RenameAccountStatus.INVALID_NAME;
+        }
+        if (multiWriterRepository != null) {
+            return renameAccountMultiWriter(id, validatedName);
         }
 
         AccountRenameEvent event;
@@ -304,6 +357,9 @@ public class AccountService {
     }
 
     public DeleteAccountStatus deleteAccountDetailed(UUID id) {
+        if (multiWriterRepository != null) {
+            return deleteAccountMultiWriter(id);
+        }
         AccountDeleteEvent event;
 
         synchronized (persistenceLock) {
@@ -426,6 +482,11 @@ public class AccountService {
     }
 
     public EconomyOperationResponse deposit(UUID id, String currencyId, BigDecimal amount) {
+        if (multiWriterRepository != null) {
+            return mutateBalanceMultiWriter(id, currencyId, amount,
+                    MultiWriterRepository.BalanceMutationKind.DEPOSIT,
+                    TransactionType.GIVE, BalanceChangeEvent.Reason.GIVE);
+        }
         return economyOperations.deposit(id, currencyId, amount);
     }
 
@@ -434,6 +495,11 @@ public class AccountService {
     }
 
     public EconomyOperationResponse withdraw(UUID id, String currencyId, BigDecimal amount) {
+        if (multiWriterRepository != null) {
+            return mutateBalanceMultiWriter(id, currencyId, amount,
+                    MultiWriterRepository.BalanceMutationKind.WITHDRAW,
+                    TransactionType.TAKE, BalanceChangeEvent.Reason.TAKE);
+        }
         return economyOperations.withdraw(id, currencyId, amount);
     }
 
@@ -442,6 +508,11 @@ public class AccountService {
     }
 
     public EconomyOperationResponse set(UUID id, String currencyId, BigDecimal amount) {
+        if (multiWriterRepository != null) {
+            return mutateBalanceMultiWriter(id, currencyId, amount,
+                    MultiWriterRepository.BalanceMutationKind.SET,
+                    TransactionType.SET, BalanceChangeEvent.Reason.SET);
+        }
         return economyOperations.set(id, currencyId, amount);
     }
 
@@ -450,6 +521,13 @@ public class AccountService {
     }
 
     public EconomyOperationResponse reset(UUID id, String currencyId) {
+        if (multiWriterRepository != null) {
+            CurrencyDefinition currency = resolveCurrency(currencyId);
+            if (currency == null) return operationFailure(BigDecimal.ZERO, BigDecimal.ZERO, "Unknown currency");
+            return mutateBalanceMultiWriter(id, currency.id(), currency.startingBalance(),
+                    MultiWriterRepository.BalanceMutationKind.SET,
+                    TransactionType.RESET, BalanceChangeEvent.Reason.RESET);
+        }
         return economyOperations.reset(id, currencyId);
     }
 
@@ -462,6 +540,7 @@ public class AccountService {
     }
 
     public PayResult pay(UUID fromId, UUID toId, String currencyId, BigDecimal rawAmount) {
+        if (multiWriterRepository != null) return payMultiWriter(fromId, toId, currencyId, rawAmount, true);
         return economyOperations.pay(fromId, toId, currencyId, rawAmount);
     }
 
@@ -471,7 +550,99 @@ public class AccountService {
     }
 
     public DirectTransferResult directTransfer(UUID fromId, UUID toId, String currencyId, BigDecimal rawAmount) {
+        if (multiWriterRepository != null) return directTransferMultiWriter(fromId, toId, currencyId, rawAmount);
         return economyOperations.directTransfer(fromId, toId, currencyId, rawAmount);
+    }
+
+    public ExchangeResult exchange(UUID accountId, String fromCurrencyId, String toCurrencyId,
+                                   BigDecimal rawFromAmount, BigDecimal rawToAmount) {
+        CurrencyDefinition fromCurrency = resolveCurrency(fromCurrencyId);
+        CurrencyDefinition toCurrency = resolveCurrency(toCurrencyId);
+        if (fromCurrency == null || toCurrency == null) return exchangeFailure(ExchangeResult.Status.UNKNOWN_CURRENCY);
+        if (fromCurrency.id().equalsIgnoreCase(toCurrency.id())) return exchangeFailure(ExchangeResult.Status.SAME_CURRENCY);
+        BigDecimal fromAmount = rawFromAmount.setScale(fromCurrency.fractionalDigits(), RoundingMode.HALF_UP);
+        BigDecimal toAmount = rawToAmount.setScale(toCurrency.fractionalDigits(), RoundingMode.HALF_UP);
+        if (fromAmount.signum() <= 0 || toAmount.signum() <= 0) return exchangeFailure(ExchangeResult.Status.INVALID_AMOUNT);
+        AccountRecord cached = getOrLoadLiveRecord(accountId);
+        if (cached == null) return exchangeFailure(ExchangeResult.Status.ACCOUNT_NOT_FOUND);
+
+        BigDecimal fromBefore = cached.getBalance(fromCurrency.id());
+        BigDecimal toBefore = cached.getBalance(toCurrency.id());
+        BalanceChangeEvent takeEvent = new BalanceChangeEvent(accountId, fromBefore,
+                fromBefore.subtract(fromAmount), BalanceChangeEvent.Reason.TAKE, fromCurrency.id());
+        eventDispatcher.dispatch(takeEvent);
+        if (takeEvent.isCancelled()) return exchangeFailure(ExchangeResult.Status.CANCELLED);
+        BalanceChangeEvent giveEvent = new BalanceChangeEvent(accountId, toBefore,
+                toBefore.add(toAmount), BalanceChangeEvent.Reason.GIVE, toCurrency.id());
+        eventDispatcher.dispatch(giveEvent);
+        if (giveEvent.isCancelled()) return exchangeFailure(ExchangeResult.Status.CANCELLED);
+        EconomyPolicyRegistryImpl.ResolvedPolicy exchangePolicy = policyRegistry.evaluate(
+                new MutationPolicyContext(MutationPolicyContext.Kind.EXCHANGE, accountId, accountId,
+                        toCurrency.id(), toAmount));
+        if (!exchangePolicy.allowed()) return exchangeFailure(ExchangeResult.Status.POLICY_REJECTED);
+        BigDecimal exchangeCap = minimumCap(toCurrency.maxBalance(), exchangePolicy.maximumTargetBalance());
+
+        if (multiWriterRepository != null) {
+            try {
+                MultiWriterRepository.ExchangeMutationResult result = multiWriterRepository.exchange(
+                        new MultiWriterRepository.ExchangeMutationRequest(UUID.randomUUID(), accountId,
+                                fromCurrency.id(), toCurrency.id(), fromAmount, toAmount,
+                                exchangeCap, System.currentTimeMillis(), "exchange"));
+                if (result.status() != MultiWriterRepository.MutationStatus.SUCCESS) {
+                    return exchangeFailure(switch (result.status()) {
+                        case ACCOUNT_NOT_FOUND -> ExchangeResult.Status.ACCOUNT_NOT_FOUND;
+                        case INSUFFICIENT_FUNDS -> ExchangeResult.Status.INSUFFICIENT_FUNDS;
+                        case BALANCE_LIMIT -> ExchangeResult.Status.BALANCE_LIMIT;
+                        case FROZEN -> ExchangeResult.Status.FROZEN;
+                        default -> ExchangeResult.Status.STORAGE_ERROR;
+                    });
+                }
+                applyAuthoritativeAccount(result.account());
+                notifyUpsert(result.account());
+                eventDispatcher.dispatch(new BalanceChangedEvent(accountId, result.fromBefore(), result.fromAfter(),
+                        BalanceChangeEvent.Reason.TAKE, fromCurrency.id()));
+                eventDispatcher.dispatch(new BalanceChangedEvent(accountId, result.toBefore(), result.toAfter(),
+                        BalanceChangeEvent.Reason.GIVE, toCurrency.id()));
+                leaderboardCache.markDirty(fromCurrency.id());
+                leaderboardCache.markDirty(toCurrency.id());
+                return new ExchangeResult(ExchangeResult.Status.SUCCESS, fromAmount, toAmount,
+                        result.fromAfter(), result.toAfter());
+            } catch (SQLException e) {
+                log.severe("Multi-writer exchange failed for " + accountId + ": " + e.getMessage());
+                return exchangeFailure(ExchangeResult.Status.STORAGE_ERROR);
+            }
+        }
+
+        synchronized (cached) {
+            if (!accountRegistry.isLive(accountId, cached)) return exchangeFailure(ExchangeResult.Status.ACCOUNT_NOT_FOUND);
+            if (cached.isFrozen()) return exchangeFailure(ExchangeResult.Status.FROZEN);
+            fromBefore = cached.getBalance(fromCurrency.id());
+            toBefore = cached.getBalance(toCurrency.id());
+            if (fromBefore.compareTo(fromAmount) < 0) return exchangeFailure(ExchangeResult.Status.INSUFFICIENT_FUNDS);
+            BigDecimal fromAfter = fromBefore.subtract(fromAmount);
+            BigDecimal toAfter = toBefore.add(toAmount);
+            if (exchangeCap != null && toAfter.compareTo(exchangeCap) > 0) {
+                return exchangeFailure(ExchangeResult.Status.BALANCE_LIMIT);
+            }
+            cached.setBalance(fromCurrency.id(), fromAfter);
+            cached.setBalance(toCurrency.id(), toAfter);
+            long now = System.currentTimeMillis();
+            logTransaction(new TransactionEntry(TransactionType.TAKE, null, accountId, fromAmount,
+                    fromBefore, fromAfter, now, "exchange", fromCurrency.id() + "->" + toCurrency.id(), fromCurrency.id()));
+            logTransaction(new TransactionEntry(TransactionType.GIVE, null, accountId, toAmount,
+                    toBefore, toAfter, now, "exchange", fromCurrency.id() + "->" + toCurrency.id(), toCurrency.id()));
+            eventDispatcher.dispatch(new BalanceChangedEvent(accountId, fromBefore, fromAfter,
+                    BalanceChangeEvent.Reason.TAKE, fromCurrency.id()));
+            eventDispatcher.dispatch(new BalanceChangedEvent(accountId, toBefore, toAfter,
+                    BalanceChangeEvent.Reason.GIVE, toCurrency.id()));
+            leaderboardCache.markDirty(fromCurrency.id());
+            leaderboardCache.markDirty(toCurrency.id());
+            return new ExchangeResult(ExchangeResult.Status.SUCCESS, fromAmount, toAmount, fromAfter, toAfter);
+        }
+    }
+
+    private static ExchangeResult exchangeFailure(ExchangeResult.Status status) {
+        return new ExchangeResult(status, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
     }
 
     public TransferCheckResult canTransfer(UUID fromId, UUID toId, BigDecimal amount) {
@@ -549,6 +720,17 @@ public class AccountService {
         }
     }
 
+    /** Prunes durable cache-invalidation rows after every server has had ample time to consume them. */
+    public void pruneMultiWriterChanges(int retentionDays) {
+        if (multiWriterRepository == null || retentionDays <= 0) return;
+        long cutoff = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(retentionDays);
+        try {
+            multiWriterRepository.pruneAccountChanges(cutoff);
+        } catch (SQLException e) {
+            log.warning("Failed to prune multi-writer change log: " + e.getMessage());
+        }
+    }
+
     // ── Baltop ───────────────────────────────────────────────────────────────
 
     public LeaderboardView getLeaderboardPage(int offset, int limit) {
@@ -584,6 +766,7 @@ public class AccountService {
     // ── Account freeze ────────────────────────────────────────────────────────
 
     public boolean freezeAccount(UUID id) {
+        if (multiWriterRepository != null) return setFrozenMultiWriter(id, true);
         AccountRecord record = getOrLoadLiveRecord(id);
         if (record == null) return false;
         synchronized (record) {
@@ -594,6 +777,7 @@ public class AccountService {
     }
 
     public boolean unfreezeAccount(UUID id) {
+        if (multiWriterRepository != null) return setFrozenMultiWriter(id, false);
         AccountRecord record = getOrLoadLiveRecord(id);
         if (record == null) return false;
         synchronized (record) {
@@ -679,6 +863,7 @@ public class AccountService {
      * under per-record lock, clears dirty flag, then batches to DB.
      */
     public void flushDirty() {
+        if (multiWriterRepository != null) return;
         synchronized (persistenceLock) {
             List<AccountRecord> snapshots = new ArrayList<>();
             for (AccountRecord record : accountRegistry.liveRecords()) {
@@ -720,6 +905,7 @@ public class AccountService {
      * Intended for cross-server use: call async before the player disconnects.
      */
     public void flushAccount(UUID id) {
+        if (multiWriterRepository != null) return;
         synchronized (persistenceLock) {
             AccountRecord live = accountRegistry.getLiveRecord(id);
             if (live == null) return;
@@ -783,9 +969,385 @@ public class AccountService {
         }
     }
 
+    public Optional<AccountRecord> loadFreshAccount(UUID id) throws SQLException {
+        Optional<AccountRecord> fresh = repository.loadAccount(id);
+        if (fresh.isEmpty()) {
+            removeCachedAccount(id);
+            return Optional.empty();
+        }
+        AccountRecord record = fresh.get();
+        alignLoadedRecordCurrencies(record, config);
+        applyAuthoritativeAccount(record);
+        return accountRegistry.getSnapshot(id);
+    }
+
+    /** Applies durable change-log invalidations from other backend servers. */
+    public void pollMultiWriterChanges(int batchSize) {
+        if (multiWriterRepository == null || !changePollRunning.compareAndSet(false, true)) return;
+        try {
+            List<MultiWriterRepository.AccountChange> changes = multiWriterRepository.loadChangesAfter(
+                    changeCursor, Math.max(1, batchSize));
+            if (changes.isEmpty()) return;
+            if (changes.getFirst().sequence() > changeCursor + 1L) {
+                log.warning("Multi-writer change-log gap detected; rebuilding the local account cache.");
+                resyncAuthoritativeCache();
+                return;
+            }
+            Map<UUID, MultiWriterRepository.AccountChange> latest = new java.util.LinkedHashMap<>();
+            for (MultiWriterRepository.AccountChange change : changes) {
+                latest.put(change.accountId(), change);
+                changeCursor = Math.max(changeCursor, change.sequence());
+            }
+            List<UUID> reload = latest.values().stream()
+                    .filter(change -> change.kind() == MultiWriterRepository.ChangeKind.UPSERT)
+                    .map(MultiWriterRepository.AccountChange::accountId).toList();
+            Map<UUID, Optional<AccountRecord>> loaded = multiWriterRepository.loadAccounts(reload);
+            for (MultiWriterRepository.AccountChange change : latest.values()) {
+                if (change.kind() == MultiWriterRepository.ChangeKind.DELETE) {
+                    removeCachedAccount(change.accountId());
+                    continue;
+                }
+                loaded.getOrDefault(change.accountId(), Optional.empty()).ifPresent(this::applyAuthoritativeAccount);
+            }
+            markAllLeaderboardsDirty();
+        } catch (SQLException e) {
+            log.warning("Multi-writer change polling failed: " + e.getMessage());
+        } finally {
+            changePollRunning.set(false);
+        }
+    }
+
+    private void resyncAuthoritativeCache() throws SQLException {
+        long watermark = multiWriterRepository.currentChangeSequence();
+        HashSet<UUID> seen = new HashSet<>();
+        repository.loadBatches(ACCOUNT_LOAD_BATCH_SIZE, records -> {
+            for (AccountRecord record : records) {
+                alignLoadedRecordCurrencies(record, config);
+                seen.add(record.getId());
+                applyAuthoritativeAccount(record);
+            }
+        });
+        for (AccountRecord record : List.copyOf(accountRegistry.liveRecords())) {
+            if (!seen.contains(record.getId())) removeCachedAccount(record.getId());
+        }
+        changeCursor = watermark;
+        markAllLeaderboardsDirty();
+    }
+
+    public long getChangeCursor() {
+        return changeCursor;
+    }
+
     public void shutdown() {
         transactionHistoryService.shutdown();
-        flushDirty();
+        if (multiWriterRepository == null) flushDirty();
+    }
+
+    // ── Multi-writer implementation ─────────────────────────────────────────
+
+    private CreateAccountStatus createAccountMultiWriter(UUID id, String name) {
+        EconomyConfigSnapshot current = config;
+        Map<String, BigDecimal> balances = new HashMap<>();
+        for (CurrencyDefinition currency : current.currencies().all()) {
+            balances.put(currency.id(), currency.startingBalance());
+        }
+        long now = System.currentTimeMillis();
+        try {
+            MultiWriterRepository.AccountWriteResult result = multiWriterRepository.createAccount(
+                    UUID.randomUUID(), id, name, balances, current.currencyId(), now);
+            return switch (result.status()) {
+                case SUCCESS -> {
+                    applyAuthoritativeAccount(result.account());
+                    notifyUpsert(result.account());
+                    eventDispatcher.dispatch(new AccountCreateEvent(id, name, current.startingBalance()));
+                    yield CreateAccountStatus.CREATED;
+                }
+                case ALREADY_EXISTS -> CreateAccountStatus.ALREADY_EXISTS;
+                case NAME_IN_USE -> CreateAccountStatus.NAME_IN_USE;
+                default -> CreateAccountStatus.NAME_IN_USE;
+            };
+        } catch (SQLException e) {
+            log.severe("Multi-writer account create failed for " + id + ": " + e.getMessage());
+            return CreateAccountStatus.NAME_IN_USE;
+        }
+    }
+
+    private RenameAccountStatus renameAccountMultiWriter(UUID id, String newName) {
+        AccountRecord current = getOrLoadLiveRecord(id);
+        if (current == null) return RenameAccountStatus.NOT_FOUND;
+        String oldName = current.getLastKnownName();
+        if (oldName.equals(newName)) return RenameAccountStatus.UNCHANGED;
+        AccountRenameEvent event = new AccountRenameEvent(id, oldName, newName);
+        eventDispatcher.dispatch(event);
+        if (event.isCancelled()) return RenameAccountStatus.CANCELLED;
+        try {
+            MultiWriterRepository.AccountWriteResult result = multiWriterRepository.renameAccount(
+                    UUID.randomUUID(), id, newName, System.currentTimeMillis());
+            return switch (result.status()) {
+                case SUCCESS -> {
+                    applyAuthoritativeAccount(result.account());
+                    notifyUpsert(result.account());
+                    eventDispatcher.dispatch(new AccountRenamedEvent(id, oldName, newName));
+                    yield RenameAccountStatus.RENAMED;
+                }
+                case ACCOUNT_NOT_FOUND -> RenameAccountStatus.NOT_FOUND;
+                case NAME_IN_USE -> RenameAccountStatus.NAME_IN_USE;
+                default -> RenameAccountStatus.NAME_IN_USE;
+            };
+        } catch (SQLException e) {
+            log.severe("Multi-writer account rename failed for " + id + ": " + e.getMessage());
+            return RenameAccountStatus.NOT_FOUND;
+        }
+    }
+
+    private DeleteAccountStatus deleteAccountMultiWriter(UUID id) {
+        AccountRecord current = getOrLoadLiveRecord(id);
+        if (current == null) return DeleteAccountStatus.NOT_FOUND;
+        AccountDeleteEvent event = new AccountDeleteEvent(id, current.getLastKnownName(), current.getBalance());
+        eventDispatcher.dispatch(event);
+        if (event.isCancelled()) return DeleteAccountStatus.FAILED;
+        try {
+            MultiWriterRepository.AccountWriteResult result = multiWriterRepository.deleteAccount(
+                    UUID.randomUUID(), id, System.currentTimeMillis());
+            if (result.status() == MultiWriterRepository.MutationStatus.ACCOUNT_NOT_FOUND) {
+                return DeleteAccountStatus.NOT_FOUND;
+            }
+            if (result.status() != MultiWriterRepository.MutationStatus.SUCCESS) return DeleteAccountStatus.FAILED;
+            removeCachedAccount(id);
+            changeNotifier.publish(id, result.account().getVersion() + 1,
+                    MultiWriterRepository.ChangeKind.DELETE);
+            markAllLeaderboardsDirty();
+            eventDispatcher.dispatch(new AccountDeletedEvent(id, event.getPlayerName(), event.getBalance()));
+            return DeleteAccountStatus.DELETED;
+        } catch (SQLException e) {
+            log.severe("Multi-writer account delete failed for " + id + ": " + e.getMessage());
+            return DeleteAccountStatus.FAILED;
+        }
+    }
+
+    private boolean setFrozenMultiWriter(UUID id, boolean frozen) {
+        try {
+            MultiWriterRepository.AccountWriteResult result = multiWriterRepository.setFrozen(
+                    UUID.randomUUID(), id, frozen, System.currentTimeMillis());
+            if (result.status() != MultiWriterRepository.MutationStatus.SUCCESS) return false;
+            applyAuthoritativeAccount(result.account());
+            notifyUpsert(result.account());
+            return true;
+        } catch (SQLException e) {
+            log.severe("Multi-writer freeze update failed for " + id + ": " + e.getMessage());
+            return false;
+        }
+    }
+
+    private EconomyOperationResponse mutateBalanceMultiWriter(
+            UUID id, String currencyId, BigDecimal rawAmount,
+            MultiWriterRepository.BalanceMutationKind kind,
+            TransactionType transactionType, BalanceChangeEvent.Reason reason) {
+        CurrencyDefinition currency = resolveCurrency(currencyId);
+        if (currency == null) return operationFailure(BigDecimal.ZERO, BigDecimal.ZERO, "Unknown currency");
+        BigDecimal amount = rawAmount.setScale(currency.fractionalDigits(), RoundingMode.HALF_UP);
+        boolean invalid = kind == MultiWriterRepository.BalanceMutationKind.SET
+                ? amount.signum() < 0 : amount.signum() <= 0;
+        if (invalid) return operationFailure(amount, getBalance(id, currency.id()),
+                kind == MultiWriterRepository.BalanceMutationKind.SET ? "Amount cannot be negative" : "Amount must be positive");
+        AccountRecord cached = getOrLoadLiveRecord(id);
+        if (cached == null) return operationFailure(amount, BigDecimal.ZERO, "Account not found");
+        BigDecimal proposedBefore = cached.getBalance(currency.id());
+        BigDecimal proposedAfter = switch (kind) {
+            case DEPOSIT -> proposedBefore.add(amount);
+            case WITHDRAW -> proposedBefore.subtract(amount);
+            case SET -> amount;
+        };
+        BalanceChangeEvent event = new BalanceChangeEvent(id, proposedBefore, proposedAfter, reason, currency.id());
+        eventDispatcher.dispatch(event);
+        if (event.isCancelled()) return operationFailure(amount, proposedBefore, "Cancelled by plugin");
+        MutationPolicyContext.Kind policyKind = switch (reason) {
+            case GIVE -> MutationPolicyContext.Kind.DEPOSIT;
+            case TAKE -> MutationPolicyContext.Kind.WITHDRAW;
+            case SET -> MutationPolicyContext.Kind.SET;
+            case RESET -> MutationPolicyContext.Kind.RESET;
+            default -> MutationPolicyContext.Kind.DEPOSIT;
+        };
+        EconomyPolicyRegistryImpl.ResolvedPolicy policy = policyRegistry.evaluate(
+                new MutationPolicyContext(policyKind, null, id, currency.id(), amount));
+        if (!policy.allowed()) return operationFailure(amount, proposedBefore, "Policy rejected");
+        BigDecimal effectiveCap = minimumCap(currency.maxBalance(), policy.maximumTargetBalance());
+        long now = System.currentTimeMillis();
+        try {
+            MultiWriterRepository.BalanceMutationResult result = multiWriterRepository.mutateBalance(
+                    new MultiWriterRepository.BalanceMutationRequest(UUID.randomUUID(), id, currency.id(), kind,
+                            amount, effectiveCap, transactionType, now, null, null));
+            if (result.status() != MultiWriterRepository.MutationStatus.SUCCESS) {
+                return operationFailure(amount, result.before(), mutationError(result.status()));
+            }
+            applyAuthoritativeAccount(result.account());
+            notifyUpsert(result.account());
+            eventDispatcher.dispatch(new BalanceChangedEvent(id, result.before(), result.after(), reason, currency.id()));
+            leaderboardCache.markDirty(currency.id());
+            return new EconomyOperationResponse(amount, result.after(), EconomyOperationResponse.ResponseType.SUCCESS, "");
+        } catch (SQLException e) {
+            log.severe("Multi-writer balance mutation failed for " + id + ": " + e.getMessage());
+            return operationFailure(amount, proposedBefore, "Storage unavailable");
+        }
+    }
+
+    private PayResult payMultiWriter(UUID fromId, UUID toId, String currencyId,
+                                     BigDecimal rawAmount, boolean firePayEvent) {
+        CurrencyDefinition currency = resolveCurrency(currencyId);
+        if (currency == null) return PayResult.unknownCurrency();
+        BigDecimal sent = rawAmount.setScale(currency.fractionalDigits(), RoundingMode.HALF_UP);
+        if (sent.signum() <= 0) return PayResult.invalidAmount();
+        if (fromId.equals(toId)) return PayResult.selfTransfer();
+        BigDecimal minimum = config.payMinAmount() == null ? null
+                : config.payMinAmount().setScale(currency.fractionalDigits(), RoundingMode.HALF_UP);
+        if (minimum != null && sent.compareTo(minimum) < 0) return PayResult.tooLow(minimum);
+        BigDecimal tax = sent.multiply(config.payTaxRate())
+                .divide(BigDecimal.valueOf(100), currency.fractionalDigits(), RoundingMode.HALF_UP);
+        BigDecimal received = sent.subtract(tax);
+        if (firePayEvent) {
+            PayEvent event = new PayEvent(fromId, toId, sent, tax, received, currency.id());
+            eventDispatcher.dispatch(event);
+            if (event.isCancelled()) return PayResult.cancelled();
+        }
+        EconomyPolicyRegistryImpl.ResolvedPolicy policy = policyRegistry.evaluate(
+                new MutationPolicyContext(MutationPolicyContext.Kind.PAY, fromId, toId, currency.id(), sent));
+        if (!policy.allowed()) return PayResult.policyRejected();
+        BigDecimal effectiveCap = minimumCap(currency.maxBalance(), policy.maximumTargetBalance());
+        long now = System.currentTimeMillis();
+        try {
+            MultiWriterRepository.TransferMutationResult result = multiWriterRepository.transfer(
+                    new MultiWriterRepository.TransferMutationRequest(UUID.randomUUID(), fromId, toId,
+                            currency.id(), sent, received, tax, effectiveCap,
+                            config.payCooldownMs(), true, policy.providerId(),
+                            policy.rollingLimit() == null ? null : policy.rollingLimit().maximumAmount(),
+                            policy.rollingLimit() == null ? 0L : policy.rollingLimit().windowMs(), now));
+            PayResult mapped = mapPayResult(result);
+            if (!mapped.isSuccess()) return mapped;
+            applyAuthoritativeAccount(result.fromAccount());
+            applyAuthoritativeAccount(result.toAccount());
+            notifyUpsert(result.fromAccount());
+            notifyUpsert(result.toAccount());
+            PayCompletedEvent completed = new PayCompletedEvent(fromId, toId, sent, received, tax,
+                    result.fromAccount().getBalance(currency.id()).add(sent),
+                    result.fromAccount().getBalance(currency.id()),
+                    result.toAccount().getBalance(currency.id()).subtract(received),
+                    result.toAccount().getBalance(currency.id()), currency.id());
+            eventDispatcher.dispatch(completed);
+            eventDispatcher.dispatch(new BalanceChangedEvent(fromId, completed.getFromBalanceBefore(),
+                    completed.getFromBalanceAfter(), BalanceChangeEvent.Reason.PAY_SENT, currency.id()));
+            eventDispatcher.dispatch(new BalanceChangedEvent(toId, completed.getToBalanceBefore(),
+                    completed.getToBalanceAfter(), BalanceChangeEvent.Reason.PAY_RECEIVED, currency.id()));
+            leaderboardCache.markDirty(currency.id());
+            return mapped;
+        } catch (SQLException e) {
+            log.severe("Multi-writer transfer failed from " + fromId + " to " + toId + ": " + e.getMessage());
+            return PayResult.storageError();
+        }
+    }
+
+    private DirectTransferResult directTransferMultiWriter(UUID fromId, UUID toId, String currencyId,
+                                                           BigDecimal rawAmount) {
+        CurrencyDefinition currency = resolveCurrency(currencyId);
+        if (currency == null) return DirectTransferResult.failure(DirectTransferResult.Status.UNKNOWN_CURRENCY,
+                BigDecimal.ZERO, "Unknown currency");
+        BigDecimal amount = rawAmount.setScale(currency.fractionalDigits(), RoundingMode.HALF_UP);
+        if (amount.signum() <= 0) return DirectTransferResult.failure(DirectTransferResult.Status.INVALID_AMOUNT, amount, "Amount must be positive");
+        if (fromId.equals(toId)) return DirectTransferResult.failure(DirectTransferResult.Status.SELF_TRANSFER, amount, "Cannot transfer to self");
+        EconomyPolicyRegistryImpl.ResolvedPolicy policy = policyRegistry.evaluate(
+                new MutationPolicyContext(MutationPolicyContext.Kind.TRANSFER, fromId, toId, currency.id(), amount));
+        if (!policy.allowed()) return DirectTransferResult.failure(DirectTransferResult.Status.POLICY_REJECTED,
+                amount, "Policy rejected");
+        try {
+            MultiWriterRepository.TransferMutationResult result = multiWriterRepository.transfer(
+                    new MultiWriterRepository.TransferMutationRequest(UUID.randomUUID(), fromId, toId,
+                            currency.id(), amount, amount, BigDecimal.ZERO,
+                            minimumCap(currency.maxBalance(), policy.maximumTargetBalance()), 0L, false,
+                            policy.providerId(), policy.rollingLimit() == null ? null : policy.rollingLimit().maximumAmount(),
+                            policy.rollingLimit() == null ? 0L : policy.rollingLimit().windowMs(), System.currentTimeMillis()));
+            if (result.status() != MultiWriterRepository.MutationStatus.SUCCESS) {
+                return DirectTransferResult.failure(mapDirectStatus(result.status()), amount, mutationError(result.status()));
+            }
+            applyAuthoritativeAccount(result.fromAccount());
+            applyAuthoritativeAccount(result.toAccount());
+            notifyUpsert(result.fromAccount());
+            notifyUpsert(result.toAccount());
+            leaderboardCache.markDirty(currency.id());
+            return DirectTransferResult.success(amount, result.fromAccount().getBalance(currency.id()),
+                    result.toAccount().getBalance(currency.id()));
+        } catch (SQLException e) {
+            log.severe("Multi-writer direct transfer failed: " + e.getMessage());
+            return DirectTransferResult.failure(DirectTransferResult.Status.STORAGE_ERROR, amount, "Storage unavailable");
+        }
+    }
+
+    private PayResult mapPayResult(MultiWriterRepository.TransferMutationResult result) {
+        return switch (result.status()) {
+            case SUCCESS -> PayResult.success(result.sent(), result.received(), result.tax());
+            case COOLDOWN -> PayResult.onCooldown(result.cooldownRemainingMs());
+            case INSUFFICIENT_FUNDS -> PayResult.insufficientFunds();
+            case ACCOUNT_NOT_FOUND -> PayResult.accountNotFound();
+            case BALANCE_LIMIT -> PayResult.balanceLimit();
+            case FROZEN -> PayResult.frozen();
+            case POLICY_REJECTED -> PayResult.policyRejected();
+            default -> PayResult.storageError();
+        };
+    }
+
+    private static DirectTransferResult.Status mapDirectStatus(MultiWriterRepository.MutationStatus status) {
+        return switch (status) {
+            case ACCOUNT_NOT_FOUND -> DirectTransferResult.Status.ACCOUNT_NOT_FOUND;
+            case INSUFFICIENT_FUNDS -> DirectTransferResult.Status.INSUFFICIENT_FUNDS;
+            case BALANCE_LIMIT -> DirectTransferResult.Status.BALANCE_LIMIT;
+            case FROZEN -> DirectTransferResult.Status.FROZEN;
+            case POLICY_REJECTED -> DirectTransferResult.Status.POLICY_REJECTED;
+            default -> DirectTransferResult.Status.STORAGE_ERROR;
+        };
+    }
+
+    private static String mutationError(MultiWriterRepository.MutationStatus status) {
+        return switch (status) {
+            case ACCOUNT_NOT_FOUND -> "Account not found";
+            case INSUFFICIENT_FUNDS -> "Insufficient funds";
+            case BALANCE_LIMIT -> "Balance limit reached";
+            case FROZEN -> "Account is frozen";
+            case COOLDOWN -> "Pay cooldown active";
+            default -> "Storage unavailable";
+        };
+    }
+
+    private static EconomyOperationResponse operationFailure(BigDecimal amount, BigDecimal balance, String message) {
+        return new EconomyOperationResponse(amount, balance, EconomyOperationResponse.ResponseType.FAILURE, message);
+    }
+
+    private static @Nullable BigDecimal minimumCap(@Nullable BigDecimal first, @Nullable BigDecimal second) {
+        if (first == null) return second;
+        if (second == null) return first;
+        return first.min(second);
+    }
+
+    private void applyAuthoritativeAccount(@Nullable AccountRecord fresh) {
+        if (fresh == null) return;
+        synchronized (persistenceLock) {
+            AccountRecord live = accountRegistry.getLiveRecord(fresh.getId());
+            if (live != null && live.getVersion() > fresh.getVersion()) return;
+            if (!accountRegistry.refreshInPlace(fresh)) {
+                log.warning("Could not apply authoritative account " + fresh.getId()
+                        + " because its name is claimed by another cached account");
+            }
+        }
+    }
+
+    private void notifyUpsert(@Nullable AccountRecord account) {
+        if (account != null) {
+            changeNotifier.publish(account.getId(), account.getVersion(), MultiWriterRepository.ChangeKind.UPSERT);
+        }
+    }
+
+    private void removeCachedAccount(UUID id) {
+        synchronized (persistenceLock) {
+            AccountRecord live = accountRegistry.getLiveRecord(id);
+            if (live != null) accountRegistry.remove(id, live);
+        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

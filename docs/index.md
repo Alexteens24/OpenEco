@@ -4,7 +4,7 @@ layout: home
 hero:
   name: OpenEco
   text: Simple Economy
-  tagline: Single-server-first economy for Paper and Folia with optional proxy-assisted handoff
+  tagline: Paper and Folia economy with safe shared-database multi-writer support
   image:
     src: /logo.png
     alt: OpenEco Logo
@@ -29,8 +29,8 @@ features:
   - title: Folia ready
     details: Region-aware schedulers for player-facing work. folia-supported in plugin.yml.
     link: /docs/installation
-  - title: Network handoff
-    details: Optional cross-server mode flushes and refreshes accounts during proxy transfers when backends share one remote database.
+  - title: Safe network writes
+    details: Database-authoritative transactions protect concurrent mutations, with durable cache refresh and optional Redis notifications.
     link: /docs/production
   - title: Open source
     details: Apache 2.0 licensed. Download from GitHub Releases; integrate via JitPack API or Vault.

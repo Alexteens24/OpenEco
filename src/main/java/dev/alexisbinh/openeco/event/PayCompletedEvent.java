@@ -58,6 +58,7 @@ public class PayCompletedEvent extends Event {
                              BigDecimal fromBalanceBefore, BigDecimal fromBalanceAfter,
                              BigDecimal toBalanceBefore, BigDecimal toBalanceAfter,
                              @Nullable String currencyId) {
+        super(EventExecutionContext.isAsync());
         this.fromId = fromId;
         this.toId = toId;
         this.currencyId = currencyId;

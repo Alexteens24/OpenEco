@@ -86,6 +86,10 @@ public interface OpenEcoApi {
 
     TransferResult transfer(UUID fromId, UUID toId, String currencyId, BigDecimal amount);
 
+    /** Atomically debits one currency and credits another on the same account. */
+    ExchangeResult exchange(UUID accountId, String fromCurrencyId, String toCurrencyId,
+                            BigDecimal fromAmount, BigDecimal toAmount);
+
     /**
      * Returns a preview of what a transfer would do without mutating any state.
      *

@@ -39,6 +39,10 @@ final class ConfigMigrator {
         YamlConfiguration normalizedSource = copySourceWithoutLegacy(currentConfig);
         migrateLegacyCurrencySection(currentConfig, normalizedSource);
         migrateRenamedSettings(currentConfig, normalizedSource);
+        if (currentConfig.getBoolean("cross-server.enabled", false)
+                && !currentConfig.contains("cross-server.mode")) {
+            normalizedSource.set("cross-server.mode", "handoff");
+        }
 
         YamlConfiguration orderedConfig = new YamlConfiguration();
         mergeSection(defaultConfig, normalizedSource, orderedConfig);

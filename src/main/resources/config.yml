@@ -112,30 +112,30 @@ history:
   retention-days: -1
 
 cross-server:
-  # Enable proxy-assisted account handoff sync for networks running multiple backend servers
-  # behind a Velocity or BungeeCord proxy that share the same remote database
-  # (MySQL / MariaDB / PostgreSQL only).
-  #
-  # When enabled:
-  #   - Each player's account is flushed to the shared database when they leave a backend.
-  #   - Each player's account is re-read from the shared database before they finish joining.
-  #   - The openeco:sync plugin messaging channel is registered so the optional
-  #     openeco-proxy Velocity addon can trigger targeted flush/refresh requests.
-  #
-  # This is a handoff sync, not a real-time distributed ledger:
-  #   - balances are not broadcast live to every backend
-  #   - simultaneous writes to the same account from multiple live servers are still unsafe
-  #   - SQLite and H2 are not supported for this mode
-  #
+  # Enable shared-DB network mode (MySQL / MariaDB / PostgreSQL only).
+  # multi-writer commits every mutation atomically in the database and allows concurrent
+  # backend writers. Reads use a local cache refreshed from a durable change log.
+  # handoff retains the legacy proxy flush/refresh behavior and assumes one writer/account.
   # Requires a restart to take effect after toggling.
-  # Do NOT enable this on single-server setups — it adds unnecessary DB round-trips.
   enabled: false
+  # multi-writer is database-authoritative and safe across concurrent backends.
+  # handoff preserves the legacy proxy flush/refresh model.
+  mode: multi-writer
+  # Durable JDBC change-log polling remains active even when Redis is enabled.
+  cache-refresh-interval-ms: 250
+  poll-batch-size: 1000
+  change-retention-days: 7
+  redis:
+    enabled: false
+    uri: "redis://localhost:6379"
+    channel: "openeco:changes"
 
 messages:
   no-permission: "<red>You don't have permission to do that."
   console-player-only: "<red>Console must specify a player name."
   account-not-found: "<red>No account found for: <yellow><player>"
   account-sync-failed: "<red>Your economy account could not be synchronized. Contact an administrator if economy features do not work."
+  storage-unavailable: "<red>Economy storage is temporarily unavailable. Please try again."
   account-name-conflict: "<red>Your economy account could not use the name <yellow><player><red> because it is already linked to another account. Contact an administrator."
   self-pay: "<red>You cannot pay yourself."
   insufficient-funds: "<red>Insufficient funds."
@@ -143,6 +143,7 @@ messages:
   pay-balance-limit: "<red><player> has reached the maximum balance and cannot receive more money."
   pay-too-low: "<red>Minimum payment amount is <yellow><min><red>."
   pay-cancelled: "<red>The payment was cancelled by a plugin."
+  pay-policy-rejected: "<red>This payment was rejected by an economy policy."
   invalid-amount: "<red>Invalid amount."
   negative-amount: "<red>Amount must be greater than zero."
 

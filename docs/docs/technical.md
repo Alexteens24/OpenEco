@@ -4,7 +4,7 @@ Operational details behind OpenEco's runtime model. For contributor internals, s
 
 ## Runtime model
 
-OpenEco keeps account data in memory and writes it through JDBC in the background.
+OpenEco keeps a read cache in memory. Local and handoff modes write dirty snapshots in the background; multi-writer mode commits mutations synchronously through JDBC before updating the cache.
 
 ### Account loading
 
@@ -28,25 +28,29 @@ Lightweight per-currency leaderboard snapshots are refreshed in the background a
 - Deleting rows does not immediately shrink the SQLite file.
 - Cross-server mode requires a remote backend.
 
-## Cross-server handoff
+## Cross-server consistency
 
-When `cross-server.enabled` is true:
+In `multi-writer` mode, the shared database is authoritative. Mutations lock affected account rows, validate balance caps/cooldowns/policies, update balances and versions, append history, and append durable cache-invalidation rows in the same transaction. Transfers lock account UUIDs in deterministic order. Reads are cached and may be stale for `cache-refresh-interval-ms`.
+
+Redis Pub/Sub is optional and never authoritative. A dropped Redis message is repaired by JDBC polling.
+
+In legacy `handoff` mode:
 
 1. Account flush on backend disconnect.
 2. Account refresh on backend join completion.
 3. `openeco:sync` plugin messaging channel for proxy-triggered flush/refresh.
 
-This is handoff sync, not real-time global replication. Balances are not broadcast live to every backend.
+Handoff does not allow safe simultaneous writers.
 
 ## Crash semantics
 
-- Recent balance changes can be lost after an unclean stop.
-- Loss window is at most one `persistence.autosave-interval-seconds` under normal conditions.
+- Multi-writer mutations acknowledged as successful are already committed in the database; storage failures fail closed.
+- Local/handoff mode can lose up to one `persistence.autosave-interval-seconds` after an unclean stop.
 - Normal shutdown drains queued history writes, then performs a final balance flush.
 
 ## Scaling notes
 
-- OpenEco is designed around one active server authority per account.
+- Multi-writer deployments can mutate one account from multiple backends; database contention becomes the scaling limit.
 - Large account counts increase startup load time and leaderboard work.
 - `/pay`, `/baltop`, and name tab-complete are the most visible features under account-count growth.
 - Large history volumes can dominate file size before account rows do.

@@ -16,6 +16,10 @@
 
 package dev.alexisbinh.openeco.economy;
 
+import dev.alexisbinh.openeco.api.AccountOperationResult;
+import dev.alexisbinh.openeco.api.AccountTransferResult;
+import dev.alexisbinh.openeco.api.BalanceChangeResult;
+import dev.alexisbinh.openeco.api.OpenEcoAsyncApi;
 import net.milkbowl.vault2.economy.AccountPermission;
 import net.milkbowl.vault2.economy.AsyncEconomy;
 import net.milkbowl.vault2.economy.EconomyResponse;
@@ -33,20 +37,24 @@ import java.util.concurrent.CompletableFuture;
 final class OpenEcoAsyncEconomy implements AsyncEconomy {
 
     private final OpenEcoEconomyProvider sync;
+    private final OpenEcoAsyncApi asyncApi;
+    private final String defaultCurrency;
 
-    OpenEcoAsyncEconomy(OpenEcoEconomyProvider sync) {
+    OpenEcoAsyncEconomy(OpenEcoEconomyProvider sync, OpenEcoAsyncApi asyncApi, String defaultCurrency) {
         this.sync = sync;
+        this.asyncApi = asyncApi;
+        this.defaultCurrency = defaultCurrency;
     }
 
     @Override
     public @NotNull CompletableFuture<Boolean> createAccount(@NotNull UUID accountID, @NotNull String name, boolean player) {
-        return completed(sync.createAccount(accountID, name, player));
+        return future(asyncApi.createAccount(accountID, name)).thenApply(OpenEcoAsyncEconomy::accountWriteSucceeded);
     }
 
     @Override
     public @NotNull CompletableFuture<Boolean> createAccount(
             @NotNull UUID accountID, @NotNull String name, @NotNull String worldName, boolean player) {
-        return completed(sync.createAccount(accountID, name, worldName, player));
+        return future(asyncApi.createAccount(accountID, name)).thenApply(OpenEcoAsyncEconomy::accountWriteSucceeded);
     }
 
     @Override
@@ -72,12 +80,12 @@ final class OpenEcoAsyncEconomy implements AsyncEconomy {
     @Override
     public @NotNull CompletableFuture<Boolean> renameAccount(
             @NotNull String pluginName, @NotNull UUID accountID, @NotNull String name) {
-        return completed(sync.renameAccount(pluginName, accountID, name));
+        return future(asyncApi.renameAccount(accountID, name)).thenApply(OpenEcoAsyncEconomy::accountWriteSucceeded);
     }
 
     @Override
     public @NotNull CompletableFuture<Boolean> deleteAccount(@NotNull String pluginName, @NotNull UUID accountID) {
-        return completed(sync.deleteAccount(pluginName, accountID));
+        return future(asyncApi.deleteAccount(accountID)).thenApply(OpenEcoAsyncEconomy::accountWriteSucceeded);
     }
 
     @Override
@@ -134,13 +142,13 @@ final class OpenEcoAsyncEconomy implements AsyncEconomy {
     @Override
     public @NotNull CompletableFuture<EconomyResponse> set(
             @NotNull String pluginName, @NotNull UUID accountID, @NotNull BigDecimal amount) {
-        return completed(sync.set(pluginName, accountID, amount));
+        return future(asyncApi.setBalance(accountID, defaultCurrency, amount)).thenApply(OpenEcoAsyncEconomy::toEconomyResponse);
     }
 
     @Override
     public @NotNull CompletableFuture<EconomyResponse> set(
             @NotNull String pluginName, @NotNull UUID accountID, @NotNull String world, @NotNull BigDecimal amount) {
-        return completed(sync.set(pluginName, accountID, world, amount));
+        return future(asyncApi.setBalance(accountID, defaultCurrency, amount)).thenApply(OpenEcoAsyncEconomy::toEconomyResponse);
     }
 
     @Override
@@ -150,13 +158,14 @@ final class OpenEcoAsyncEconomy implements AsyncEconomy {
             @NotNull String world,
             @NotNull String currency,
             @NotNull BigDecimal amount) {
-        return completed(sync.set(pluginName, accountID, world, currency, amount));
+        return future(asyncApi.setBalance(accountID, currency, amount)).thenApply(OpenEcoAsyncEconomy::toEconomyResponse);
     }
 
     @Override
     public CompletableFuture<MultiEconomyResponse> transfer(
             @NotNull String pluginName, @NotNull UUID from, @NotNull UUID to, @NotNull BigDecimal amount) {
-        return completed(sync.transfer(pluginName, from, to, amount));
+        return future(asyncApi.directTransfer(from, to, defaultCurrency, amount))
+                .thenApply(result -> toMultiTransfer(result, from, to));
     }
 
     @Override
@@ -166,7 +175,8 @@ final class OpenEcoAsyncEconomy implements AsyncEconomy {
             @NotNull UUID to,
             @NotNull String worldName,
             @NotNull BigDecimal amount) {
-        return completed(sync.transfer(pluginName, from, to, worldName, amount));
+        return future(asyncApi.directTransfer(from, to, defaultCurrency, amount))
+                .thenApply(result -> toMultiTransfer(result, from, to));
     }
 
     @Override
@@ -177,7 +187,8 @@ final class OpenEcoAsyncEconomy implements AsyncEconomy {
             @NotNull String worldName,
             @NotNull String currency,
             @NotNull BigDecimal amount) {
-        return completed(sync.transfer(pluginName, from, to, worldName, currency, amount));
+        return future(asyncApi.directTransfer(from, to, currency, amount))
+                .thenApply(result -> toMultiTransfer(result, from, to));
     }
 
     @Override
@@ -205,13 +216,13 @@ final class OpenEcoAsyncEconomy implements AsyncEconomy {
     @Override
     public @NotNull CompletableFuture<EconomyResponse> withdraw(
             @NotNull String pluginName, @NotNull UUID accountID, @NotNull BigDecimal amount) {
-        return completed(sync.withdraw(pluginName, accountID, amount));
+        return future(asyncApi.withdraw(accountID, defaultCurrency, amount)).thenApply(OpenEcoAsyncEconomy::toEconomyResponse);
     }
 
     @Override
     public @NotNull CompletableFuture<EconomyResponse> withdraw(
             @NotNull String pluginName, @NotNull UUID accountID, @NotNull String world, @NotNull BigDecimal amount) {
-        return completed(sync.withdraw(pluginName, accountID, world, amount));
+        return future(asyncApi.withdraw(accountID, defaultCurrency, amount)).thenApply(OpenEcoAsyncEconomy::toEconomyResponse);
     }
 
     @Override
@@ -221,7 +232,7 @@ final class OpenEcoAsyncEconomy implements AsyncEconomy {
             @NotNull String world,
             @NotNull String currency,
             @NotNull BigDecimal amount) {
-        return completed(sync.withdraw(pluginName, accountID, world, currency, amount));
+        return future(asyncApi.withdraw(accountID, currency, amount)).thenApply(OpenEcoAsyncEconomy::toEconomyResponse);
     }
 
     @Override
@@ -249,13 +260,13 @@ final class OpenEcoAsyncEconomy implements AsyncEconomy {
     @Override
     public @NotNull CompletableFuture<EconomyResponse> deposit(
             @NotNull String pluginName, @NotNull UUID accountID, @NotNull BigDecimal amount) {
-        return completed(sync.deposit(pluginName, accountID, amount));
+        return future(asyncApi.deposit(accountID, defaultCurrency, amount)).thenApply(OpenEcoAsyncEconomy::toEconomyResponse);
     }
 
     @Override
     public @NotNull CompletableFuture<EconomyResponse> deposit(
             @NotNull String pluginName, @NotNull UUID accountID, @NotNull String world, @NotNull BigDecimal amount) {
-        return completed(sync.deposit(pluginName, accountID, world, amount));
+        return future(asyncApi.deposit(accountID, defaultCurrency, amount)).thenApply(OpenEcoAsyncEconomy::toEconomyResponse);
     }
 
     @Override
@@ -265,7 +276,7 @@ final class OpenEcoAsyncEconomy implements AsyncEconomy {
             @NotNull String world,
             @NotNull String currency,
             @NotNull BigDecimal amount) {
-        return completed(sync.deposit(pluginName, accountID, world, currency, amount));
+        return future(asyncApi.deposit(accountID, currency, amount)).thenApply(OpenEcoAsyncEconomy::toEconomyResponse);
     }
 
     @Override
@@ -352,5 +363,33 @@ final class OpenEcoAsyncEconomy implements AsyncEconomy {
 
     private static <T> CompletableFuture<T> completed(T value) {
         return CompletableFuture.completedFuture(value);
+    }
+
+    private static boolean accountWriteSucceeded(AccountOperationResult result) {
+        return result.isSuccess() || result.status() == AccountOperationResult.Status.ALREADY_EXISTS
+                || result.status() == AccountOperationResult.Status.UNCHANGED;
+    }
+
+    private static EconomyResponse toEconomyResponse(BalanceChangeResult result) {
+        EconomyResponse.ResponseType type = result.isSuccess()
+                ? EconomyResponse.ResponseType.SUCCESS : EconomyResponse.ResponseType.FAILURE;
+        return new EconomyResponse(result.amount(), result.newBalance(), type,
+                result.isSuccess() ? "" : result.status().name());
+    }
+
+    private static MultiEconomyResponse toMultiTransfer(AccountTransferResult result, UUID from, UUID to) {
+        if (result.isSuccess()) {
+            MultiEconomyResponse response = new MultiEconomyResponse(
+                    result.amount(), EconomyResponse.ResponseType.SUCCESS, "");
+            response.addBalance(from, result.fromBalance());
+            response.addBalance(to, result.toBalance());
+            return response;
+        }
+        return new MultiEconomyResponse(
+                result.amount(), EconomyResponse.ResponseType.FAILURE, result.message());
+    }
+
+    private static <T> CompletableFuture<T> future(java.util.concurrent.CompletionStage<T> stage) {
+        return stage.toCompletableFuture();
     }
 }

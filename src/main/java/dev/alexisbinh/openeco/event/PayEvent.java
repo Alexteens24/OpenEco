@@ -51,6 +51,7 @@ public class PayEvent extends Event implements Cancellable {
 
     public PayEvent(UUID fromId, UUID toId, BigDecimal amount, BigDecimal tax, BigDecimal received,
                     @Nullable String currencyId) {
+        super(EventExecutionContext.isAsync());
         this.fromId = fromId;
         this.toId = toId;
         this.currencyId = currencyId;

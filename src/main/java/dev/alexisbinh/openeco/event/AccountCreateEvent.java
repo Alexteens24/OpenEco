@@ -40,6 +40,7 @@ public class AccountCreateEvent extends Event {
     private final BigDecimal startingBalance;
 
     public AccountCreateEvent(UUID playerId, String playerName, BigDecimal startingBalance) {
+        super(EventExecutionContext.isAsync());
         this.playerId = playerId;
         this.playerName = playerName;
         this.startingBalance = startingBalance;

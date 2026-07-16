@@ -43,6 +43,7 @@ public class AccountDeleteEvent extends Event implements Cancellable {
     private boolean cancelled = false;
 
     public AccountDeleteEvent(UUID playerId, String playerName, BigDecimal balance) {
+        super(EventExecutionContext.isAsync());
         this.playerId = playerId;
         this.playerName = playerName;
         this.balance = balance;

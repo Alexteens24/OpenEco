@@ -1,6 +1,6 @@
 # Production Guide
 
-Use OpenEco when you want a single-server-first economy for Paper or Folia, with an optional proxy-assisted handoff mode for shared remote databases.
+Use OpenEco for a local Paper/Folia economy or a safe multi-writer proxy network backed by shared JDBC storage.
 
 ## Good fit
 
@@ -12,7 +12,7 @@ Use OpenEco when you want a single-server-first economy for Paper or Folia, with
 ## Not a fit
 
 - Real-time distributed balance replication across every backend.
-- Multiple live backends mutating the same account simultaneously.
+- Workloads requiring every cached read to be immediately linearizable across all backends.
 - Network mode on SQLite or H2.
 - Shared accounts between players.
 - Per-currency cooldown or tax rules beyond the current feature set.
@@ -30,8 +30,8 @@ Use OpenEco when you want a single-server-first economy for Paper or Folia, with
 For network mode, also:
 
 1. Use MySQL, MariaDB, or PostgreSQL.
-2. Install the proxy addon JAR on Velocity.
-3. Enable `cross-server.enabled: true` on every backend.
+2. Enable `cross-server.enabled: true` and `cross-server.mode: multi-writer` on every backend.
+3. Optionally install the proxy addon JAR on Velocity.
 4. Restart the proxy and all backends.
 
 ## Storage choice
@@ -49,10 +49,10 @@ For network mode, also:
 
 ### Remote JDBC
 
-Use MySQL, MariaDB, or PostgreSQL when you need one shared database for backend handoff.
+Use MySQL, MariaDB, or PostgreSQL when you need one authoritative shared database.
 
-- Required for proxy-assisted cross-server mode.
-- Still not a distributed ledger — assume one active writer per account.
+- Required for cross-server mode.
+- In `multi-writer` mode, concurrent mutations are serialized safely in database transactions.
 
 ### Changing backends
 
@@ -104,10 +104,9 @@ After a restore, verify `/balance`, `/history`, `/baltop`, and any Vault or Plac
 
 ## Crash semantics
 
-- Balance mutations apply in memory immediately.
-- Dirty balances flush on the autosave interval and on normal shutdown.
-- An unclean stop can lose up to one autosave interval of recent balance changes.
-- Network mode requests an immediate flush on handoff, but this is best-effort — not global real-time replication.
+- In multi-writer mode, mutations commit to JDBC before success is returned and database errors fail closed.
+- Cached reads on another backend may lag by `cache-refresh-interval-ms`; Redis can shorten this but JDBC polling remains the recovery path.
+- Local and handoff modes still flush dirty balances on autosave and can lose up to one interval after an unclean stop.
 
 ## Telemetry
 
@@ -120,7 +119,7 @@ The FastStats integration submits built-in Bukkit platform metrics plus these Op
 | `storage_backend` | String | Active database type |
 | `account_count` | Number | Number of loaded economy accounts |
 | `currency_count` | Number | Number of configured currencies |
-| `cross_server_enabled` | Boolean | Whether proxy-assisted handoff is enabled |
+| `cross_server_enabled` | Boolean | Whether shared-database network mode is enabled |
 | `integrations` | String array | Detected Vault and PlaceholderAPI integrations |
 
 These source IDs and types must match the data sources configured in the FastStats project. OpenEco does not submit account balances, account names, UUIDs, transaction history, or error tracking.
@@ -132,8 +131,8 @@ These source IDs and types must match the data sources configured in the FastSta
 ## Network mode checklist
 
 1. Shared backend must be MySQL, MariaDB, or PostgreSQL.
-2. Install proxy addon on Velocity.
-3. Enable `cross-server.enabled: true` on all backends.
+2. Enable `cross-server.enabled: true` and `cross-server.mode: multi-writer` on all backends.
+3. Optionally install the proxy addon on Velocity.
 4. Restart everything after toggling cross-server mode.
 5. Test at least one server switch, one disconnect, and one `/ecosync <player>`.
 

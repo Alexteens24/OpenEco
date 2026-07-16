@@ -19,6 +19,8 @@ package dev.alexisbinh.openeco.enhancements.interest;
 import dev.alexisbinh.openeco.api.BalanceChangeResult;
 import dev.alexisbinh.openeco.api.CurrencyInfo;
 import dev.alexisbinh.openeco.api.OpenEcoApi;
+import dev.alexisbinh.openeco.api.OpenEcoAsyncApi;
+import dev.alexisbinh.openeco.api.ClusterJobCoordinator;
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -38,16 +40,47 @@ public class InterestTask implements Runnable {
     private final OpenEcoApi api;
     private final JavaPlugin plugin;
     private final Logger log;
+    private final ClusterJobCoordinator coordinator;
+    private final OpenEcoAsyncApi asyncApi;
 
     public InterestTask(OpenEcoApi api, JavaPlugin plugin) {
+        this(api, plugin, null, null);
+    }
+
+    public InterestTask(OpenEcoApi api, JavaPlugin plugin, ClusterJobCoordinator coordinator) {
+        this(api, plugin, coordinator, null);
+    }
+
+    public InterestTask(OpenEcoApi api, JavaPlugin plugin, ClusterJobCoordinator coordinator,
+                        OpenEcoAsyncApi asyncApi) {
         this.api = api;
         this.plugin = plugin;
         this.log = plugin.getLogger();
+        this.coordinator = coordinator;
+        this.asyncApi = asyncApi;
     }
 
     @Override
     public void run() {
-        plugin.getServer().getGlobalRegionScheduler().run(plugin, this::runInterestCycle);
+        long intervalSeconds = plugin.getConfig().getLong("interest.interval-seconds", 3600L);
+        String runId = Long.toString(System.currentTimeMillis() / Math.max(1_000L, intervalSeconds * 1_000L));
+        java.util.Optional<ClusterJobCoordinator.Lease> acquired = coordinator == null
+                ? java.util.Optional.empty() : coordinator.tryAcquire("interest", runId,
+                Math.max(60_000L, intervalSeconds * 2_000L));
+        if (coordinator != null && acquired.isEmpty()) return;
+        if (asyncApi != null) {
+            try {
+                runInterestCycle(null);
+                acquired.ifPresent(ClusterJobCoordinator.Lease::complete);
+            } catch (RuntimeException e) {
+                log.warning("[Interest] Cycle failed; lease will expire for retry: " + e.getMessage());
+            }
+        } else {
+            plugin.getServer().getGlobalRegionScheduler().run(plugin, task -> {
+                runInterestCycle(task);
+                acquired.ifPresent(ClusterJobCoordinator.Lease::complete);
+            });
+        }
     }
 
     private void runInterestCycle(ScheduledTask task) {
@@ -103,7 +136,12 @@ public class InterestTask implements Runnable {
             interest = maxPerInterval;
         }
 
-        BalanceChangeResult result = explicitCurrency ? api.deposit(id, currencyId, interest) : api.deposit(id, interest);
+        BalanceChangeResult result;
+        if (asyncApi != null) {
+            result = asyncApi.deposit(id, currencyId, interest).toCompletableFuture().join();
+        } else {
+            result = explicitCurrency ? api.deposit(id, currencyId, interest) : api.deposit(id, interest);
+        }
         return result.isSuccess();
     }
 }

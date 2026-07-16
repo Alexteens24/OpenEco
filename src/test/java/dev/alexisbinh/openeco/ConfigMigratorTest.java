@@ -146,6 +146,28 @@ class ConfigMigratorTest {
         assertTrue(yaml.contains("custom:"), yaml);
     }
 
+    @Test
+    void enabledLegacyCrossServerConfigStaysOnHandoffMode() {
+        YamlConfiguration current = new YamlConfiguration();
+        current.set("cross-server.enabled", true);
+
+        YamlConfiguration migrated = ConfigMigrator.rewrite(current, loadBundledDefaultConfig());
+
+        assertEquals("handoff", migrated.getString("cross-server.mode"));
+    }
+
+    @Test
+    void newAndExplicitCrossServerConfigsUseMultiWriterMode() {
+        YamlConfiguration defaults = loadBundledDefaultConfig();
+        assertEquals("multi-writer", defaults.getString("cross-server.mode"));
+
+        YamlConfiguration current = new YamlConfiguration();
+        current.set("cross-server.enabled", true);
+        current.set("cross-server.mode", "multi-writer");
+        YamlConfiguration migrated = ConfigMigrator.rewrite(current, defaults);
+        assertEquals("multi-writer", migrated.getString("cross-server.mode"));
+    }
+
     private static YamlConfiguration loadBundledDefaultConfig() {
         try (InputStream input = Objects.requireNonNull(
                 ConfigMigratorTest.class.getClassLoader().getResourceAsStream("config.yml"),

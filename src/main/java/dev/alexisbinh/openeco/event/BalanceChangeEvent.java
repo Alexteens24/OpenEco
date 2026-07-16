@@ -54,6 +54,7 @@ public class BalanceChangeEvent extends Event implements Cancellable {
 
     public BalanceChangeEvent(UUID playerId, BigDecimal oldBalance, BigDecimal newBalance, Reason reason,
                               @Nullable String currencyId) {
+        super(EventExecutionContext.isAsync());
         this.playerId = playerId;
         this.oldBalance = oldBalance;
         this.newBalance = newBalance;

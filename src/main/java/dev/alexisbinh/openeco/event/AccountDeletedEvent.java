@@ -41,6 +41,7 @@ public class AccountDeletedEvent extends Event {
     private final BigDecimal finalBalance;
 
     public AccountDeletedEvent(UUID playerId, String playerName, BigDecimal finalBalance) {
+        super(EventExecutionContext.isAsync());
         this.playerId = playerId;
         this.playerName = playerName;
         this.finalBalance = finalBalance;

@@ -2,9 +2,7 @@
 
 [![CI](https://github.com/Alexteens24/OpenEco/actions/workflows/ci.yml/badge.svg)](https://github.com/Alexteens24/OpenEco/actions/workflows/ci.yml)
 
-OpenEco is a single-server-first economy plugin for Paper or Folia.
-
-It keeps account state in memory for fast local use, and can optionally do proxy-assisted account handoff sync when you run multiple backend servers against one shared remote database.
+OpenEco is an economy plugin for Paper or Folia with a fast local mode and a database-authoritative, safe multi-writer mode for proxy networks.
 
 **Documentation:** https://alexteens24.github.io/OpenEco/
 
@@ -14,7 +12,8 @@ It keeps account state in memory for fast local use, and can optionally do proxy
 - Multi-currency support with Vault v1 and VaultUnlocked v2 providers
 - PlaceholderAPI expansion (optional)
 - Transaction history with optional retention pruning
-- Optional cross-server handoff via Velocity proxy addon
+- Safe concurrent cross-server writes through shared MySQL, MariaDB, or PostgreSQL
+- Optional Redis cache invalidation and legacy Velocity handoff compatibility
 
 ## Requirements
 

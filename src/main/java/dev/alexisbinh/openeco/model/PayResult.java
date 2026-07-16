@@ -20,7 +20,7 @@ import java.math.BigDecimal;
 
 public final class PayResult {
 
-    public enum Status { SUCCESS, UNKNOWN_CURRENCY, COOLDOWN, INSUFFICIENT_FUNDS, ACCOUNT_NOT_FOUND, BALANCE_LIMIT, CANCELLED, TOO_LOW, INVALID_AMOUNT, SELF_TRANSFER, FROZEN }
+    public enum Status { SUCCESS, UNKNOWN_CURRENCY, COOLDOWN, INSUFFICIENT_FUNDS, ACCOUNT_NOT_FOUND, BALANCE_LIMIT, CANCELLED, TOO_LOW, INVALID_AMOUNT, SELF_TRANSFER, FROZEN, STORAGE_ERROR, POLICY_REJECTED }
 
     private final Status status;
     private final BigDecimal sent;
@@ -81,6 +81,14 @@ public final class PayResult {
 
     public static PayResult frozen() {
         return new PayResult(Status.FROZEN, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, null, 0);
+    }
+
+    public static PayResult storageError() {
+        return new PayResult(Status.STORAGE_ERROR, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, null, 0);
+    }
+
+    public static PayResult policyRejected() {
+        return new PayResult(Status.POLICY_REJECTED, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, null, 0);
     }
 
     public boolean isSuccess()              { return status == Status.SUCCESS; }

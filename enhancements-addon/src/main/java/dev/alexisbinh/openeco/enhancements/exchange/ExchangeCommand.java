@@ -19,6 +19,7 @@ package dev.alexisbinh.openeco.enhancements.exchange;
 import dev.alexisbinh.openeco.api.BalanceChangeResult;
 import dev.alexisbinh.openeco.api.BalanceCheckResult;
 import dev.alexisbinh.openeco.api.CurrencyInfo;
+import dev.alexisbinh.openeco.api.ExchangeResult;
 import dev.alexisbinh.openeco.api.OpenEcoApi;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
@@ -104,7 +105,7 @@ public class ExchangeCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        Double rate = findRate(config, fromId, toId);
+        BigDecimal rate = findRate(config, fromId, toId);
         if (rate == null) {
             String msg = config.getString("exchange.messages.no-rate",
                     "<red>No exchange rate configured for that currency pair.");
@@ -117,9 +118,9 @@ public class ExchangeCommand implements CommandExecutor, TabCompleter {
 
         BigDecimal scaledAmount = amount.setScale(fromCurrency.fractionalDigits(), RoundingMode.HALF_UP);
 
-        double feePercent = config.getDouble("exchange.fee-percent", 0.0);
-        BigDecimal multiplier = BigDecimal.valueOf(rate)
-                .multiply(BigDecimal.ONE.subtract(BigDecimal.valueOf(feePercent / 100.0)));
+        BigDecimal feePercent = decimalValue(config.get("exchange.fee-percent"), BigDecimal.ZERO);
+        BigDecimal multiplier = rate
+                .multiply(BigDecimal.ONE.subtract(feePercent.movePointLeft(2)));
         BigDecimal toAmount = scaledAmount.multiply(multiplier)
                 .setScale(toCurrency.fractionalDigits(), RoundingMode.HALF_DOWN);
 
@@ -129,66 +130,12 @@ public class ExchangeCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        // Precheck both sides without mutating
-        BalanceCheckResult withdrawCheck = api.canWithdraw(player.getUniqueId(), fromId, scaledAmount);
-        if (!withdrawCheck.isAllowed()) {
-            String msg = switch (withdrawCheck.status()) {
-                case INSUFFICIENT_FUNDS -> config.getString("exchange.messages.insufficient-funds",
-                        "<red>Insufficient funds.");
-                case FROZEN -> config.getString("exchange.messages.frozen",
-                        "<red>Your account is frozen.");
-                default -> config.getString("exchange.messages.failed", "<red>Exchange failed.");
-            };
-            player.sendMessage(mm.deserialize(msg));
-            return true;
-        }
-
-        BalanceCheckResult depositCheck = api.canDeposit(player.getUniqueId(), toId, toAmount);
-        if (!depositCheck.isAllowed()) {
-            String msg = switch (depositCheck.status()) {
-                case BALANCE_LIMIT -> config.getString("exchange.messages.balance-limit",
-                        "<red>Exchange would exceed your balance limit.");
-                case FROZEN -> config.getString("exchange.messages.frozen",
-                        "<red>Your account is frozen.");
-                default -> config.getString("exchange.messages.failed", "<red>Exchange failed.");
-            };
-            player.sendMessage(mm.deserialize(msg));
-            return true;
-        }
-
-        // Execute: withdraw first, then deposit. Rollback deposit-side amount if deposit fails.
-        BalanceChangeResult withdrawResult = api.withdraw(player.getUniqueId(), fromId, scaledAmount);
-        if (!withdrawResult.isSuccess()) {
-            String msg = switch (withdrawResult.status()) {
-                case INSUFFICIENT_FUNDS -> config.getString("exchange.messages.insufficient-funds",
-                        "<red>Insufficient funds.");
-                case FROZEN -> config.getString("exchange.messages.frozen",
-                        "<red>Your account is frozen.");
-                default -> config.getString("exchange.messages.failed", "<red>Exchange failed.");
-            };
-            player.sendMessage(mm.deserialize(msg));
-            return true;
-        }
-
-        BalanceChangeResult depositResult = api.deposit(player.getUniqueId(), toId, toAmount);
-        if (!depositResult.isSuccess()) {
-            // Rollback the withdraw
-            BalanceChangeResult rollbackResult = api.deposit(player.getUniqueId(), fromId, scaledAmount);
-            if (!rollbackResult.isSuccess()) {
-            plugin.getLogger().severe("Exchange rollback failed for player " + player.getUniqueId()
-                + " (" + player.getName() + "): withdrew " + scaledAmount.toPlainString() + " " + fromId
-                + ", target deposit failed with status " + depositResult.status()
-                + ", rollback failed with status " + rollbackResult.status() + ".");
-            String msg = config.getString("exchange.messages.rollback-failed",
-                "<red>Exchange failed and automatic rollback could not be completed. Contact an administrator.");
-            player.sendMessage(mm.deserialize(msg));
-            return true;
-            }
-            String msg = switch (depositResult.status()) {
-                case BALANCE_LIMIT -> config.getString("exchange.messages.balance-limit",
-                        "<red>Exchange would exceed your balance limit.");
-                case FROZEN -> config.getString("exchange.messages.frozen",
-                        "<red>Your account is frozen.");
+        ExchangeResult exchangeResult = api.exchange(player.getUniqueId(), fromId, toId, scaledAmount, toAmount);
+        if (!exchangeResult.isSuccess()) {
+            String msg = switch (exchangeResult.status()) {
+                case INSUFFICIENT_FUNDS -> config.getString("exchange.messages.insufficient-funds", "<red>Insufficient funds.");
+                case BALANCE_LIMIT -> config.getString("exchange.messages.balance-limit", "<red>Exchange would exceed your balance limit.");
+                case FROZEN -> config.getString("exchange.messages.frozen", "<red>Your account is frozen.");
                 default -> config.getString("exchange.messages.failed", "<red>Exchange failed.");
             };
             player.sendMessage(mm.deserialize(msg));
@@ -239,15 +186,24 @@ public class ExchangeCommand implements CommandExecutor, TabCompleter {
         return List.of();
     }
 
-    static Double findRate(FileConfiguration config, String fromId, String toId) {
+    static BigDecimal findRate(FileConfiguration config, String fromId, String toId) {
         List<?> rates = config.getMapList("exchange.rates");
         for (Object entry : rates) {
             if (!(entry instanceof java.util.Map<?, ?> map)) continue;
             if (fromId.equals(map.get("from")) && toId.equals(map.get("to"))) {
                 Object rateVal = map.get("rate");
-                if (rateVal instanceof Number n) return n.doubleValue();
+                if (rateVal != null) return decimalValue(rateVal, null);
             }
         }
         return null;
+    }
+
+    private static BigDecimal decimalValue(Object value, BigDecimal fallback) {
+        if (value == null) return fallback;
+        try {
+            return new BigDecimal(value.toString());
+        } catch (NumberFormatException ignored) {
+            return fallback;
+        }
     }
 }

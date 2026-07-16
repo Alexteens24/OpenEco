@@ -2,23 +2,11 @@
  * Copyright 2026 alexisbinh
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
-
 package dev.alexisbinh.openeco.enhancements.exchange;
 
-import dev.alexisbinh.openeco.api.BalanceChangeResult;
-import dev.alexisbinh.openeco.api.BalanceCheckResult;
 import dev.alexisbinh.openeco.api.CurrencyInfo;
+import dev.alexisbinh.openeco.api.ExchangeResult;
 import dev.alexisbinh.openeco.api.OpenEcoApi;
 import net.kyori.adventure.text.Component;
 import org.bukkit.command.Command;
@@ -39,11 +27,13 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.logging.Logger;
 
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -70,13 +60,11 @@ class ExchangeCommandTest {
         subject = new ExchangeCommand(api, plugin);
     }
 
-    // ── findRate unit tests ───────────────────────────────────────────────────
-
     @Test
     void findRate_matchingEntry_returnsRate() {
         YamlConfiguration cfg = new YamlConfiguration();
         cfg.set("exchange.rates", List.of(Map.of("from", "a", "to", "b", "rate", 5.0)));
-        assertEquals(5.0, ExchangeCommand.findRate(cfg, "a", "b"));
+        assertEquals(new BigDecimal("5.0"), ExchangeCommand.findRate(cfg, "a", "b"));
     }
 
     @Test
@@ -91,26 +79,18 @@ class ExchangeCommandTest {
         assertNull(ExchangeCommand.findRate(new YamlConfiguration(), "a", "b"));
     }
 
-    // ── happy path ───────────────────────────────────────────────────────────
-
     @Test
-    void happyPath_withdrawsAndDepositsAtConfiguredRate() {
+    void happyPath_executesOneAtomicExchange() {
         setUpBasicCurrencies();
-        // 10 openeco (2dp) * rate 10 = 100 gems (0dp)
-        when(api.canWithdraw(eq(playerId), eq("openeco"), eq(new BigDecimal("10.00"))))
-                .thenReturn(allowed());
-        when(api.canDeposit(eq(playerId), eq("gems"), eq(new BigDecimal("100"))))
-                .thenReturn(allowed());
-        when(api.withdraw(eq(playerId), eq("openeco"), eq(new BigDecimal("10.00"))))
-                .thenReturn(success(new BigDecimal("10.00")));
-        when(api.deposit(eq(playerId), eq("gems"), eq(new BigDecimal("100"))))
-                .thenReturn(success(new BigDecimal("100")));
+        when(api.exchange(playerId, "openeco", "gems", new BigDecimal("10.00"), new BigDecimal("100")))
+                .thenReturn(success(new BigDecimal("10.00"), new BigDecimal("100")));
         when(api.format(any(), any())).thenReturn("10.00");
 
         subject.onCommand(player, command, "exchange", new String[]{"10", "openeco", "gems"});
 
-        verify(api).withdraw(playerId, "openeco", new BigDecimal("10.00"));
-        verify(api).deposit(playerId, "gems", new BigDecimal("100"));
+        verify(api).exchange(playerId, "openeco", "gems", new BigDecimal("10.00"), new BigDecimal("100"));
+        verify(api, never()).withdraw(any(), any(), any());
+        verify(api, never()).deposit(any(), any(), any());
         verify(player).sendMessage(any(Component.class));
     }
 
@@ -118,29 +98,20 @@ class ExchangeCommandTest {
     void feePercent_reducesToAmount() {
         config.set("exchange.fee-percent", 10.0);
         setUpBasicCurrencies();
-        // 10.00 * rate(10) * (1 - 0.10) = 90 gems
-        when(api.canWithdraw(eq(playerId), eq("openeco"), eq(new BigDecimal("10.00"))))
-                .thenReturn(allowed());
-        when(api.canDeposit(eq(playerId), eq("gems"), eq(new BigDecimal("90"))))
-                .thenReturn(allowed());
-        when(api.withdraw(eq(playerId), eq("openeco"), eq(new BigDecimal("10.00"))))
-                .thenReturn(success(new BigDecimal("10.00")));
-        when(api.deposit(eq(playerId), eq("gems"), eq(new BigDecimal("90"))))
-                .thenReturn(success(new BigDecimal("90")));
+        when(api.exchange(playerId, "openeco", "gems", new BigDecimal("10.00"), new BigDecimal("90")))
+                .thenReturn(success(new BigDecimal("10.00"), new BigDecimal("90")));
         when(api.format(any(), any())).thenReturn("10.00");
 
         subject.onCommand(player, command, "exchange", new String[]{"10", "openeco", "gems"});
 
-        verify(api).deposit(playerId, "gems", new BigDecimal("90"));
+        verify(api).exchange(playerId, "openeco", "gems", new BigDecimal("10.00"), new BigDecimal("90"));
     }
-
-    // ── argument / validation errors ─────────────────────────────────────────
 
     @Test
     void wrongArgCount_sendsUsageMessage_noMutation() {
         subject.onCommand(player, command, "exchange", new String[]{"10", "openeco"});
         verify(player).sendMessage(any(Component.class));
-        verify(api, never()).withdraw(any(UUID.class), any(String.class), any(BigDecimal.class));
+        verify(api, never()).exchange(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -169,7 +140,7 @@ class ExchangeCommandTest {
         when(api.hasCurrency("unknown")).thenReturn(false);
         subject.onCommand(player, command, "exchange", new String[]{"10", "unknown", "gems"});
         verify(player).sendMessage(any(Component.class));
-        verify(api, never()).withdraw(any(UUID.class), any(String.class), any(BigDecimal.class));
+        verify(api, never()).exchange(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -178,7 +149,7 @@ class ExchangeCommandTest {
         when(api.hasCurrency("unknown")).thenReturn(false);
         subject.onCommand(player, command, "exchange", new String[]{"10", "openeco", "unknown"});
         verify(player).sendMessage(any(Component.class));
-        verify(api, never()).withdraw(any(UUID.class), any(String.class), any(BigDecimal.class));
+        verify(api, never()).exchange(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -186,110 +157,54 @@ class ExchangeCommandTest {
         when(api.hasCurrency("openeco")).thenReturn(true);
         subject.onCommand(player, command, "exchange", new String[]{"10", "openeco", "openeco"});
         verify(player).sendMessage(any(Component.class));
-        verify(api, never()).withdraw(any(UUID.class), any(String.class), any(BigDecimal.class));
+        verify(api, never()).exchange(any(), any(), any(), any(), any());
     }
 
     @Test
     void noRateConfigured_sendsError_noMutation() {
         when(api.hasCurrency("openeco")).thenReturn(true);
         when(api.hasCurrency("gems")).thenReturn(true);
-        // no rates in config
         subject.onCommand(player, command, "exchange", new String[]{"10", "openeco", "gems"});
         verify(player).sendMessage(any(Component.class));
-        verify(api, never()).withdraw(any(UUID.class), any(String.class), any(BigDecimal.class));
+        verify(api, never()).exchange(any(), any(), any(), any(), any());
     }
 
-    // ── precheck failures (no mutation) ──────────────────────────────────────
-
     @Test
-    void insufficientFunds_canWithdrawFails_noMutation() {
+    void insufficientFunds_isReportedByAtomicOperation() {
         setUpBasicCurrencies();
-        when(api.canWithdraw(eq(playerId), eq("openeco"), any())).thenReturn(
-                new BalanceCheckResult(BalanceCheckResult.Status.INSUFFICIENT_FUNDS,
-                        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO));
+        when(api.exchange(eq(playerId), eq("openeco"), eq("gems"), any(), any()))
+                .thenReturn(failed(ExchangeResult.Status.INSUFFICIENT_FUNDS));
 
         subject.onCommand(player, command, "exchange", new String[]{"10", "openeco", "gems"});
 
         verify(player).sendMessage(any(Component.class));
-        verify(api, never()).withdraw(any(UUID.class), any(String.class), any(BigDecimal.class));
+        verify(api, never()).withdraw(any(), any(), any());
+        verify(api, never()).deposit(any(), any(), any());
     }
 
     @Test
-    void balanceLimit_canDepositFails_noMutation() {
+    void balanceLimit_isReportedByAtomicOperation() {
         setUpBasicCurrencies();
-        when(api.canWithdraw(eq(playerId), eq("openeco"), any())).thenReturn(allowed());
-        when(api.canDeposit(eq(playerId), eq("gems"), any())).thenReturn(
-                new BalanceCheckResult(BalanceCheckResult.Status.BALANCE_LIMIT,
-                        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO));
+        when(api.exchange(eq(playerId), eq("openeco"), eq("gems"), any(), any()))
+                .thenReturn(failed(ExchangeResult.Status.BALANCE_LIMIT));
 
         subject.onCommand(player, command, "exchange", new String[]{"10", "openeco", "gems"});
 
-        verify(player).sendMessage(any(Component.class));
-        verify(api, never()).withdraw(any(UUID.class), any(String.class), any(BigDecimal.class));
-    }
-
-    // ── runtime failures after precheck ──────────────────────────────────────
-
-    @Test
-    void withdrawFailsAtRuntime_sendsError_noDeposit() {
-        setUpBasicCurrencies();
-        when(api.canWithdraw(eq(playerId), eq("openeco"), any())).thenReturn(allowed());
-        when(api.canDeposit(eq(playerId), eq("gems"), any())).thenReturn(allowed());
-        when(api.withdraw(eq(playerId), eq("openeco"), any())).thenReturn(
-                new BalanceChangeResult(BalanceChangeResult.Status.INSUFFICIENT_FUNDS,
-                        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO));
-
-        subject.onCommand(player, command, "exchange", new String[]{"10", "openeco", "gems"});
-
-        verify(api, never()).deposit(eq(playerId), eq("gems"), any(BigDecimal.class));
         verify(player).sendMessage(any(Component.class));
     }
 
     @Test
-    void depositFailsAtRuntime_rollsBackWithdraw() {
+    void storageFailure_hasNoCompensatingMutation() {
         setUpBasicCurrencies();
-        when(api.canWithdraw(eq(playerId), eq("openeco"), eq(new BigDecimal("10.00"))))
-                .thenReturn(allowed());
-        when(api.canDeposit(eq(playerId), eq("gems"), eq(new BigDecimal("100"))))
-                .thenReturn(allowed());
-        when(api.withdraw(eq(playerId), eq("openeco"), eq(new BigDecimal("10.00"))))
-                .thenReturn(success(new BigDecimal("10.00")));
-        when(api.deposit(eq(playerId), eq("gems"), eq(new BigDecimal("100"))))
-                .thenReturn(new BalanceChangeResult(BalanceChangeResult.Status.BALANCE_LIMIT,
-                        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO));
-        when(api.deposit(eq(playerId), eq("openeco"), eq(new BigDecimal("10.00"))))
-            .thenReturn(success(new BigDecimal("10.00")));
+        when(api.exchange(eq(playerId), eq("openeco"), eq("gems"), any(), any()))
+                .thenReturn(failed(ExchangeResult.Status.STORAGE_ERROR));
 
         subject.onCommand(player, command, "exchange", new String[]{"10", "openeco", "gems"});
 
-        // rollback: re-deposit the withdrawn amount to openeco
-        verify(api).deposit(playerId, "openeco", new BigDecimal("10.00"));
+        verify(api, never()).withdraw(any(), any(), any());
+        verify(api, never()).deposit(any(), any(), any());
         verify(player).sendMessage(any(Component.class));
     }
-
-    @Test
-    void rollbackFailureIsLoggedAndReportedToPlayer() {
-        setUpBasicCurrencies();
-        when(api.canWithdraw(eq(playerId), eq("openeco"), eq(new BigDecimal("10.00"))))
-                .thenReturn(allowed());
-        when(api.canDeposit(eq(playerId), eq("gems"), eq(new BigDecimal("100"))))
-                .thenReturn(allowed());
-        when(api.withdraw(eq(playerId), eq("openeco"), eq(new BigDecimal("10.00"))))
-                .thenReturn(success(new BigDecimal("10.00")));
-        when(api.deposit(eq(playerId), eq("gems"), eq(new BigDecimal("100"))))
-                .thenReturn(new BalanceChangeResult(BalanceChangeResult.Status.BALANCE_LIMIT,
-                        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO));
-        when(api.deposit(eq(playerId), eq("openeco"), eq(new BigDecimal("10.00"))))
-                .thenReturn(new BalanceChangeResult(BalanceChangeResult.Status.FROZEN,
-                        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO));
-
-        subject.onCommand(player, command, "exchange", new String[]{"10", "openeco", "gems"});
-
-        verify(logger).severe(contains("Exchange rollback failed for player"));
-        verify(player).sendMessage(any(Component.class));
-    }
-
-    // ── helpers ──────────────────────────────────────────────────────────────
 
     private void setUpBasicCurrencies() {
         when(api.hasCurrency("openeco")).thenReturn(true);
@@ -302,13 +217,11 @@ class ExchangeCommandTest {
                 Map.of("from", "openeco", "to", "gems", "rate", 10.0)));
     }
 
-    private static BalanceCheckResult allowed() {
-        return new BalanceCheckResult(BalanceCheckResult.Status.ALLOWED,
-                BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
+    private static ExchangeResult success(BigDecimal from, BigDecimal to) {
+        return new ExchangeResult(ExchangeResult.Status.SUCCESS, from, to, BigDecimal.ZERO, BigDecimal.ZERO);
     }
 
-    private static BalanceChangeResult success(BigDecimal amount) {
-        return new BalanceChangeResult(BalanceChangeResult.Status.SUCCESS,
-                amount, BigDecimal.ZERO, BigDecimal.ZERO);
+    private static ExchangeResult failed(ExchangeResult.Status status) {
+        return new ExchangeResult(status, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
     }
 }

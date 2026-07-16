@@ -40,6 +40,7 @@ public class AccountRenamedEvent extends Event {
     private final String newName;
 
     public AccountRenamedEvent(UUID playerId, String oldName, String newName) {
+        super(EventExecutionContext.isAsync());
         this.playerId = playerId;
         this.oldName = oldName;
         this.newName = newName;

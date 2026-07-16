@@ -258,6 +258,13 @@ public final class OpenEcoApiImpl implements OpenEcoApi {
     }
 
     @Override
+    public ExchangeResult exchange(UUID accountId, String fromCurrencyId, String toCurrencyId,
+                                   BigDecimal fromAmount, BigDecimal toAmount) {
+        return service.exchange(requireAccountId(accountId), requireKnownCurrency(fromCurrencyId),
+                requireKnownCurrency(toCurrencyId), requirePositiveAmount(fromAmount), requirePositiveAmount(toAmount));
+    }
+
+    @Override
     public TransferPreviewResult previewTransfer(UUID fromId, UUID toId, BigDecimal amount) {
         return service.previewTransfer(requireAccountId(fromId), requireAccountId(toId), requireAmount(amount));
     }
@@ -691,6 +698,8 @@ public final class OpenEcoApiImpl implements OpenEcoApi {
             case "Balance limit reached" -> BalanceChangeResult.Status.BALANCE_LIMIT;
             case "Account is frozen" -> BalanceChangeResult.Status.FROZEN;
             case "Cancelled by plugin" -> BalanceChangeResult.Status.CANCELLED;
+            case "Storage unavailable" -> BalanceChangeResult.Status.STORAGE_ERROR;
+            case "Policy rejected" -> BalanceChangeResult.Status.POLICY_REJECTED;
             default -> throw new OpenEcoApiException("Unexpected balance change failure: " + response.errorMessage());
         };
     }
@@ -708,6 +717,8 @@ public final class OpenEcoApiImpl implements OpenEcoApi {
             case INVALID_AMOUNT -> TransferResult.Status.INVALID_AMOUNT;
             case SELF_TRANSFER -> TransferResult.Status.SELF_TRANSFER;
             case FROZEN -> TransferResult.Status.FROZEN;
+            case STORAGE_ERROR -> TransferResult.Status.STORAGE_ERROR;
+            case POLICY_REJECTED -> TransferResult.Status.POLICY_REJECTED;
         };
     }
 

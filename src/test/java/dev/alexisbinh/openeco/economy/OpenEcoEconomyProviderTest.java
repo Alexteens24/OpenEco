@@ -17,6 +17,8 @@
 package dev.alexisbinh.openeco.economy;
 
 import dev.alexisbinh.openeco.api.BalanceCheckResult;
+import dev.alexisbinh.openeco.api.AccountTransferResult;
+import dev.alexisbinh.openeco.api.OpenEcoAsyncApi;
 import dev.alexisbinh.openeco.model.DirectTransferResult;
 import dev.alexisbinh.openeco.service.AccountService;
 import dev.alexisbinh.openeco.service.EconomyOperationResponse;
@@ -31,6 +33,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -44,10 +47,13 @@ class OpenEcoEconomyProviderTest {
     private AccountService service;
 
     private OpenEcoEconomyProvider provider;
+    private OpenEcoAsyncApi asyncApi;
 
     @BeforeEach
     void setUp() {
-        provider = new OpenEcoEconomyProvider(service);
+        when(service.getCurrencyId()).thenReturn("coins");
+        asyncApi = org.mockito.Mockito.mock(OpenEcoAsyncApi.class);
+        provider = new OpenEcoEconomyProvider(service, asyncApi);
     }
 
     @Test
@@ -70,6 +76,24 @@ class OpenEcoEconomyProviderTest {
         assertEquals(0, amount.compareTo(response.amount));
         assertEquals(0, new BigDecimal("40.00").compareTo(response.balance(fromId).orElseThrow()));
         assertEquals(0, new BigDecimal("60.00").compareTo(response.balance(toId).orElseThrow()));
+    }
+
+    @Test
+    void asyncTransferUsesNonBlockingAuthoritativeFacade() throws Exception {
+        UUID fromId = UUID.randomUUID();
+        UUID toId = UUID.randomUUID();
+        BigDecimal amount = new BigDecimal("10.00");
+        when(asyncApi.directTransfer(fromId, toId, "coins", amount)).thenReturn(
+                CompletableFuture.completedFuture(new AccountTransferResult(
+                        AccountTransferResult.Status.SUCCESS, amount,
+                        new BigDecimal("40.00"), new BigDecimal("60.00"), "")));
+
+        MultiEconomyResponse response = provider.async().orElseThrow()
+                .transfer("shop", fromId, toId, amount).get();
+
+        assertEquals(EconomyResponse.ResponseType.SUCCESS, response.type);
+        assertEquals(0, new BigDecimal("40.00").compareTo(response.balance(fromId).orElseThrow()));
+        verify(asyncApi).directTransfer(fromId, toId, "coins", amount);
     }
 
     @Test

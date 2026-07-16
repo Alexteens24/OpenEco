@@ -1,6 +1,6 @@
 # Features
 
-OpenEco is built around a simple operational model: one server authority per account, in-memory hot path, JDBC cold storage, and optional proxy-assisted handoff for multi-backend networks.
+OpenEco supports two operational models: an in-memory hot path for local/handoff deployments, and an authoritative JDBC mutation path for safe multi-writer networks.
 
 ## Core economy
 
@@ -44,7 +44,7 @@ Pay supports configurable cooldown, tax percentage, and minimum amount. Baltop u
 
 `/eco` provides give, take, set, reset, delete, freeze, unfreeze, rename, and reload subcommands. `/openecomigrate` handles economy plugin imports and storage backend migrations.
 
-`/eco reload` refreshes messages and most runtime rules. Storage backend changes and `cross-server.enabled` require a restart.
+`/eco reload` refreshes messages and most runtime rules. Storage backend, cross-server mode, and Redis topology changes require a restart.
 
 ## Optional addons
 
@@ -60,15 +60,17 @@ Adds interest payouts, pay limits, permission-based balance caps, and `/exchange
 
 Coordinates account flush and refresh during server transfers when `cross-server.enabled` is true on backends. Exposes `/ecosync <player>` on the proxy for manual admin refreshes.
 
-## Network handoff mode
+## Network modes
 
-When `cross-server.enabled` is true and every backend shares one remote JDBC database:
+With `cross-server.mode: multi-writer`, every balance, transfer, exchange, account mutation, cooldown, and registered policy check commits in one database transaction. Row locking and deterministic account lock order prevent lost updates, overspending, and transfer deadlocks. A durable change log refreshes each backend's read cache; optional Redis only reduces notification latency.
+
+With `cross-server.mode: handoff`:
 
 1. A player's account is flushed to the database when they leave a backend.
 2. The account is re-read from the database before they finish joining the next backend.
 3. The optional Velocity proxy addon can trigger targeted flush/refresh requests.
 
-This is **handoff sync**, not real-time distributed replication. Balances are not broadcast live to every backend, and simultaneous writes to the same account from multiple live servers remain unsafe.
+Handoff remains a compatibility mode and still assumes one active writer per account.
 
 ## Platform support
 
@@ -78,8 +80,7 @@ This is **handoff sync**, not real-time distributed replication. Balances are no
 
 ## What OpenEco does not do
 
-- Real-time balance replication across all backends.
-- Safe multi-writer access to the same account from multiple live servers.
+- Linearizable cache reads on every backend (cached reads may lag by the configured poll interval).
 - Cross-server mode on SQLite or H2 (local-only backends).
 - Shared accounts between players.
 

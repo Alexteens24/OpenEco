@@ -18,8 +18,13 @@ package dev.alexisbinh.openeco;
 
 import dev.alexisbinh.openeco.api.OpenEcoApi;
 import dev.alexisbinh.openeco.api.OpenEcoApiImpl;
+import dev.alexisbinh.openeco.api.OpenEcoAsyncApi;
+import dev.alexisbinh.openeco.api.OpenEcoAsyncApiImpl;
+import dev.alexisbinh.openeco.api.EconomyPolicyRegistry;
+import dev.alexisbinh.openeco.api.ClusterJobCoordinator;
 import dev.alexisbinh.openeco.command.*;
 import dev.alexisbinh.openeco.crossserver.CrossServerMessenger;
+import dev.alexisbinh.openeco.crossserver.RedisChangeBus;
 import dev.alexisbinh.openeco.economy.OpenEcoEconomyProvider;
 import dev.alexisbinh.openeco.economy.OpenEcoLegacyEconomyProvider;
 import dev.alexisbinh.openeco.listener.PlayerConnectionListener;
@@ -55,10 +60,13 @@ public class OpenEcoPlugin extends JavaPlugin {
     private AccountService service;
     private Messages messages;
     private OpenEcoApi api;
+    private OpenEcoAsyncApiImpl asyncApi;
     private ScheduledTask autoSaveTask;
     private ScheduledTask historyPruneTask;
     private ScheduledTask leaderboardRefreshTask;
+    private ScheduledTask multiWriterPollTask;
     private BukkitContext fastStatsContext;
+    private RedisChangeBus redisChangeBus;
 
     @Override
     public void onEnable() {
@@ -134,10 +142,17 @@ public class OpenEcoPlugin extends JavaPlugin {
         api = new OpenEcoApiImpl(service);
         getServer().getServicesManager().register(
             OpenEcoApi.class, api, this, ServicePriority.Normal);
+        asyncApi = new OpenEcoAsyncApiImpl(api, service, getName(), 4);
+        getServer().getServicesManager().register(
+                OpenEcoAsyncApi.class, asyncApi, this, ServicePriority.Normal);
+        getServer().getServicesManager().register(
+                EconomyPolicyRegistry.class, service.getPolicyRegistry(), this, ServicePriority.Normal);
+        getServer().getServicesManager().register(
+                ClusterJobCoordinator.class, service.getClusterJobCoordinator(), this, ServicePriority.Normal);
         getLogger().info("Registered openeco addon API service.");
 
         // ── VaultUnlocked registration (optional) ─────────────────────────────
-        registerVaultUnlockedEconomy(service);
+        registerVaultUnlockedEconomy(service, asyncApi);
 
         // ── Legacy Vault v1 registration (for ShopGUI+, SmartSpawner, etc.) ───
         registerLegacyEconomy(service);
@@ -186,6 +201,9 @@ public class OpenEcoPlugin extends JavaPlugin {
         // ── History prune scheduler ───────────────────────────────────────────
         restartPruneTask();
 
+        restartMultiWriterPollTask();
+        startRedisChangeBus();
+
         // ── bStats (optional) ────────────────────────────────────────────────
         try {
             new Metrics(this, 30556);
@@ -217,6 +235,7 @@ public class OpenEcoPlugin extends JavaPlugin {
         restartAutoSaveTask();
         restartLeaderboardRefreshTask();
         restartPruneTask();
+        restartMultiWriterPollTask();
         return true;
     }
 
@@ -278,6 +297,13 @@ public class OpenEcoPlugin extends JavaPlugin {
             throw new IllegalArgumentException(
                     "persistence.autosave-interval-seconds must be greater than 0");
         }
+        dev.alexisbinh.openeco.service.CrossServerMode.fromConfig(
+                getConfig().getString("cross-server.mode", "multi-writer"));
+        long refreshMs = getConfig().getLong("cross-server.cache-refresh-interval-ms", 250L);
+        if (refreshMs < 50L || refreshMs > 5_000L) {
+            throw new IllegalArgumentException(
+                    "cross-server.cache-refresh-interval-ms must be between 50 and 5000");
+        }
     }
 
     private void restartPruneTask() {
@@ -286,11 +312,15 @@ public class OpenEcoPlugin extends JavaPlugin {
             historyPruneTask = null;
         }
         int retentionDays = getConfig().getInt("history.retention-days", -1);
-        if (retentionDays > 0) {
+        int changeRetentionDays = getConfig().getInt("cross-server.change-retention-days", 7);
+        if (retentionDays > 0 || (service != null && service.isMultiWriterEnabled() && changeRetentionDays > 0)) {
             // Run once shortly after enable/reload, then every 24 h.
             historyPruneTask = getServer().getAsyncScheduler().runAtFixedRate(
                     this,
-                    task -> service.pruneHistory(),
+                    task -> {
+                        service.pruneHistory();
+                        service.pruneMultiWriterChanges(changeRetentionDays);
+                    },
                     1,
                     86_400,
                     TimeUnit.SECONDS);
@@ -308,6 +338,42 @@ public class OpenEcoPlugin extends JavaPlugin {
                 intervalSeconds,
                 intervalSeconds,
                 TimeUnit.SECONDS);
+    }
+
+    private void restartMultiWriterPollTask() {
+        if (multiWriterPollTask != null) {
+            multiWriterPollTask.cancel();
+            multiWriterPollTask = null;
+        }
+        if (service == null || !service.isMultiWriterEnabled()) return;
+        long intervalMs = Math.max(50L, Math.min(5_000L,
+                getConfig().getLong("cross-server.cache-refresh-interval-ms", 250L)));
+        int batchSize = Math.max(1, getConfig().getInt("cross-server.poll-batch-size", 1_000));
+        multiWriterPollTask = getServer().getAsyncScheduler().runAtFixedRate(
+                this, task -> service.pollMultiWriterChanges(batchSize),
+                intervalMs, intervalMs, TimeUnit.MILLISECONDS);
+    }
+
+    private void startRedisChangeBus() {
+        if (redisChangeBus != null) {
+            redisChangeBus.close();
+            redisChangeBus = null;
+        }
+        service.setChangeNotifier(null);
+        if (!service.isMultiWriterEnabled()
+                || !getConfig().getBoolean("cross-server.redis.enabled", false)) return;
+        String uri = getConfig().getString("cross-server.redis.uri", "redis://localhost:6379");
+        String channel = getConfig().getString("cross-server.redis.channel", "openeco:changes");
+        try {
+            int batchSize = Math.max(1, getConfig().getInt("cross-server.poll-batch-size", 1_000));
+            redisChangeBus = new RedisChangeBus(uri, channel, getLogger(), () ->
+                    getServer().getAsyncScheduler().runNow(this,
+                            task -> service.pollMultiWriterChanges(batchSize)));
+            service.setChangeNotifier(redisChangeBus);
+            getLogger().info("Redis change notifications enabled; JDBC polling remains active.");
+        } catch (RuntimeException | LinkageError e) {
+            getLogger().warning("Redis notifications unavailable; using JDBC polling: " + e.getMessage());
+        }
     }
 
     private void startFastStats(DatabaseDialect dialect) {
@@ -356,9 +422,9 @@ public class OpenEcoPlugin extends JavaPlugin {
         getLogger().info("Registered as legacy Vault v1 Economy provider.");
     }
 
-    private void registerVaultUnlockedEconomy(AccountService accountService) {
+    private void registerVaultUnlockedEconomy(AccountService accountService, OpenEcoAsyncApi asyncApi) {
         try {
-            OpenEcoEconomyProvider provider = new OpenEcoEconomyProvider(accountService);
+            OpenEcoEconomyProvider provider = new OpenEcoEconomyProvider(accountService, asyncApi);
             getServer().getServicesManager().register(
                     Economy.class, provider, this, ServicePriority.Normal);
             getLogger().info("Registered as VaultUnlocked v2 Economy provider.");
@@ -370,6 +436,10 @@ public class OpenEcoPlugin extends JavaPlugin {
     @Override
     public void onDisable() {
         shutdownFastStats();
+        if (redisChangeBus != null) {
+            redisChangeBus.close();
+            redisChangeBus = null;
+        }
         if (autoSaveTask != null) {
             autoSaveTask.cancel();
         }
@@ -379,7 +449,13 @@ public class OpenEcoPlugin extends JavaPlugin {
         if (leaderboardRefreshTask != null) {
             leaderboardRefreshTask.cancel();
         }
+        if (multiWriterPollTask != null) {
+            multiWriterPollTask.cancel();
+        }
         getServer().getServicesManager().unregisterAll(this);
+        if (asyncApi != null) {
+            asyncApi.close();
+        }
         if (service != null) {
             service.shutdown();
         }

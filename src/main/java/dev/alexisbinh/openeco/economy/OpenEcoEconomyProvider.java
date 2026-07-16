@@ -17,6 +17,7 @@
 package dev.alexisbinh.openeco.economy;
 
 import dev.alexisbinh.openeco.api.BalanceCheckResult;
+import dev.alexisbinh.openeco.api.OpenEcoAsyncApi;
 import dev.alexisbinh.openeco.model.DirectTransferResult;
 import dev.alexisbinh.openeco.service.AccountService;
 import dev.alexisbinh.openeco.service.EconomyOperationResponse;
@@ -33,9 +34,9 @@ public class OpenEcoEconomyProvider implements Economy {
     private final AccountService service;
     private final OpenEcoAsyncEconomy async;
 
-    public OpenEcoEconomyProvider(AccountService service) {
+    public OpenEcoEconomyProvider(AccountService service, OpenEcoAsyncApi asyncApi) {
         this.service = service;
-        this.async = new OpenEcoAsyncEconomy(this);
+        this.async = new OpenEcoAsyncEconomy(this, asyncApi, service.getCurrencyId());
     }
 
     @Override

@@ -8,7 +8,7 @@ OpenEco exposes a plugin-native API for same-server integrations.
 
 **Good for:** account lookups, balance reads/writes, transfers, history, leaderboard, currency metadata.
 
-**Not for:** cross-server sync, async-safe thread wrapping, or distributed ledger behavior.
+For operations that may perform remote storage I/O, use the separately registered `OpenEcoAsyncApi`. Cached reads remain available through `OpenEcoApi`.
 
 Methods without a `currencyId` parameter use the default currency compatibility layer. Currency-aware overloads target the named currency directly.
 
@@ -52,18 +52,20 @@ OpenEcoApi api = registration.getProvider();
 
 Resolve during plugin startup and fail fast if missing.
 
+Resolve `OpenEcoAsyncApi` the same way when your integration must not block a server thread. Its mutation methods return `CompletionStage`, use a bounded I/O executor, and expose fresh account/balance reads. In multi-writer mode, successful completion means the authoritative database transaction committed.
+
 ## Threading
 
-Call mutating methods from a safe server thread:
+Call synchronous mutating methods from a safe server thread:
 
 - **Paper:** normal server thread.
 - **Folia:** owning region thread for the player or entity.
 
-The API does not move your work onto a safe thread.
+`OpenEcoAsyncApi` performs work off-thread. Bukkit events fired from that facade are marked asynchronous, so listeners must be thread-safe and schedule Bukkit world/entity access onto the appropriate server or region thread.
 
 ## Result model
 
-OpenEco uses result objects for normal business-rule failures (insufficient funds, account not found, balance limit, cooldown, cancelled events).
+OpenEco uses result objects for normal business-rule failures (insufficient funds, account not found, balance limit, cooldown, policy rejection, cancelled events). `STORAGE_ERROR` means the database mutation failed and no success was reported.
 
 `OpenEcoApiException` is reserved for API-level failures such as history read failures.
 
@@ -108,6 +110,7 @@ OpenEco uses result objects for normal business-rule failures (insufficient fund
 | `canTransfer(fromId, toId, amount)` / `canTransfer(fromId, toId, currencyId, amount)` | `TransferCheckResult` | Balance-level checks only (no cooldown/tax) |
 | `previewTransfer(fromId, toId, amount)` / `previewTransfer(fromId, toId, currencyId, amount)` | `TransferPreviewResult` | Full preflight including cooldown, tax, minimum |
 | `transfer(fromId, toId, amount)` / `transfer(fromId, toId, currencyId, amount)` | `TransferResult` | Full transfer path with events |
+| `exchange(accountId, fromCurrencyId, toCurrencyId, fromAmount, toAmount)` | `ExchangeResult` | Atomic two-currency conversion |
 
 `TransferResult` fields: `status`, `sent`, `received`, `tax`, `cooldownRemainingMs`.
 
@@ -148,6 +151,11 @@ OpenEco uses result objects for normal business-rule failures (insufficient fund
 Pre-mutation (cancellable): `AccountRenameEvent`, `AccountDeleteEvent`, `BalanceChangeEvent`, `PayEvent`.
 
 Post-success: `AccountCreateEvent`, `AccountRenamedEvent`, `AccountDeletedEvent`, `BalanceChangedEvent`, `PayCompletedEvent`.
+
+## Multi-writer addon hooks
+
+- `EconomyPolicyRegistry` lets addons register policy providers whose caps and rolling transfer limits are evaluated inside the authoritative transaction.
+- `ClusterJobCoordinator` provides database leases for scheduled network jobs such as interest payouts, ensuring one server owns a given run.
 
 ## Practical example
 

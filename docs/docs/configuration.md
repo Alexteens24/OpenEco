@@ -5,7 +5,7 @@ The `config.yml` file lives in `plugins/OpenEco/`. OpenEco auto-migrates legacy 
 Click any option below to view additional information.
 
 ::: tip Apply most changes without a restart
-After editing `config.yml`, run `/eco reload` to apply messages and most runtime rules. Storage backends and `cross-server.enabled` still require a restart.
+After editing `config.yml`, run `/eco reload` to apply messages and most runtime rules. Storage backends, `cross-server.enabled`, `cross-server.mode`, and Redis topology still require a restart.
 :::
 
 <ConfigGroup name="currencies">
@@ -193,7 +193,35 @@ Days to keep transaction history. `≤ 0` keeps all history with no pruning.
 <ConfigGroup name="cross-server">
 
 <ConfigProperty name="enabled" value="false" type="boolean">
-Enable proxy-assisted account handoff sync. Requires MySQL, MariaDB, or PostgreSQL on every backend. **Restart required.** Do not enable on single-server setups.
+Enable shared-database network mode. Requires MySQL, MariaDB, or PostgreSQL on every backend. **Restart required.**
+</ConfigProperty>
+
+<ConfigProperty name="mode" value="multi-writer" type="string">
+`multi-writer` makes JDBC authoritative and safely serializes concurrent mutations. `handoff` preserves the legacy proxy flush/refresh model. Existing enabled configs without this key migrate to `handoff`.
+</ConfigProperty>
+
+<ConfigProperty name="cache-refresh-interval-ms" value="250" type="number">
+How often each backend consumes the durable JDBC change log. Valid range: `50`–`5000` ms.
+</ConfigProperty>
+
+<ConfigProperty name="poll-batch-size" value="1000" type="number">
+Maximum change rows consumed per poll.
+</ConfigProperty>
+
+<ConfigProperty name="change-retention-days" value="7" type="number">
+Days to retain consumed cache-invalidation rows. Pruned once per day.
+</ConfigProperty>
+
+<ConfigProperty name="redis.enabled" value="false" type="boolean">
+Use Redis Pub/Sub to wake caches sooner. JDBC polling remains active as the durable fallback.
+</ConfigProperty>
+
+<ConfigProperty name="redis.uri" value="redis://localhost:6379" type="string">
+Standalone Redis URI.
+</ConfigProperty>
+
+<ConfigProperty name="redis.channel" value="openeco:changes" type="string">
+Pub/Sub channel shared by all OpenEco backends.
 </ConfigProperty>
 
 </ConfigGroup>
@@ -244,6 +272,14 @@ history:
 
 cross-server:
   enabled: false
+  mode: multi-writer
+  cache-refresh-interval-ms: 250
+  poll-batch-size: 1000
+  change-retention-days: 7
+  redis:
+    enabled: false
+    uri: "redis://localhost:6379"
+    channel: "openeco:changes"
 ```
 
 See [Production guide](/docs/production) for recommended starting values on live servers.

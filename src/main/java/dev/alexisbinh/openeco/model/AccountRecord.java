@@ -35,6 +35,7 @@ public final class AccountRecord {
     private volatile long updatedAt;
     private volatile boolean dirty;
     private volatile boolean frozen;
+    private volatile long version;
 
     public AccountRecord(UUID id, String lastKnownName, BigDecimal balance, long createdAt, long updatedAt) {
         this(id, lastKnownName, "openeco", Map.of("openeco", Objects.requireNonNull(balance, "balance")), createdAt, updatedAt);
@@ -42,6 +43,12 @@ public final class AccountRecord {
 
     public AccountRecord(UUID id, String lastKnownName, String primaryCurrencyId,
                          Map<String, BigDecimal> balances, long createdAt, long updatedAt) {
+        this(id, lastKnownName, primaryCurrencyId, balances, createdAt, updatedAt, 0L);
+    }
+
+    public AccountRecord(UUID id, String lastKnownName, String primaryCurrencyId,
+                         Map<String, BigDecimal> balances, long createdAt, long updatedAt,
+                         long version) {
         this.id = id;
         this.lastKnownName = lastKnownName;
         this.primaryCurrencyId = requireCurrencyId(primaryCurrencyId);
@@ -54,6 +61,7 @@ public final class AccountRecord {
         this.balances.putIfAbsent(this.primaryCurrencyId, BigDecimal.ZERO);
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
+        this.version = Math.max(0L, version);
         this.dirty = false;
     }
 
@@ -71,6 +79,7 @@ public final class AccountRecord {
     public long getUpdatedAt() { return updatedAt; }
     public boolean isDirty() { return dirty; }
     public boolean isFrozen() { return frozen; }
+    public long getVersion() { return version; }
 
     public synchronized void setLastKnownName(String name) {
         this.lastKnownName = name;
@@ -100,6 +109,10 @@ public final class AccountRecord {
     public synchronized void setFrozen(boolean frozen) {
         this.frozen = frozen;
         this.dirty = true;
+    }
+
+    public synchronized void setVersion(long version) {
+        this.version = Math.max(0L, version);
     }
 
     public synchronized void markDirty() {
@@ -160,12 +173,14 @@ public final class AccountRecord {
         this.balances.putAll(source.getBalancesSnapshot());
         this.updatedAt = source.getUpdatedAt();
         this.frozen = source.isFrozen();
+        this.version = source.getVersion();
         this.dirty = false;
     }
 
     /** Returns an immutable snapshot safe to flush to DB while modifications continue. */
     public synchronized AccountRecord snapshot() {
-        AccountRecord snap = new AccountRecord(id, lastKnownName, primaryCurrencyId, balances, createdAt, updatedAt);
+        AccountRecord snap = new AccountRecord(id, lastKnownName, primaryCurrencyId, balances,
+                createdAt, updatedAt, version);
         snap.frozen = this.frozen;
         return snap;
     }

@@ -50,6 +50,7 @@ public class BalanceChangedEvent extends Event {
 
     public BalanceChangedEvent(UUID playerId, BigDecimal oldBalance, BigDecimal newBalance,
                                BalanceChangeEvent.Reason reason, @Nullable String currencyId) {
+        super(EventExecutionContext.isAsync());
         this.playerId = playerId;
         this.oldBalance = oldBalance;
         this.newBalance = newBalance;

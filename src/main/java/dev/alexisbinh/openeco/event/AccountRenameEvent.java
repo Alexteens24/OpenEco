@@ -42,6 +42,7 @@ public class AccountRenameEvent extends Event implements Cancellable {
     private boolean cancelled = false;
 
     public AccountRenameEvent(UUID playerId, String oldName, String newName) {
+        super(EventExecutionContext.isAsync());
         this.playerId = playerId;
         this.oldName = oldName;
         this.newName = newName;

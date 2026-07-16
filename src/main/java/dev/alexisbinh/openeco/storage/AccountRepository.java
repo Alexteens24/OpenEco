@@ -24,7 +24,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-public interface AccountRepository extends TransactionRepository {
+public interface AccountRepository extends TransactionRepository, AutoCloseable {
 
     @FunctionalInterface
     interface AccountBatchConsumer {

@@ -1,11 +1,11 @@
 # Welcome to OpenEco
 
-**OpenEco** is a single-server-first economy plugin for Paper and Folia. It keeps account balances in memory for fast local use, persists them through JDBC, and optionally coordinates account handoff when you run multiple backend servers behind a proxy against one shared remote database.
+**OpenEco** is an economy plugin for Paper and Folia. It supports fast local operation and safe database-authoritative mutations across multiple proxy backends sharing MySQL, MariaDB, or PostgreSQL.
 
 ## Quick Navigation
 
 <CardGrid>
-  <DocCard title="Features" icon="💰" link="/docs/features" desc="In-memory economy, multi-currency, Vault, PlaceholderAPI, and network handoff." />
+  <DocCard title="Features" icon="💰" link="/docs/features" desc="Multi-currency, Vault, PlaceholderAPI, atomic exchange, and safe network writes." />
   <DocCard title="Installation" icon="📦" link="/docs/installation" desc="Install the JAR, configure storage, and verify your first commands." />
   <DocCard title="Commands" icon="⌨️" link="/docs/commands" desc="Player commands, admin /eco subcommands, and migration tools." />
   <DocCard title="Configuration" icon="⚙️" link="/docs/configuration" desc="Currencies, storage backends, pay rules, and messages." />
@@ -19,7 +19,7 @@ Most economy plugins optimize for one of two extremes: a lightweight in-memory l
 
 - **Fast local reads and writes** through an in-memory account registry.
 - **Reliable persistence** via SQLite, H2, MySQL, MariaDB, or PostgreSQL.
-- **Optional proxy-assisted handoff** when you need player transfers across backends — not real-time global replication.
+- **Safe multi-writer network mode** with durable JDBC cache invalidation and optional Redis wake-ups.
 
 If you need a distributed ledger or live balance broadcasts to every backend, OpenEco is not the right tool. See the [Production guide](/docs/production) for fit guidance.
 

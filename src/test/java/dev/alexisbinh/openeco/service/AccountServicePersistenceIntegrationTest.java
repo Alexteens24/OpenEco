@@ -425,21 +425,13 @@ class AccountServicePersistenceIntegrationTest {
     }
 
     @Test
-    void loadAllFailsWhenStoredNamesCollideIgnoringCase() throws Exception {
+    void repositoryRejectsStoredNamesThatCollideIgnoringCase() throws Exception {
         JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "load-collision-test");
         try {
-            repository.upsertBatch(List.of(
+            assertThrows(java.sql.SQLException.class, () -> repository.upsertBatch(List.of(
                     new dev.alexisbinh.openeco.model.AccountRecord(UUID.randomUUID(), "Alice", new BigDecimal("1.00"), 1L, 1L),
-                    new dev.alexisbinh.openeco.model.AccountRecord(UUID.randomUUID(), "alice", new BigDecimal("2.00"), 2L, 2L)));
-
-            AccountService service = newService(repository);
-
-            assertThrows(java.sql.SQLException.class, service::loadAll);
-            assertTrue(service.getUUIDNameMap().isEmpty());
-            assertEquals(0, service.getLeaderboardPage(0, 10).totalEntries());
-
-            service.shutdown();
-            assertEquals(2, repository.loadAll().size());
+                    new dev.alexisbinh.openeco.model.AccountRecord(UUID.randomUUID(), "alice", new BigDecimal("2.00"), 2L, 2L))));
+            assertTrue(repository.loadAll().isEmpty());
         } finally {
             repository.close();
         }
