@@ -29,7 +29,8 @@ public interface MultiWriterRepository {
         NAME_IN_USE,
         ALREADY_EXISTS,
         ALREADY_APPLIED,
-        POLICY_REJECTED
+        POLICY_REJECTED,
+        IDEMPOTENCY_CONFLICT
     }
 
     enum BalanceMutationKind { DEPOSIT, WITHDRAW, SET }
@@ -172,8 +173,20 @@ public interface MultiWriterRepository {
 
     int pruneAccountChanges(long cutoffMs) throws SQLException;
 
+    record PruneResult(int operations, int policyUsage, int clusterJobs) {}
+
+    PruneResult pruneMultiWriterState(long operationCutoffMs, long abandonedJobCutoffMs) throws SQLException;
+
+    Optional<String> loadPolicyState(String providerId, UUID subjectId) throws SQLException;
+
+    void savePolicyState(String providerId, UUID subjectId, String state) throws SQLException;
+
+    long currentDatabaseTimeMillis() throws SQLException;
+
     boolean tryAcquireJobLease(String jobId, String runId, String ownerId,
                                long now, long leaseUntil) throws SQLException;
+
+    boolean renewJobLease(String jobId, String runId, String ownerId, long leaseMs) throws SQLException;
 
     void completeJobLease(String jobId, String runId, String ownerId) throws SQLException;
 }

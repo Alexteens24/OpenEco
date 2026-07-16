@@ -220,9 +220,11 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                     operation_id VARCHAR(36) NOT NULL,
                     amount DECIMAL(30,8) NOT NULL,
                     occurred_at BIGINT NOT NULL,
+                    expires_at BIGINT,
                     PRIMARY KEY (provider_id, operation_id)
                 )
                 """);
+        ensureColumn(stmt.getConnection(), stmt, "economy_policy_usage", "expires_at", "BIGINT");
         stmt.execute("""
                 CREATE TABLE IF NOT EXISTS economy_cluster_jobs (
                     job_id VARCHAR(64) NOT NULL,
@@ -230,7 +232,18 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                     lease_owner VARCHAR(36) NOT NULL,
                     lease_until BIGINT NOT NULL,
                     completed BOOLEAN NOT NULL DEFAULT FALSE,
+                    completed_at BIGINT,
                     PRIMARY KEY (job_id, run_id)
+                )
+                """);
+        ensureColumn(stmt.getConnection(), stmt, "economy_cluster_jobs", "completed_at", "BIGINT");
+        stmt.execute("""
+                CREATE TABLE IF NOT EXISTS economy_policy_state (
+                    provider_id VARCHAR(64) NOT NULL,
+                    subject_id VARCHAR(36) NOT NULL,
+                    state_value VARCHAR(512) NOT NULL,
+                    updated_at BIGINT NOT NULL,
+                    PRIMARY KEY (provider_id, subject_id)
                 )
                 """);
         createIndexIfMissingForMultiWriter(stmt, "idx_account_changes_changed",
@@ -774,10 +787,22 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                             BigDecimal.ZERO, BigDecimal.ZERO, null);
                 }
                 BigDecimal before = locked.balance(request.currencyId());
+                Optional<AppliedBalanceMutation> applied = findAppliedBalanceMutation(conn, request.operationId());
+                if (applied.isPresent()) {
+                    conn.rollback();
+                    AppliedBalanceMutation existing = applied.get();
+                    boolean samePayload = existing.accountId().equals(request.accountId())
+                            && existing.currencyId().equalsIgnoreCase(request.currencyId())
+                            && existing.transactionType() == request.transactionType()
+                            && existing.amount().compareTo(request.amount()) == 0;
+                    return new BalanceMutationResult(
+                            samePayload ? MutationStatus.ALREADY_APPLIED : MutationStatus.IDEMPOTENCY_CONFLICT,
+                            existing.amount(), before, existing.balanceAfter(), locked.toRecord());
+                }
                 if (operationExists(conn, request.operationId())) {
                     conn.rollback();
-                    return new BalanceMutationResult(MutationStatus.ALREADY_APPLIED, request.amount(),
-                            before, before, locked.toRecord());
+                    return new BalanceMutationResult(MutationStatus.IDEMPOTENCY_CONFLICT,
+                            request.amount(), before, before, locked.toRecord());
                 }
                 if (locked.frozen()) {
                     conn.rollback();
@@ -810,6 +835,22 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                 return new BalanceMutationResult(MutationStatus.SUCCESS, request.amount(), before, after, updated.toRecord());
             } catch (SQLException e) {
                 conn.rollback();
+                if (isConstraintViolation(e)) {
+                    Optional<AppliedBalanceMutation> raced =
+                            findAppliedBalanceMutation(conn, request.operationId());
+                    if (raced.isPresent()) {
+                        AppliedBalanceMutation existing = raced.get();
+                        boolean samePayload = existing.accountId().equals(request.accountId())
+                                && existing.currencyId().equalsIgnoreCase(request.currencyId())
+                                && existing.transactionType() == request.transactionType()
+                                && existing.amount().compareTo(request.amount()) == 0;
+                        return new BalanceMutationResult(
+                                samePayload ? MutationStatus.ALREADY_APPLIED
+                                        : MutationStatus.IDEMPOTENCY_CONFLICT,
+                                existing.amount(), existing.balanceAfter(),
+                                existing.balanceAfter(), null);
+                    }
+                }
                 throw e;
             } finally {
                 restoreAutoCommit(conn);
@@ -819,8 +860,14 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
 
     @Override
     public Optional<AppliedBalanceMutation> findAppliedBalanceMutation(UUID operationId) throws SQLException {
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement("""
+        try (Connection conn = dataSource.getConnection()) {
+            return findAppliedBalanceMutation(conn, operationId);
+        }
+    }
+
+    private Optional<AppliedBalanceMutation> findAppliedBalanceMutation(
+            Connection conn, UUID operationId) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("""
                      SELECT COALESCE(o.account_id,t.target_id),
                             COALESCE(o.currency_id,t.currency_id),
                             COALESCE(o.transaction_type,t.type),
@@ -848,6 +895,7 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
         try (Connection conn = dataSource.getConnection()) {
             beginAuthoritativeTransaction(conn);
             try {
+                long now = databaseTimeMillis(conn);
                 UUID firstId = request.fromId().compareTo(request.toId()) < 0 ? request.fromId() : request.toId();
                 UUID secondId = firstId.equals(request.fromId()) ? request.toId() : request.fromId();
                 LockedAccount first = lockAccount(conn, firstId);
@@ -864,7 +912,7 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                 }
                 if (request.applyCooldown() && request.cooldownMs() > 0) {
                     long lastPayAt = loadLastPayAt(conn, request.fromId());
-                    long remaining = request.cooldownMs() - (request.timestamp() - lastPayAt);
+                    long remaining = request.cooldownMs() - (now - lastPayAt);
                     if (remaining > 0) {
                         conn.rollback();
                         return transferFailure(request, MutationStatus.COOLDOWN, remaining, from, to);
@@ -872,7 +920,7 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                 }
                 for (RollingPolicyConstraint constraint : request.rollingPolicies()) {
                     BigDecimal used = loadPolicyUsage(conn, constraint.providerId(), request.fromId(),
-                            request.currencyId(), request.timestamp() - constraint.windowMs());
+                            request.currencyId(), now - constraint.windowMs());
                     if (used.add(request.sent()).compareTo(constraint.maximumAmount()) > 0) {
                         conn.rollback();
                         return transferFailure(request, MutationStatus.POLICY_REJECTED, 0L, from, to);
@@ -895,24 +943,24 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                 long secondVersion = advanceAccountVersion(conn, secondId, second.version());
                 long fromVersion = firstId.equals(request.fromId()) ? firstVersion : secondVersion;
                 long toVersion = firstId.equals(request.toId()) ? firstVersion : secondVersion;
-                upsertBalance(conn, request.fromId(), request.currencyId(), fromAfter, request.timestamp());
-                upsertBalance(conn, request.toId(), request.currencyId(), toAfter, request.timestamp());
-                updateAccountMetadata(conn, from, request.currencyId(), fromAfter, request.timestamp(), fromVersion);
-                updateAccountMetadata(conn, to, request.currencyId(), toAfter, request.timestamp(), toVersion);
-                if (request.applyCooldown()) upsertLastPayAt(conn, request.fromId(), request.timestamp());
+                upsertBalance(conn, request.fromId(), request.currencyId(), fromAfter, now);
+                upsertBalance(conn, request.toId(), request.currencyId(), toAfter, now);
+                updateAccountMetadata(conn, from, request.currencyId(), fromAfter, now, fromVersion);
+                updateAccountMetadata(conn, to, request.currencyId(), toAfter, now, toVersion);
+                if (request.applyCooldown()) upsertLastPayAt(conn, request.fromId(), now);
                 for (RollingPolicyConstraint constraint : request.rollingPolicies()) {
                     insertPolicyUsage(conn, constraint.providerId(), request.fromId(), request.currencyId(),
-                            request.operationId(), request.sent(), request.timestamp());
+                            request.operationId(), request.sent(), now, now + constraint.windowMs());
                 }
                 insertTransaction(conn, request.operationId(), TransactionType.PAY_SENT, request.toId(), request.fromId(),
-                        request.sent(), fromBefore, fromAfter, request.timestamp(), null, null, request.currencyId());
+                        request.sent(), fromBefore, fromAfter, now, null, null, request.currencyId());
                 insertTransaction(conn, request.operationId(), TransactionType.PAY_RECEIVED, request.fromId(), request.toId(),
-                        request.received(), toBefore, toAfter, request.timestamp(), null, null, request.currencyId());
-                recordOperation(conn, request.operationId(), request.applyCooldown() ? "PAY" : "TRANSFER", request.timestamp());
-                insertChange(conn, request.operationId(), request.fromId(), fromVersion, ChangeKind.UPSERT, request.timestamp());
-                insertChange(conn, request.operationId(), request.toId(), toVersion, ChangeKind.UPSERT, request.timestamp());
-                LockedAccount updatedFrom = from.withBalance(request.currencyId(), fromAfter, request.timestamp(), fromVersion);
-                LockedAccount updatedTo = to.withBalance(request.currencyId(), toAfter, request.timestamp(), toVersion);
+                        request.received(), toBefore, toAfter, now, null, null, request.currencyId());
+                recordOperation(conn, request.operationId(), request.applyCooldown() ? "PAY" : "TRANSFER", now);
+                insertChange(conn, request.operationId(), request.fromId(), fromVersion, ChangeKind.UPSERT, now);
+                insertChange(conn, request.operationId(), request.toId(), toVersion, ChangeKind.UPSERT, now);
+                LockedAccount updatedFrom = from.withBalance(request.currencyId(), fromAfter, now, fromVersion);
+                LockedAccount updatedTo = to.withBalance(request.currencyId(), toAfter, now, toVersion);
                 conn.commit();
                 return new TransferMutationResult(MutationStatus.SUCCESS, request.sent(), request.received(), request.tax(),
                         0L, updatedFrom.toRecord(), updatedTo.toRecord());
@@ -984,9 +1032,10 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
         try (Connection conn = dataSource.getConnection()) {
             beginAuthoritativeTransaction(conn);
             try {
-                if (lockAccount(conn, accountId) != null) {
+                LockedAccount existing = lockAccount(conn, accountId);
+                if (existing != null) {
                     conn.rollback();
-                    return new AccountWriteResult(MutationStatus.ALREADY_EXISTS, loadAccount(accountId).orElse(null));
+                    return new AccountWriteResult(MutationStatus.ALREADY_EXISTS, existing.toRecord());
                 }
                 long version = advanceAccountVersion(conn, accountId, 0L);
                 try (PreparedStatement ps = conn.prepareStatement(
@@ -1071,9 +1120,17 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                 try (PreparedStatement tx = conn.prepareStatement("DELETE FROM transactions WHERE target_id=?");
                      PreparedStatement balances = conn.prepareStatement("DELETE FROM account_balances WHERE account_id=?");
                      PreparedStatement pay = conn.prepareStatement("DELETE FROM account_pay_state WHERE account_id=?");
+                     PreparedStatement policyState = conn.prepareStatement(
+                             "DELETE FROM economy_policy_state WHERE subject_id=?");
                      PreparedStatement acc = conn.prepareStatement("DELETE FROM accounts WHERE id=?")) {
-                    for (PreparedStatement ps : List.of(tx, balances, pay, acc)) ps.setString(1, accountId.toString());
-                    tx.executeUpdate(); balances.executeUpdate(); pay.executeUpdate(); acc.executeUpdate();
+                    for (PreparedStatement ps : List.of(tx, balances, pay, policyState, acc)) {
+                        ps.setString(1, accountId.toString());
+                    }
+                    tx.executeUpdate();
+                    balances.executeUpdate();
+                    pay.executeUpdate();
+                    policyState.executeUpdate();
+                    acc.executeUpdate();
                 }
                 long tombstoneVersion = advanceAccountVersion(conn, accountId, account.version());
                 recordOperation(conn, operationId, "ACCOUNT_DELETE", timestamp);
@@ -1196,11 +1253,114 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
     }
 
     @Override
+    public PruneResult pruneMultiWriterState(long operationCutoffMs, long abandonedJobCutoffMs)
+            throws SQLException {
+        try (Connection conn = dataSource.getConnection()) {
+            long now = databaseTimeMillis(conn);
+            int operations;
+            int policyUsage;
+            int clusterJobs;
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "DELETE FROM economy_operations WHERE created_at<?")) {
+                ps.setLong(1, operationCutoffMs);
+                operations = ps.executeUpdate();
+            }
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "DELETE FROM economy_policy_usage WHERE (expires_at IS NOT NULL AND expires_at<?) "
+                            + "OR (expires_at IS NULL AND occurred_at<?)")) {
+                ps.setLong(1, now);
+                ps.setLong(2, operationCutoffMs);
+                policyUsage = ps.executeUpdate();
+            }
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "DELETE FROM economy_cluster_jobs WHERE "
+                            + "(completed=? AND ((completed_at IS NOT NULL AND completed_at<?) "
+                            + "OR (completed_at IS NULL AND lease_until<?))) "
+                            + "OR (completed=? AND lease_until<?)")) {
+                ps.setBoolean(1, true);
+                ps.setLong(2, operationCutoffMs);
+                ps.setLong(3, operationCutoffMs);
+                ps.setBoolean(4, false);
+                ps.setLong(5, abandonedJobCutoffMs);
+                clusterJobs = ps.executeUpdate();
+            }
+            return new PruneResult(operations, policyUsage, clusterJobs);
+        }
+    }
+
+    @Override
+    public Optional<String> loadPolicyState(String providerId, UUID subjectId) throws SQLException {
+        validatePolicyProviderId(providerId);
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT state_value FROM economy_policy_state WHERE provider_id=? AND subject_id=?")) {
+            ps.setString(1, providerId);
+            ps.setString(2, subjectId.toString());
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.of(rs.getString(1)) : Optional.empty();
+            }
+        }
+    }
+
+    @Override
+    public void savePolicyState(String providerId, UUID subjectId, String state) throws SQLException {
+        validatePolicyProviderId(providerId);
+        if (state == null || state.length() > 512) {
+            throw new IllegalArgumentException("policy state must contain at most 512 characters");
+        }
+        try (Connection conn = dataSource.getConnection()) {
+            long now = databaseTimeMillis(conn);
+            int updated;
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "UPDATE economy_policy_state SET state_value=?,updated_at=? "
+                            + "WHERE provider_id=? AND subject_id=?")) {
+                ps.setString(1, state);
+                ps.setLong(2, now);
+                ps.setString(3, providerId);
+                ps.setString(4, subjectId.toString());
+                updated = ps.executeUpdate();
+            }
+            if (updated == 0) {
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "INSERT INTO economy_policy_state(provider_id,subject_id,state_value,updated_at) "
+                                + "VALUES(?,?,?,?)")) {
+                    ps.setString(1, providerId);
+                    ps.setString(2, subjectId.toString());
+                    ps.setString(3, state);
+                    ps.setLong(4, now);
+                    ps.executeUpdate();
+                } catch (SQLException race) {
+                    if (!isConstraintViolation(race)) throw race;
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "UPDATE economy_policy_state SET state_value=?,updated_at=? "
+                                    + "WHERE provider_id=? AND subject_id=?")) {
+                        ps.setString(1, state);
+                        ps.setLong(2, now);
+                        ps.setString(3, providerId);
+                        ps.setString(4, subjectId.toString());
+                        ps.executeUpdate();
+                    }
+                }
+            }
+        }
+    }
+
+    @Override
+    public long currentDatabaseTimeMillis() throws SQLException {
+        try (Connection conn = dataSource.getConnection()) {
+            return databaseTimeMillis(conn);
+        }
+    }
+
+    @Override
     public boolean tryAcquireJobLease(String jobId, String runId, String ownerId,
                                       long now, long leaseUntil) throws SQLException {
         try (Connection conn = dataSource.getConnection()) {
             beginAuthoritativeTransaction(conn);
             try {
+                long leaseMs = Math.max(1_000L, leaseUntil - now);
+                now = databaseTimeMillis(conn);
+                leaseUntil = now + leaseMs;
                 try (PreparedStatement select = conn.prepareStatement(
                         "SELECT lease_until,completed FROM economy_cluster_jobs WHERE job_id=? AND run_id=? FOR UPDATE")) {
                     select.setString(1, jobId);
@@ -1237,11 +1397,35 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
     }
 
     @Override
+    public boolean renewJobLease(String jobId, String runId, String ownerId, long leaseMs)
+            throws SQLException {
+        try (Connection conn = dataSource.getConnection()) {
+            long now = databaseTimeMillis(conn);
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "UPDATE economy_cluster_jobs SET lease_until=? WHERE job_id=? AND run_id=? "
+                            + "AND lease_owner=? AND completed=? AND lease_until>=?")) {
+                ps.setLong(1, now + Math.max(1_000L, leaseMs));
+                ps.setString(2, jobId);
+                ps.setString(3, runId);
+                ps.setString(4, ownerId);
+                ps.setBoolean(5, false);
+                ps.setLong(6, now);
+                return ps.executeUpdate() == 1;
+            }
+        }
+    }
+
+    @Override
     public void completeJobLease(String jobId, String runId, String ownerId) throws SQLException {
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(
-                     "UPDATE economy_cluster_jobs SET completed=? WHERE job_id=? AND run_id=? AND lease_owner=?")) {
-            ps.setBoolean(1, true); ps.setString(2, jobId); ps.setString(3, runId); ps.setString(4, ownerId);
+                     "UPDATE economy_cluster_jobs SET completed=?,completed_at=? "
+                             + "WHERE job_id=? AND run_id=? AND lease_owner=?")) {
+            ps.setBoolean(1, true);
+            ps.setLong(2, databaseTimeMillis(conn));
+            ps.setString(3, jobId);
+            ps.setString(4, runId);
+            ps.setString(5, ownerId);
             ps.executeUpdate();
         }
     }
@@ -1399,7 +1583,7 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                 "INSERT INTO economy_operations(operation_id,kind,created_at) VALUES(?,?,?)")) {
             ps.setString(1, operationId.toString());
             ps.setString(2, kind);
-            ps.setLong(3, timestamp);
+            ps.setLong(3, databaseTimeMillis(conn));
             ps.executeUpdate();
         }
     }
@@ -1413,7 +1597,7 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                 """)) {
             ps.setString(1, request.operationId().toString());
             ps.setString(2, "BALANCE");
-            ps.setLong(3, request.timestamp());
+            ps.setLong(3, databaseTimeMillis(conn));
             ps.setString(4, request.accountId().toString());
             ps.setString(5, request.currencyId());
             ps.setString(6, request.transactionType().name());
@@ -1441,7 +1625,7 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
             ps.setLong(2, version);
             ps.setString(3, kind.name());
             ps.setString(4, operationId.toString());
-            ps.setLong(5, timestamp);
+            ps.setLong(5, databaseTimeMillis(conn));
             ps.executeUpdate();
         }
     }
@@ -1490,16 +1674,32 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
     }
 
     private void insertPolicyUsage(Connection conn, String providerId, UUID subjectId, String currencyId,
-                                   UUID operationId, BigDecimal amount, long timestamp) throws SQLException {
+                                   UUID operationId, BigDecimal amount, long timestamp,
+                                   long expiresAt) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(
-                "INSERT INTO economy_policy_usage(provider_id,subject_id,currency_id,operation_id,amount,occurred_at) VALUES(?,?,?,?,?,?)")) {
+                "INSERT INTO economy_policy_usage(provider_id,subject_id,currency_id,operation_id,amount,occurred_at,expires_at) VALUES(?,?,?,?,?,?,?)")) {
             ps.setString(1, providerId);
             ps.setString(2, subjectId.toString());
             ps.setString(3, currencyId);
             ps.setString(4, operationId.toString());
             ps.setBigDecimal(5, amount);
             ps.setLong(6, timestamp);
+            ps.setLong(7, expiresAt);
             ps.executeUpdate();
+        }
+    }
+
+    private static void validatePolicyProviderId(String providerId) {
+        if (providerId == null || !providerId.matches("[a-z0-9_.-]{1,64}")) {
+            throw new IllegalArgumentException("Invalid policy provider id");
+        }
+    }
+
+    private long databaseTimeMillis(Connection conn) throws SQLException {
+        try (Statement statement = conn.createStatement();
+             ResultSet rs = statement.executeQuery("SELECT CURRENT_TIMESTAMP")) {
+            if (!rs.next()) throw new SQLException("Database did not return CURRENT_TIMESTAMP");
+            return rs.getTimestamp(1).getTime();
         }
     }
 

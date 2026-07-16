@@ -8,6 +8,8 @@ package dev.alexisbinh.openeco.enhancements.exchange;
 import dev.alexisbinh.openeco.api.CurrencyInfo;
 import dev.alexisbinh.openeco.api.ExchangeResult;
 import dev.alexisbinh.openeco.api.OpenEcoApi;
+import dev.alexisbinh.openeco.api.OpenEcoAsyncApi;
+import io.papermc.paper.threadedregions.scheduler.EntityScheduler;
 import net.kyori.adventure.text.Component;
 import org.bukkit.command.Command;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -25,6 +27,7 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -34,6 +37,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doAnswer;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -44,6 +48,8 @@ class ExchangeCommandTest {
     @Mock private Player player;
     @Mock private Command command;
     @Mock private Logger logger;
+    @Mock private OpenEcoAsyncApi asyncApi;
+    @Mock private EntityScheduler entityScheduler;
 
     private YamlConfiguration config;
     private ExchangeCommand subject;
@@ -57,7 +63,13 @@ class ExchangeCommandTest {
         when(plugin.getLogger()).thenReturn(logger);
         when(player.getUniqueId()).thenReturn(playerId);
         when(player.getName()).thenReturn("Alice");
-        subject = new ExchangeCommand(api, plugin);
+        when(player.getScheduler()).thenReturn(entityScheduler);
+        doAnswer(invocation -> {
+            invocation.<java.util.function.Consumer<io.papermc.paper.threadedregions.scheduler.ScheduledTask>>getArgument(1)
+                    .accept(null);
+            return true;
+        }).when(entityScheduler).run(eq(plugin), any(), org.mockito.ArgumentMatchers.isNull());
+        subject = new ExchangeCommand(api, asyncApi, plugin);
     }
 
     @Test
@@ -82,13 +94,14 @@ class ExchangeCommandTest {
     @Test
     void happyPath_executesOneAtomicExchange() {
         setUpBasicCurrencies();
-        when(api.exchange(playerId, "openeco", "gems", new BigDecimal("10.00"), new BigDecimal("100")))
-                .thenReturn(success(new BigDecimal("10.00"), new BigDecimal("100")));
+        when(asyncApi.exchange(playerId, "openeco", "gems", new BigDecimal("10.00"), new BigDecimal("100")))
+                .thenReturn(CompletableFuture.completedFuture(
+                        success(new BigDecimal("10.00"), new BigDecimal("100"))));
         when(api.format(any(), any())).thenReturn("10.00");
 
         subject.onCommand(player, command, "exchange", new String[]{"10", "openeco", "gems"});
 
-        verify(api).exchange(playerId, "openeco", "gems", new BigDecimal("10.00"), new BigDecimal("100"));
+        verify(asyncApi).exchange(playerId, "openeco", "gems", new BigDecimal("10.00"), new BigDecimal("100"));
         verify(api, never()).withdraw(any(), any(), any());
         verify(api, never()).deposit(any(), any(), any());
         verify(player).sendMessage(any(Component.class));
@@ -98,20 +111,21 @@ class ExchangeCommandTest {
     void feePercent_reducesToAmount() {
         config.set("exchange.fee-percent", 10.0);
         setUpBasicCurrencies();
-        when(api.exchange(playerId, "openeco", "gems", new BigDecimal("10.00"), new BigDecimal("90")))
-                .thenReturn(success(new BigDecimal("10.00"), new BigDecimal("90")));
+        when(asyncApi.exchange(playerId, "openeco", "gems", new BigDecimal("10.00"), new BigDecimal("90")))
+                .thenReturn(CompletableFuture.completedFuture(
+                        success(new BigDecimal("10.00"), new BigDecimal("90"))));
         when(api.format(any(), any())).thenReturn("10.00");
 
         subject.onCommand(player, command, "exchange", new String[]{"10", "openeco", "gems"});
 
-        verify(api).exchange(playerId, "openeco", "gems", new BigDecimal("10.00"), new BigDecimal("90"));
+        verify(asyncApi).exchange(playerId, "openeco", "gems", new BigDecimal("10.00"), new BigDecimal("90"));
     }
 
     @Test
     void wrongArgCount_sendsUsageMessage_noMutation() {
         subject.onCommand(player, command, "exchange", new String[]{"10", "openeco"});
         verify(player).sendMessage(any(Component.class));
-        verify(api, never()).exchange(any(), any(), any(), any(), any());
+        verify(asyncApi, never()).exchange(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -140,7 +154,7 @@ class ExchangeCommandTest {
         when(api.hasCurrency("unknown")).thenReturn(false);
         subject.onCommand(player, command, "exchange", new String[]{"10", "unknown", "gems"});
         verify(player).sendMessage(any(Component.class));
-        verify(api, never()).exchange(any(), any(), any(), any(), any());
+        verify(asyncApi, never()).exchange(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -149,7 +163,7 @@ class ExchangeCommandTest {
         when(api.hasCurrency("unknown")).thenReturn(false);
         subject.onCommand(player, command, "exchange", new String[]{"10", "openeco", "unknown"});
         verify(player).sendMessage(any(Component.class));
-        verify(api, never()).exchange(any(), any(), any(), any(), any());
+        verify(asyncApi, never()).exchange(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -157,7 +171,7 @@ class ExchangeCommandTest {
         when(api.hasCurrency("openeco")).thenReturn(true);
         subject.onCommand(player, command, "exchange", new String[]{"10", "openeco", "openeco"});
         verify(player).sendMessage(any(Component.class));
-        verify(api, never()).exchange(any(), any(), any(), any(), any());
+        verify(asyncApi, never()).exchange(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -172,8 +186,9 @@ class ExchangeCommandTest {
     @Test
     void insufficientFunds_isReportedByAtomicOperation() {
         setUpBasicCurrencies();
-        when(api.exchange(eq(playerId), eq("openeco"), eq("gems"), any(), any()))
-                .thenReturn(failed(ExchangeResult.Status.INSUFFICIENT_FUNDS));
+        when(asyncApi.exchange(eq(playerId), eq("openeco"), eq("gems"), any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(
+                        failed(ExchangeResult.Status.INSUFFICIENT_FUNDS)));
 
         subject.onCommand(player, command, "exchange", new String[]{"10", "openeco", "gems"});
 
@@ -185,8 +200,9 @@ class ExchangeCommandTest {
     @Test
     void balanceLimit_isReportedByAtomicOperation() {
         setUpBasicCurrencies();
-        when(api.exchange(eq(playerId), eq("openeco"), eq("gems"), any(), any()))
-                .thenReturn(failed(ExchangeResult.Status.BALANCE_LIMIT));
+        when(asyncApi.exchange(eq(playerId), eq("openeco"), eq("gems"), any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(
+                        failed(ExchangeResult.Status.BALANCE_LIMIT)));
 
         subject.onCommand(player, command, "exchange", new String[]{"10", "openeco", "gems"});
 
@@ -196,8 +212,9 @@ class ExchangeCommandTest {
     @Test
     void storageFailure_hasNoCompensatingMutation() {
         setUpBasicCurrencies();
-        when(api.exchange(eq(playerId), eq("openeco"), eq("gems"), any(), any()))
-                .thenReturn(failed(ExchangeResult.Status.STORAGE_ERROR));
+        when(asyncApi.exchange(eq(playerId), eq("openeco"), eq("gems"), any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(
+                        failed(ExchangeResult.Status.STORAGE_ERROR)));
 
         subject.onCommand(player, command, "exchange", new String[]{"10", "openeco", "gems"});
 

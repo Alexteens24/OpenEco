@@ -234,8 +234,17 @@ Maximum change rows consumed per poll.
 Days to retain consumed cache-invalidation rows. Pruned once per day.
 </ConfigProperty>
 
+<ConfigProperty name="operation-retention-days" value="30" type="number">
+Days to retain durable idempotency results and completed cluster jobs. Retrying an operation key after this window is not supported.
+</ConfigProperty>
+
+<ConfigProperty name="abandoned-job-retention-days" value="30" type="number">
+Days to retain expired, incomplete cluster-job leases before cleanup. Expired rolling-policy usage is pruned according to each row's exact window.
+</ConfigProperty>
+
 <ConfigProperty name="redis.enabled" value="false" type="boolean">
 Use Redis Pub/Sub to wake caches sooner. JDBC polling remains active as the durable fallback.
+Wakeups are coalesced so a high message rate cannot enqueue one scheduler task per mutation.
 </ConfigProperty>
 
 <ConfigProperty name="redis.uri" value="redis://localhost:6379" type="string">

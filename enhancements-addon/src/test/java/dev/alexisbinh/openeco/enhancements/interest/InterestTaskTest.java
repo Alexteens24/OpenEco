@@ -125,6 +125,8 @@ class InterestTaskTest {
     @Test
     void multiWriterRetriesReuseDeterministicPerAccountOperationId() {
         OpenEcoAsyncApi asyncApi = org.mockito.Mockito.mock(OpenEcoAsyncApi.class);
+        when(asyncApi.findAppliedDeposit(any(UUID.class)))
+                .thenReturn(CompletableFuture.completedFuture(java.util.Optional.empty()));
         when(asyncApi.depositOnce(any(UUID.class), eq(accountId), eq("coins"), eq(new BigDecimal("5.00"))))
                 .thenReturn(CompletableFuture.completedFuture(true));
         InterestTask multiWriterTask = new InterestTask(api, plugin, null, asyncApi);
@@ -141,12 +143,34 @@ class InterestTaskTest {
     }
 
     @Test
+    void retryUsesOriginallyAppliedAmountAfterBalanceChanged() {
+        OpenEcoAsyncApi asyncApi = org.mockito.Mockito.mock(OpenEcoAsyncApi.class);
+        when(api.getBalance(accountId)).thenReturn(
+                new BigDecimal("100.00"), new BigDecimal("105.00"));
+        when(asyncApi.findAppliedDeposit(any(UUID.class))).thenReturn(
+                CompletableFuture.completedFuture(java.util.Optional.empty()),
+                CompletableFuture.completedFuture(java.util.Optional.of(
+                        new OpenEcoAsyncApi.AppliedDeposit(accountId, "coins", new BigDecimal("5.00")))));
+        when(asyncApi.depositOnce(any(UUID.class), eq(accountId), eq("coins"), eq(new BigDecimal("5.00"))))
+                .thenReturn(CompletableFuture.completedFuture(true));
+        InterestTask multiWriterTask = new InterestTask(api, plugin, null, asyncApi);
+
+        multiWriterTask.run();
+        multiWriterTask.run();
+
+        verify(asyncApi, org.mockito.Mockito.times(2)).depositOnce(
+                any(UUID.class), eq(accountId), eq("coins"), eq(new BigDecimal("5.00")));
+    }
+
+    @Test
     void failedAccountKeepsLeaseRetryableAndNextAttemptCompletes() {
         UUID retryAccountId = UUID.randomUUID();
         when(api.getUUIDNameMap()).thenReturn(Map.of(accountId, "Alice", retryAccountId, "Bob"));
         when(api.getBalance(retryAccountId)).thenReturn(new BigDecimal("100.00"));
 
         OpenEcoAsyncApi asyncApi = org.mockito.Mockito.mock(OpenEcoAsyncApi.class);
+        when(asyncApi.findAppliedDeposit(any(UUID.class)))
+                .thenReturn(CompletableFuture.completedFuture(java.util.Optional.empty()));
         when(asyncApi.depositOnce(any(UUID.class), eq(accountId), eq("coins"), eq(new BigDecimal("5.00"))))
                 .thenReturn(CompletableFuture.completedFuture(true));
         AtomicInteger retryAttempts = new AtomicInteger();
@@ -158,6 +182,8 @@ class InterestTaskTest {
         ClusterJobCoordinator coordinator = org.mockito.Mockito.mock(ClusterJobCoordinator.class);
         ClusterJobCoordinator.Lease firstLease = org.mockito.Mockito.mock(ClusterJobCoordinator.Lease.class);
         ClusterJobCoordinator.Lease retryLease = org.mockito.Mockito.mock(ClusterJobCoordinator.Lease.class);
+        when(firstLease.renew()).thenReturn(true);
+        when(retryLease.renew()).thenReturn(true);
         when(coordinator.tryAcquire(eq("interest"), any(String.class), org.mockito.ArgumentMatchers.anyLong()))
                 .thenReturn(java.util.Optional.of(firstLease), java.util.Optional.of(retryLease));
         InterestTask multiWriterTask = new InterestTask(api, plugin, coordinator, asyncApi);

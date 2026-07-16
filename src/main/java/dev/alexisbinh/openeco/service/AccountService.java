@@ -20,6 +20,7 @@ import dev.alexisbinh.openeco.api.BalanceCheckResult;
 import dev.alexisbinh.openeco.api.ExchangeResult;
 import dev.alexisbinh.openeco.api.MutationPolicyContext;
 import dev.alexisbinh.openeco.api.OpenEcoApiException;
+import dev.alexisbinh.openeco.api.OpenEcoAsyncApi;
 import dev.alexisbinh.openeco.api.TransferPreviewResult;
 import dev.alexisbinh.openeco.event.AccountCreateEvent;
 import dev.alexisbinh.openeco.event.AccountDeleteEvent;
@@ -797,6 +798,17 @@ public class AccountService {
                 TransactionType.GIVE, BalanceChangeEvent.Reason.GIVE);
     }
 
+    public Optional<OpenEcoAsyncApi.AppliedDeposit> findAppliedDeposit(UUID operationId) {
+        if (multiWriterRepository == null) return Optional.empty();
+        try {
+            return multiWriterRepository.findAppliedBalanceMutation(operationId)
+                    .map(applied -> new OpenEcoAsyncApi.AppliedDeposit(
+                            applied.accountId(), applied.currencyId(), applied.amount()));
+        } catch (SQLException e) {
+            throw new OpenEcoApiException("Failed to load idempotent deposit", e);
+        }
+    }
+
     public EconomyOperationResponse withdraw(UUID id, BigDecimal amount) {
         return withdraw(id, config.currencyId(), amount);
     }
@@ -1038,6 +1050,26 @@ public class AccountService {
         }
     }
 
+    /** Prunes expired idempotency keys, rolling usage, and old cluster-job rows. */
+    public void pruneMultiWriterState(int operationRetentionDays, int abandonedJobRetentionDays) {
+        if (multiWriterRepository == null
+                || operationRetentionDays <= 0 || abandonedJobRetentionDays <= 0) return;
+        long now = System.currentTimeMillis();
+        try {
+            MultiWriterRepository.PruneResult result = multiWriterRepository.pruneMultiWriterState(
+                    now - TimeUnit.DAYS.toMillis(operationRetentionDays),
+                    now - TimeUnit.DAYS.toMillis(abandonedJobRetentionDays));
+            int total = result.operations() + result.policyUsage() + result.clusterJobs();
+            if (total > 0) {
+                log.info("Pruned multi-writer state: " + result.operations() + " operation(s), "
+                        + result.policyUsage() + " policy usage row(s), "
+                        + result.clusterJobs() + " cluster job(s).");
+            }
+        } catch (SQLException e) {
+            log.warning("Failed to prune multi-writer state: " + e.getMessage());
+        }
+    }
+
     // ── Baltop ───────────────────────────────────────────────────────────────
 
     public LeaderboardView getLeaderboardPage(int offset, int limit) {
@@ -1144,6 +1176,12 @@ public class AccountService {
     }
 
     public String getCurrencyId() { return config.currencyId(); }
+
+    public BigDecimal getMinimumPayAmount(String currencyId) {
+        CurrencyDefinition currency = resolveCurrency(currencyId);
+        if (currency == null || config.payMinAmount() == null) return BigDecimal.ZERO;
+        return config.payMinAmount().setScale(currency.fractionalDigits(), RoundingMode.HALF_UP);
+    }
     public String getCurrencySingular() { return config.currencySingular(); }
     public String getCurrencyPlural() { return config.currencyPlural(); }
     public int getFractionalDigits() { return config.fractionalDigits(); }
@@ -1779,6 +1817,7 @@ public class AccountService {
             case BALANCE_LIMIT -> "Balance limit reached";
             case FROZEN -> "Account is frozen";
             case COOLDOWN -> "Pay cooldown active";
+            case IDEMPOTENCY_CONFLICT -> "Operation ID payload conflict";
             default -> "Storage unavailable";
         };
     }

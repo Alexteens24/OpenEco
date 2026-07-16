@@ -40,6 +40,7 @@ In `multi-writer` mode, the shared database is authoritative. Mutations lock aff
 
 Redis Pub/Sub is optional and never authoritative. A dropped Redis message is repaired by JDBC polling.
 Polling acknowledges its durable change cursor only after the complete batch has loaded and every authoritative cache update has applied. Temporary database failures or cache identity conflicts therefore retry the same batch instead of silently skipping it.
+Redis wakeups are coalesced, while the periodic JDBC poll remains the recovery path.
 
 In legacy `handoff` mode:
 
@@ -58,7 +59,11 @@ Handoff does not allow safe simultaneous writers.
 ## Scaling notes
 
 - Multi-writer deployments can mutate one account from multiple backends; database contention becomes the scaling limit.
-- Enhancement permission policies read region-thread snapshots, and interest uses deterministic per-run/per-account operation IDs so partial runs can be retried without double-paying completed accounts.
+- Enhancement permission policies capture permissions on region threads, persist the resulting UUID state in JDBC, and fail closed when authoritative state is missing. A backend can therefore enforce a recipient cap even when that player is on another server.
+- Interest uses deterministic per-run/per-account operation IDs, reloads the originally committed amount on retry, and renews its database-time lease while scanning accounts.
+- Cooldowns, rolling windows, cluster leases, and interest run buckets use database time, avoiding backend clock-skew differences.
+- Built-in `/pay` and `/exchange` mutations use the async API and return results on entity schedulers.
+- Idempotency operations, expired rolling usage, and old completed/abandoned cluster jobs are pruned daily according to the configured retention.
 - Large account counts increase eager startup load time and leaderboard work. Lazy mode trades cold-read latency and database work for bounded retained heap.
 - `/pay`, `/baltop`, and name tab-complete are the most visible features under account-count growth.
 - Large history volumes can dominate file size before account rows do.

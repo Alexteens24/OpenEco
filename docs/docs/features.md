@@ -54,7 +54,7 @@ Imports balances from EssentialsX, CMI, LiteEco, XConomy, BOSEconomy, TheNewEcon
 
 ### OpenEcoEnhancements
 
-Adds interest payouts, pay limits, permission-based balance caps, and `/exchange` for currency conversion. In multi-writer mode, permission policies consume region-safe player snapshots and interest payouts use idempotent operation IDs for safe retry after partial runs.
+Adds interest payouts, pay limits, permission-based balance caps, and `/exchange` for currency conversion. In multi-writer mode, permission snapshots are captured region-safely and persisted by UUID for network-wide enforcement; interest payouts use idempotent operation IDs, stable retry amounts, and renewable database leases.
 
 ### OpenEco Proxy (Velocity)
 

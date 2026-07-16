@@ -13,6 +13,8 @@ import java.util.concurrent.CompletionStage;
 /** Non-blocking facade for operations that can perform remote storage I/O. */
 public interface OpenEcoAsyncApi {
 
+    record AppliedDeposit(UUID accountId, String currencyId, BigDecimal amount) {}
+
     CompletionStage<Optional<AccountSnapshot>> getFreshAccount(UUID accountId);
 
     CompletionStage<BigDecimal> getFreshBalance(UUID accountId, String currencyId);
@@ -30,6 +32,12 @@ public interface OpenEcoAsyncApi {
             UUID operationId, UUID accountId, String currencyId, BigDecimal amount) {
         return CompletableFuture.failedFuture(
                 new UnsupportedOperationException("Idempotent deposits are not supported"));
+    }
+
+    /** Looks up the original payload of a previously committed idempotent deposit. */
+    default CompletionStage<Optional<AppliedDeposit>> findAppliedDeposit(UUID operationId) {
+        return CompletableFuture.failedFuture(
+                new UnsupportedOperationException("Idempotent deposit lookup is not supported"));
     }
 
     CompletionStage<BalanceChangeResult> withdraw(UUID accountId, String currencyId, BigDecimal amount);

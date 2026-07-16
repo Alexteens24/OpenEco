@@ -22,6 +22,7 @@ import dev.alexisbinh.openeco.api.OpenEcoAsyncApi;
 import dev.alexisbinh.openeco.api.OpenEcoAsyncApiImpl;
 import dev.alexisbinh.openeco.api.EconomyPolicyRegistry;
 import dev.alexisbinh.openeco.api.ClusterJobCoordinator;
+import dev.alexisbinh.openeco.api.NetworkPolicyStateStore;
 import dev.alexisbinh.openeco.command.*;
 import dev.alexisbinh.openeco.crossserver.CrossServerMessenger;
 import dev.alexisbinh.openeco.crossserver.RedisChangeBus;
@@ -30,6 +31,7 @@ import dev.alexisbinh.openeco.economy.OpenEcoLegacyEconomyProvider;
 import dev.alexisbinh.openeco.listener.PlayerConnectionListener;
 import dev.alexisbinh.openeco.placeholder.OpenEcoPlaceholderExpansion;
 import dev.alexisbinh.openeco.service.AccountService;
+import dev.alexisbinh.openeco.service.NetworkPolicyStateStoreImpl;
 import dev.alexisbinh.openeco.storage.AccountRepository;
 import dev.alexisbinh.openeco.storage.DatabaseDialect;
 import dev.alexisbinh.openeco.storage.JdbcAccountRepository;
@@ -51,6 +53,7 @@ import java.sql.SQLException;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class OpenEcoPlugin extends JavaPlugin {
 
@@ -68,6 +71,9 @@ public class OpenEcoPlugin extends JavaPlugin {
     private ScheduledTask accountCacheMaintenanceTask;
     private BukkitContext fastStatsContext;
     private RedisChangeBus redisChangeBus;
+    private NetworkPolicyStateStoreImpl networkPolicyStateStore;
+    private final AtomicBoolean redisPollScheduled = new AtomicBoolean();
+    private final AtomicBoolean redisPollPending = new AtomicBoolean();
 
     @Override
     public void onEnable() {
@@ -150,6 +156,11 @@ public class OpenEcoPlugin extends JavaPlugin {
                 EconomyPolicyRegistry.class, service.getPolicyRegistry(), this, ServicePriority.Normal);
         getServer().getServicesManager().register(
                 ClusterJobCoordinator.class, service.getClusterJobCoordinator(), this, ServicePriority.Normal);
+        if (service.isMultiWriterEnabled() && repository instanceof dev.alexisbinh.openeco.storage.MultiWriterRepository writer) {
+            networkPolicyStateStore = new NetworkPolicyStateStoreImpl(writer, getName());
+            getServer().getServicesManager().register(
+                    NetworkPolicyStateStore.class, networkPolicyStateStore, this, ServicePriority.Normal);
+        }
         getLogger().info("Registered openeco addon API service.");
 
         // ── VaultUnlocked registration (optional) ─────────────────────────────
@@ -165,7 +176,7 @@ public class OpenEcoPlugin extends JavaPlugin {
         BalTopCommand balTop = new BalTopCommand(this, service, messages);
         getCommand("baltop").setExecutor(balTop);
         getCommand("baltop").setTabCompleter(balTop);
-        PayCommand pay = new PayCommand(this, service, messages);
+        PayCommand pay = new PayCommand(this, service, asyncApi, messages);
         getCommand("pay").setExecutor(pay);
         getCommand("pay").setTabCompleter(pay);
         EcoCommand eco = new EcoCommand(service, this, messages);
@@ -309,6 +320,16 @@ public class OpenEcoPlugin extends JavaPlugin {
             throw new IllegalArgumentException(
                     "cross-server.cache-refresh-interval-ms must be between 50 and 5000");
         }
+        if (getConfig().getBoolean("cross-server.enabled", false)) {
+            if (getConfig().getInt("cross-server.operation-retention-days", 30) <= 0) {
+                throw new IllegalArgumentException(
+                        "cross-server.operation-retention-days must be greater than 0");
+            }
+            if (getConfig().getInt("cross-server.abandoned-job-retention-days", 30) <= 0) {
+                throw new IllegalArgumentException(
+                        "cross-server.abandoned-job-retention-days must be greater than 0");
+            }
+        }
     }
 
     private void restartPruneTask() {
@@ -318,13 +339,17 @@ public class OpenEcoPlugin extends JavaPlugin {
         }
         int retentionDays = getConfig().getInt("history.retention-days", -1);
         int changeRetentionDays = getConfig().getInt("cross-server.change-retention-days", 7);
-        if (retentionDays > 0 || (service != null && service.isMultiWriterEnabled() && changeRetentionDays > 0)) {
+        int operationRetentionDays = getConfig().getInt("cross-server.operation-retention-days", 30);
+        int abandonedJobRetentionDays = getConfig().getInt("cross-server.abandoned-job-retention-days", 30);
+        if (retentionDays > 0 || (service != null && service.isMultiWriterEnabled()
+                && (changeRetentionDays > 0 || operationRetentionDays > 0))) {
             // Run once shortly after enable/reload, then every 24 h.
             historyPruneTask = getServer().getAsyncScheduler().runAtFixedRate(
                     this,
                     task -> {
                         service.pruneHistory();
                         service.pruneMultiWriterChanges(changeRetentionDays);
+                        service.pruneMultiWriterState(operationRetentionDays, abandonedJobRetentionDays);
                     },
                     1,
                     86_400,
@@ -372,13 +397,26 @@ public class OpenEcoPlugin extends JavaPlugin {
         try {
             int batchSize = Math.max(1, getConfig().getInt("cross-server.poll-batch-size", 1_000));
             redisChangeBus = new RedisChangeBus(uri, channel, getLogger(), () ->
-                    getServer().getAsyncScheduler().runNow(this,
-                            task -> service.pollMultiWriterChanges(batchSize)));
+                    scheduleRedisPoll(batchSize));
             service.setChangeNotifier(redisChangeBus);
             getLogger().info("Redis change notifications enabled; JDBC polling remains active.");
         } catch (RuntimeException | LinkageError e) {
             getLogger().warning("Redis notifications unavailable; using JDBC polling: " + e.getMessage());
         }
+    }
+
+    private void scheduleRedisPoll(int batchSize) {
+        redisPollPending.set(true);
+        if (!redisPollScheduled.compareAndSet(false, true)) return;
+        getServer().getAsyncScheduler().runNow(this, task -> {
+            try {
+                redisPollPending.set(false);
+                service.pollMultiWriterChanges(batchSize);
+            } finally {
+                redisPollScheduled.set(false);
+                if (redisPollPending.get()) scheduleRedisPoll(batchSize);
+            }
+        });
     }
 
     private void restartAccountCacheMaintenanceTask() {
@@ -476,6 +514,10 @@ public class OpenEcoPlugin extends JavaPlugin {
             accountCacheMaintenanceTask.cancel();
         }
         getServer().getServicesManager().unregisterAll(this);
+        if (networkPolicyStateStore != null) {
+            networkPolicyStateStore.close();
+            networkPolicyStateStore = null;
+        }
         if (asyncApi != null) {
             asyncApi.close();
         }

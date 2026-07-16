@@ -12,11 +12,44 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 class EnhancementsPolicyProviderTest {
+
+    @Test
+    void loadsRemoteTargetSnapshotWhenPlayerIsOnAnotherBackend() {
+        UUID target = UUID.randomUUID();
+        dev.alexisbinh.openeco.api.NetworkPolicyStateStore store =
+                org.mockito.Mockito.mock(dev.alexisbinh.openeco.api.NetworkPolicyStateStore.class);
+        org.mockito.Mockito.when(store.load("openeco-enhancements", target)).thenReturn(Optional.of("250|0"));
+        var settings = new EnhancementsPolicyProvider.PolicySettings(true, java.util.List.of(), false, null);
+        EnhancementsPolicyProvider provider = new EnhancementsPolicyProvider(settings, Map.of(), store);
+
+        var decision = provider.evaluate(new dev.alexisbinh.openeco.api.MutationPolicyContext(
+                dev.alexisbinh.openeco.api.MutationPolicyContext.Kind.PAY,
+                UUID.randomUUID(), target, "coins", BigDecimal.TEN));
+
+        assertEquals(new BigDecimal("250"), decision.maximumTargetBalance());
+    }
+
+    @Test
+    void missingAuthoritativeTargetSnapshotFailsClosed() {
+        UUID target = UUID.randomUUID();
+        dev.alexisbinh.openeco.api.NetworkPolicyStateStore store =
+                org.mockito.Mockito.mock(dev.alexisbinh.openeco.api.NetworkPolicyStateStore.class);
+        org.mockito.Mockito.when(store.load("openeco-enhancements", target)).thenReturn(Optional.empty());
+        var settings = new EnhancementsPolicyProvider.PolicySettings(true, java.util.List.of(), false, null);
+        EnhancementsPolicyProvider provider = new EnhancementsPolicyProvider(settings, Map.of(), store);
+
+        var decision = provider.evaluate(new dev.alexisbinh.openeco.api.MutationPolicyContext(
+                dev.alexisbinh.openeco.api.MutationPolicyContext.Kind.PAY,
+                UUID.randomUUID(), target, "coins", BigDecimal.TEN));
+
+        org.junit.jupiter.api.Assertions.assertFalse(decision.allowed());
+    }
 
     @Test
     void evaluateReadsImmutablePermissionSnapshotWithoutBukkitObjects() {

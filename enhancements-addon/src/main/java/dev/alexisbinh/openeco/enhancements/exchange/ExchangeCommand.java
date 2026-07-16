@@ -21,6 +21,7 @@ import dev.alexisbinh.openeco.api.BalanceCheckResult;
 import dev.alexisbinh.openeco.api.CurrencyInfo;
 import dev.alexisbinh.openeco.api.ExchangeResult;
 import dev.alexisbinh.openeco.api.OpenEcoApi;
+import dev.alexisbinh.openeco.api.OpenEcoAsyncApi;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.command.Command;
@@ -41,10 +42,12 @@ public class ExchangeCommand implements CommandExecutor, TabCompleter {
 
     private final OpenEcoApi api;
     private final JavaPlugin plugin;
+    private final OpenEcoAsyncApi asyncApi;
     private final MiniMessage mm = MiniMessage.miniMessage();
 
-    public ExchangeCommand(OpenEcoApi api, JavaPlugin plugin) {
+    public ExchangeCommand(OpenEcoApi api, OpenEcoAsyncApi asyncApi, JavaPlugin plugin) {
         this.api = api;
+        this.asyncApi = java.util.Objects.requireNonNull(asyncApi, "asyncApi");
         this.plugin = plugin;
     }
 
@@ -130,7 +133,23 @@ public class ExchangeCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        ExchangeResult exchangeResult = api.exchange(player.getUniqueId(), fromId, toId, scaledAmount, toAmount);
+        asyncApi.exchange(player.getUniqueId(), fromId, toId, scaledAmount, toAmount)
+                .whenComplete((result, error) -> player.getScheduler().run(plugin, task -> {
+                    if (error != null) {
+                        player.sendMessage(mm.deserialize(config.getString(
+                                "exchange.messages.failed", "<red>Exchange failed.")));
+                        return;
+                    }
+                    sendResult(player, config, fromId, toId, fromCurrency, toCurrency,
+                            scaledAmount, toAmount, result);
+                }, null));
+        return true;
+    }
+
+    private void sendResult(Player player, FileConfiguration config, String fromId, String toId,
+                            CurrencyInfo fromCurrency, CurrencyInfo toCurrency,
+                            BigDecimal scaledAmount, BigDecimal toAmount,
+                            ExchangeResult exchangeResult) {
         if (!exchangeResult.isSuccess()) {
             String msg = switch (exchangeResult.status()) {
                 case INSUFFICIENT_FUNDS -> config.getString("exchange.messages.insufficient-funds", "<red>Insufficient funds.");
@@ -139,7 +158,7 @@ public class ExchangeCommand implements CommandExecutor, TabCompleter {
                 default -> config.getString("exchange.messages.failed", "<red>Exchange failed.");
             };
             player.sendMessage(mm.deserialize(msg));
-            return true;
+            return;
         }
 
         String successMsg = config.getString("exchange.messages.success",
@@ -149,7 +168,6 @@ public class ExchangeCommand implements CommandExecutor, TabCompleter {
                 Placeholder.unparsed("from_currency", fromCurrency.pluralName()),
                 Placeholder.unparsed("to_amount", api.format(toAmount, toId)),
                 Placeholder.unparsed("to_currency", toCurrency.pluralName())));
-        return true;
     }
 
     @Override

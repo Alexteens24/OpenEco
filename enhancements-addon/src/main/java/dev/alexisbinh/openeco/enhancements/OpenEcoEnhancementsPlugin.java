@@ -19,6 +19,7 @@ package dev.alexisbinh.openeco.enhancements;
 import dev.alexisbinh.openeco.api.CurrencyInfo;
 import dev.alexisbinh.openeco.api.OpenEcoApi;
 import dev.alexisbinh.openeco.api.OpenEcoAsyncApi;
+import dev.alexisbinh.openeco.api.NetworkPolicyStateStore;
 import dev.alexisbinh.openeco.api.EconomyPolicyRegistry;
 import dev.alexisbinh.openeco.api.ClusterJobCoordinator;
 import dev.alexisbinh.openeco.enhancements.exchange.ExchangeCommand;
@@ -68,27 +69,35 @@ public class OpenEcoEnhancementsPlugin extends JavaPlugin {
         }
         RegisteredServiceProvider<EconomyPolicyRegistry> policyRegistration =
                 getServer().getServicesManager().getRegistration(EconomyPolicyRegistry.class);
+        RegisteredServiceProvider<NetworkPolicyStateStore> stateRegistration =
+                getServer().getServicesManager().getRegistration(NetworkPolicyStateStore.class);
         if (multiWriter && policyRegistration != null) {
-            EnhancementsPolicyProvider.PolicySettings policySettings =
-                    EnhancementsPolicyProvider.settingsFrom(getConfig());
-            EnhancementsPermissionSnapshots permissionSnapshots =
-                    new EnhancementsPermissionSnapshots(policySettings);
-            getServer().getPluginManager().registerEvents(permissionSnapshots, this);
-            policyRegistration.getProvider().register("openeco-enhancements",
-                    new EnhancementsPolicyProvider(policySettings, permissionSnapshots.view()));
-            permissionSnapshotTask = getServer().getGlobalRegionScheduler().runAtFixedRate(
-                    this,
-                    ignored -> getServer().getOnlinePlayers().forEach(player ->
-                            player.getScheduler().run(this,
-                                    task -> permissionSnapshots.refresh(player), null)),
-                    1L,
-                    20L);
-            getLogger().info("Network-wide mutation policies registered.");
+            if (stateRegistration == null) {
+                getLogger().severe("NetworkPolicyStateStore unavailable; multi-writer permission policies disabled.");
+            } else {
+                EnhancementsPolicyProvider.PolicySettings policySettings =
+                        EnhancementsPolicyProvider.settingsFrom(getConfig());
+                EnhancementsPermissionSnapshots permissionSnapshots =
+                        new EnhancementsPermissionSnapshots(
+                                policySettings, stateRegistration.getProvider(), getLogger());
+                getServer().getPluginManager().registerEvents(permissionSnapshots, this);
+                policyRegistration.getProvider().register("openeco-enhancements",
+                        new EnhancementsPolicyProvider(
+                                policySettings, permissionSnapshots.view(), stateRegistration.getProvider()));
+                permissionSnapshotTask = getServer().getGlobalRegionScheduler().runAtFixedRate(
+                        this,
+                        ignored -> getServer().getOnlinePlayers().forEach(player ->
+                                player.getScheduler().run(this,
+                                        task -> permissionSnapshots.refresh(player), null)),
+                        1L,
+                        20L);
+                getLogger().info("Network-wide mutation policies registered.");
+            }
         }
+        RegisteredServiceProvider<OpenEcoAsyncApi> asyncRegistration =
+                getServer().getServicesManager().getRegistration(OpenEcoAsyncApi.class);
+        asyncApi = asyncRegistration == null ? null : asyncRegistration.getProvider();
         if (multiWriter) {
-            RegisteredServiceProvider<OpenEcoAsyncApi> asyncRegistration =
-                    getServer().getServicesManager().getRegistration(OpenEcoAsyncApi.class);
-            asyncApi = asyncRegistration == null ? null : asyncRegistration.getProvider();
             if (asyncApi == null) {
                 getLogger().warning("OpenEcoAsyncApi unavailable; multi-writer interest payouts will be disabled.");
             }
@@ -114,13 +123,17 @@ public class OpenEcoEnhancementsPlugin extends JavaPlugin {
 
         // ── Currency Exchange ─────────────────────────────────────────────────
         if (getConfig().getBoolean("exchange.enabled", false)) {
-            ExchangeCommand exchangeCommand = new ExchangeCommand(api, this);
-            var cmd = getCommand("exchange");
-            if (cmd != null) {
-                cmd.setExecutor(exchangeCommand);
-                cmd.setTabCompleter(exchangeCommand);
+            if (asyncApi == null) {
+                getLogger().warning("Exchange command disabled because OpenEcoAsyncApi is unavailable.");
+            } else {
+                ExchangeCommand exchangeCommand = new ExchangeCommand(api, asyncApi, this);
+                var cmd = getCommand("exchange");
+                if (cmd != null) {
+                    cmd.setExecutor(exchangeCommand);
+                    cmd.setTabCompleter(exchangeCommand);
+                }
+                getLogger().info("Currency exchange enabled.");
             }
-            getLogger().info("Currency exchange enabled.");
         }
 
         getLogger().info("OpenEcoEnhancements enabled.");
@@ -156,8 +169,10 @@ public class OpenEcoEnhancementsPlugin extends JavaPlugin {
             return;
         }
         long intervalMs = intervalSeconds * 1000L;
+        long scheduleNow = multiWriter && clusterJobCoordinator != null
+                ? clusterJobCoordinator.currentTimeMillis() : System.currentTimeMillis();
         long initialDelayMs = multiWriter
-                ? Math.max(1L, intervalMs - Math.floorMod(System.currentTimeMillis(), intervalMs))
+                ? Math.max(1L, intervalMs - Math.floorMod(scheduleNow, intervalMs))
                 : intervalMs;
         long schedulePeriodMs = multiWriter
                 ? InterestTask.retryIntervalMs(intervalMs)

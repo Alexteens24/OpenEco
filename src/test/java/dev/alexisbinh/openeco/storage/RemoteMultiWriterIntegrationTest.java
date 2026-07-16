@@ -76,14 +76,43 @@ class RemoteMultiWriterIntegrationTest {
                     first.mutateBalance(onceRequest).status(), dialect.name());
             assertEquals(MultiWriterRepository.MutationStatus.ALREADY_APPLIED,
                     second.mutateBalance(onceRequest).status(), dialect.name());
+            var conflictingOnceRequest = new MultiWriterRepository.BalanceMutationRequest(
+                    once, accountId, "coins", MultiWriterRepository.BalanceMutationKind.DEPOSIT,
+                    new BigDecimal("2"), null, TransactionType.GIVE, now + 12, "interest", null);
+            assertEquals(MultiWriterRepository.MutationStatus.IDEMPOTENCY_CONFLICT,
+                    second.mutateBalance(conflictingOnceRequest).status(), dialect.name());
             assertEquals(accountId,
                     first.findAppliedBalanceMutation(once).orElseThrow().accountId(), dialect.name());
             assertTrue(first.loadAccounts(List.of(accountId, UUID.randomUUID())).get(accountId).isPresent(),
                     dialect.name());
 
+            UUID raceAccount = UUID.randomUUID();
+            first.createAccount(UUID.randomUUID(), raceAccount, prefix + "Race",
+                    Map.of("coins", BigDecimal.ZERO), "coins", now + 13);
+            UUID racedOperation = UUID.randomUUID();
+            try (var executor = Executors.newFixedThreadPool(2)) {
+                var raced = executor.invokeAll(List.<Callable<MultiWriterRepository.MutationStatus>>of(
+                        () -> first.mutateBalance(new MultiWriterRepository.BalanceMutationRequest(
+                                racedOperation, accountId, "coins",
+                                MultiWriterRepository.BalanceMutationKind.DEPOSIT,
+                                BigDecimal.ONE, null, TransactionType.GIVE,
+                                now + 13, "race", null)).status(),
+                        () -> second.mutateBalance(new MultiWriterRepository.BalanceMutationRequest(
+                                racedOperation, raceAccount, "coins",
+                                MultiWriterRepository.BalanceMutationKind.DEPOSIT,
+                                new BigDecimal("2"), null, TransactionType.GIVE,
+                                now + 13, "race", null)).status())).stream().map(future -> {
+                    try { return future.get(); }
+                    catch (Exception e) { throw new RuntimeException(e); }
+                }).toList();
+                assertTrue(raced.contains(MultiWriterRepository.MutationStatus.SUCCESS), dialect.name());
+                assertTrue(raced.contains(
+                        MultiWriterRepository.MutationStatus.IDEMPOTENCY_CONFLICT), dialect.name());
+            }
+
             UUID recipient = UUID.randomUUID();
             first.createAccount(UUID.randomUUID(), recipient, prefix + "Recv",
-                    Map.of("coins", BigDecimal.ZERO), "coins", now + 13);
+                    Map.of("coins", BigDecimal.ZERO), "coins", now + 14);
             var constraints = List.of(
                     new MultiWriterRepository.RollingPolicyConstraint(
                             "remote-strict", BigDecimal.ONE, 60_000L),
@@ -93,14 +122,25 @@ class RemoteMultiWriterIntegrationTest {
                     first.transfer(new MultiWriterRepository.TransferMutationRequest(
                             UUID.randomUUID(), accountId, recipient, "coins",
                             BigDecimal.ONE, BigDecimal.ONE, BigDecimal.ZERO,
-                            null, 0L, false, constraints, now + 14)).status(), dialect.name());
+                            null, 0L, false, constraints, now + 15)).status(), dialect.name());
 
             String runId = UUID.randomUUID().toString();
             assertTrue(first.tryAcquireJobLease("remote-test", runId, "writer-a",
                     now, now + 5_000), dialect.name());
+            assertTrue(first.renewJobLease("remote-test", runId, "writer-a", 5_000), dialect.name());
             assertEquals(false, second.tryAcquireJobLease("remote-test", runId, "writer-b",
                     now + 1, now + 5_001), dialect.name());
             first.completeJobLease("remote-test", runId, "writer-a");
+
+            first.savePolicyState("openeco-enhancements", accountId, "250|0");
+            assertEquals("250|0", second.loadPolicyState(
+                    "openeco-enhancements", accountId).orElseThrow(), dialect.name());
+            assertTrue(first.currentDatabaseTimeMillis() > 0L, dialect.name());
+            MultiWriterRepository.PruneResult nothingExpired =
+                    first.pruneMultiWriterState(0L, 0L);
+            assertEquals(0, nothingExpired.operations(), dialect.name());
+            assertEquals(0, nothingExpired.policyUsage(), dialect.name());
+            assertEquals(0, nothingExpired.clusterJobs(), dialect.name());
         }
     }
 

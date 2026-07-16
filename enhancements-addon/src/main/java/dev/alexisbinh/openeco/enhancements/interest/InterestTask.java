@@ -65,21 +65,23 @@ public class InterestTask implements Runnable {
     public void run() {
         long intervalSeconds = plugin.getConfig().getLong("interest.interval-seconds", 3600L);
         long intervalMs = Math.max(1_000L, intervalSeconds * 1_000L);
-        String runId = Long.toString(System.currentTimeMillis() / intervalMs);
+        long authoritativeNow = coordinator == null
+                ? System.currentTimeMillis() : coordinator.currentTimeMillis();
+        String runId = Long.toString(authoritativeNow / intervalMs);
         java.util.Optional<ClusterJobCoordinator.Lease> acquired = coordinator == null
                 ? java.util.Optional.empty() : coordinator.tryAcquire("interest", runId,
                 retryIntervalMs(intervalMs));
         if (coordinator != null && acquired.isEmpty()) return;
         if (asyncApi != null) {
             try {
-                runInterestCycle(null, runId);
+                runInterestCycle(null, runId, acquired.orElse(null));
                 acquired.ifPresent(ClusterJobCoordinator.Lease::complete);
             } catch (RuntimeException e) {
                 log.warning("[Interest] Cycle failed; lease will expire for retry: " + e.getMessage());
             }
         } else {
             plugin.getServer().getGlobalRegionScheduler().run(plugin, task -> {
-                runInterestCycle(task, runId);
+                runInterestCycle(task, runId, acquired.orElse(null));
                 acquired.ifPresent(ClusterJobCoordinator.Lease::complete);
             });
         }
@@ -89,7 +91,8 @@ public class InterestTask implements Runnable {
         return Math.max(1_000L, Math.min(60_000L, Math.max(1L, intervalMs / 4L)));
     }
 
-    private void runInterestCycle(ScheduledTask task, String runId) {
+    private void runInterestCycle(ScheduledTask task, String runId,
+                                  ClusterJobCoordinator.Lease lease) {
         FileConfiguration config = plugin.getConfig();
         double rate = config.getDouble("interest.rate", 5.0);
         long intervalSeconds = config.getLong("interest.interval-seconds", 3600);
@@ -120,6 +123,9 @@ public class InterestTask implements Runnable {
         Map<UUID, String> accounts = api.getUUIDNameMap();
         for (UUID id : accounts.keySet()) {
             try {
+                if (lease != null && !lease.renew()) {
+                    throw new IllegalStateException("Cluster job lease ownership was lost");
+                }
                 credited += processAccount(id, currencyId, explicitCurrency, factor,
                         minBalance, maxPerInterval, fractionalDigits, runId) ? 1 : 0;
             } catch (Exception e) {
@@ -141,6 +147,24 @@ public class InterestTask implements Runnable {
 
     private boolean processAccount(UUID id, String currencyId, boolean explicitCurrency, BigDecimal factor, BigDecimal minBalance,
                                    BigDecimal maxPerInterval, int fractionalDigits, String runId) {
+        UUID operationId = asyncApi == null ? null : UUID.nameUUIDFromBytes(
+                ("openeco:interest:" + runId + ':' + id + ':' + currencyId)
+                        .getBytes(StandardCharsets.UTF_8));
+        if (asyncApi != null) {
+            java.util.Optional<OpenEcoAsyncApi.AppliedDeposit> previous =
+                    asyncApi.findAppliedDeposit(operationId).toCompletableFuture().join();
+            if (previous.isPresent()) {
+                OpenEcoAsyncApi.AppliedDeposit applied = previous.get();
+                if (!applied.accountId().equals(id)
+                        || !applied.currencyId().equalsIgnoreCase(currencyId)) {
+                    throw new IllegalStateException("Interest operation ID payload conflict");
+                }
+                boolean repeated = asyncApi.depositOnce(
+                        operationId, id, currencyId, applied.amount()).toCompletableFuture().join();
+                if (!repeated) throw new IllegalStateException("Idempotent interest retry was rejected");
+                return true;
+            }
+        }
         BigDecimal balance = explicitCurrency ? api.getBalance(id, currencyId) : api.getBalance(id);
         if (balance.compareTo(minBalance) < 0) return false;
 
@@ -154,9 +178,6 @@ public class InterestTask implements Runnable {
         }
 
         if (asyncApi != null) {
-            UUID operationId = UUID.nameUUIDFromBytes(
-                    ("openeco:interest:" + runId + ':' + id + ':' + currencyId)
-                            .getBytes(StandardCharsets.UTF_8));
             boolean applied = asyncApi.depositOnce(operationId, id, currencyId, interest)
                     .toCompletableFuture().join();
             if (!applied) throw new IllegalStateException("Idempotent interest deposit was rejected");

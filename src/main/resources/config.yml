@@ -138,6 +138,10 @@ cross-server:
   cache-refresh-interval-ms: 250
   poll-batch-size: 1000
   change-retention-days: 7
+  # Durable idempotency results are retained for safe retries, then pruned.
+  operation-retention-days: 30
+  # Completed or abandoned cluster job rows older than this are pruned.
+  abandoned-job-retention-days: 30
   redis:
     enabled: false
     uri: "redis://localhost:6379"

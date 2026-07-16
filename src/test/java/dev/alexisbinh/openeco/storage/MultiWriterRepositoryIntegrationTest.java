@@ -136,6 +136,97 @@ class MultiWriterRepositoryIntegrationTest {
     }
 
     @Test
+    void sameOperationIdWithDifferentPayloadIsRejectedInsideTransaction() throws Exception {
+        try (JdbcAccountRepository first = repository("idempotency-payload-race");
+             JdbcAccountRepository second = repository("idempotency-payload-race")) {
+            UUID accountId = UUID.randomUUID();
+            UUID otherAccountId = UUID.randomUUID();
+            UUID operationId = UUID.randomUUID();
+            long now = System.currentTimeMillis();
+            first.createAccount(UUID.randomUUID(), accountId, "Alice",
+                    Map.of("coins", BigDecimal.ZERO), "coins", now);
+            first.createAccount(UUID.randomUUID(), otherAccountId, "Bob",
+                    Map.of("coins", BigDecimal.ZERO), "coins", now);
+            var five = new MultiWriterRepository.BalanceMutationRequest(
+                    operationId, otherAccountId, "coins", MultiWriterRepository.BalanceMutationKind.DEPOSIT,
+                    new BigDecimal("5"), null, TransactionType.GIVE, now, "test", null);
+            var six = new MultiWriterRepository.BalanceMutationRequest(
+                    operationId, accountId, "coins", MultiWriterRepository.BalanceMutationKind.DEPOSIT,
+                    new BigDecimal("6"), null, TransactionType.GIVE, now, "test", null);
+
+            try (var executor = Executors.newFixedThreadPool(2)) {
+                var results = executor.invokeAll(java.util.List.<Callable<MultiWriterRepository.MutationStatus>>of(
+                        () -> first.mutateBalance(five).status(),
+                        () -> second.mutateBalance(six).status())).stream().map(future -> {
+                    try { return future.get(); }
+                    catch (Exception e) { throw new RuntimeException(e); }
+                }).toList();
+                assertTrue(results.contains(MultiWriterRepository.MutationStatus.SUCCESS));
+                assertTrue(results.contains(MultiWriterRepository.MutationStatus.IDEMPOTENCY_CONFLICT));
+            }
+        }
+    }
+
+    @Test
+    void networkPolicyStateRoundTripsThroughDatabase() throws Exception {
+        try (JdbcAccountRepository repository = repository("network-policy-state")) {
+            UUID subject = UUID.randomUUID();
+            long now = System.currentTimeMillis();
+            repository.createAccount(UUID.randomUUID(), subject, "Alice",
+                    Map.of("coins", BigDecimal.ZERO), "coins", now);
+            assertTrue(repository.loadPolicyState("openeco-enhancements", subject).isEmpty());
+            repository.savePolicyState("openeco-enhancements", subject, "250|0");
+            assertEquals("250|0", repository.loadPolicyState("openeco-enhancements", subject).orElseThrow());
+            repository.savePolicyState("openeco-enhancements", subject, "500|1");
+            assertEquals("500|1", repository.loadPolicyState("openeco-enhancements", subject).orElseThrow());
+            repository.deleteAccount(UUID.randomUUID(), subject, now + 1);
+            assertTrue(repository.loadPolicyState("openeco-enhancements", subject).isEmpty());
+        }
+    }
+
+    @Test
+    void existingAccountCreateWorksWithSingleConnectionPool() throws Exception {
+        try (JdbcAccountRepository repository = repository("single-connection-create")) {
+            UUID accountId = UUID.randomUUID();
+            long now = System.currentTimeMillis();
+            assertEquals(MultiWriterRepository.MutationStatus.SUCCESS,
+                    repository.createAccount(UUID.randomUUID(), accountId, "Alice",
+                            Map.of("coins", BigDecimal.ZERO), "coins", now).status());
+            org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
+                    java.time.Duration.ofSeconds(2), () -> assertEquals(
+                            MultiWriterRepository.MutationStatus.ALREADY_EXISTS,
+                            repository.createAccount(UUID.randomUUID(), accountId, "Alice",
+                                    Map.of("coins", BigDecimal.ZERO), "coins", now + 1).status()));
+        }
+    }
+
+    @Test
+    void expiredMultiWriterStateIsPruned() throws Exception {
+        try (JdbcAccountRepository repository = repository("multi-writer-state-prune")) {
+            UUID sender = UUID.randomUUID();
+            UUID recipient = UUID.randomUUID();
+            long old = 1L;
+            repository.createAccount(UUID.randomUUID(), sender, "Sender",
+                    Map.of("coins", BigDecimal.TEN), "coins", old);
+            repository.createAccount(UUID.randomUUID(), recipient, "Recipient",
+                    Map.of("coins", BigDecimal.ZERO), "coins", old);
+            repository.transfer(transferRequest(sender, recipient, BigDecimal.ONE,
+                    old, 0L, false, "short-window", BigDecimal.TEN, 1L));
+            assertTrue(repository.tryAcquireJobLease(
+                    "interest", "old-run", "server-a", old, old + 5_000));
+            repository.completeJobLease("interest", "old-run", "server-a");
+            Thread.sleep(5L);
+
+            MultiWriterRepository.PruneResult result = repository.pruneMultiWriterState(
+                    Long.MAX_VALUE, Long.MAX_VALUE);
+
+            assertTrue(result.operations() >= 3);
+            assertEquals(1, result.policyUsage());
+            assertEquals(1, result.clusterJobs());
+        }
+    }
+
+    @Test
     void concurrentTransfersCannotSpendTheSameBalanceTwice() throws Exception {
         try (JdbcAccountRepository first = repository("transfers");
              JdbcAccountRepository second = repository("transfers")) {
@@ -177,15 +268,16 @@ class MultiWriterRepositoryIntegrationTest {
                     first.transfer(transferRequest(sender, recipient, new BigDecimal("10"), now,
                             5_000L, true, "daily-pay", new BigDecimal("25"), 60_000L)).status());
             assertEquals(MultiWriterRepository.MutationStatus.COOLDOWN,
-                    second.transfer(transferRequest(sender, recipient, BigDecimal.ONE, now + 1,
+                    second.transfer(transferRequest(sender, recipient, BigDecimal.ONE,
+                            now + java.util.concurrent.TimeUnit.DAYS.toMillis(365),
                             5_000L, true, "daily-pay", new BigDecimal("25"), 60_000L)).status());
 
             assertEquals(MultiWriterRepository.MutationStatus.SUCCESS,
                     second.transfer(transferRequest(sender, recipient, new BigDecimal("10"), now + 5_001,
-                            5_000L, true, "daily-pay", new BigDecimal("25"), 60_000L)).status());
+                            0L, false, "daily-pay", new BigDecimal("25"), 60_000L)).status());
             assertEquals(MultiWriterRepository.MutationStatus.POLICY_REJECTED,
                     first.transfer(transferRequest(sender, recipient, new BigDecimal("6"), now + 10_002,
-                            5_000L, true, "daily-pay", new BigDecimal("25"), 60_000L)).status());
+                            0L, false, "daily-pay", new BigDecimal("25"), 60_000L)).status());
         }
     }
 
@@ -254,6 +346,7 @@ class MultiWriterRepositoryIntegrationTest {
             assertEquals(false, second.tryAcquireJobLease("interest", "run-1", "server-b", now + 10_000, now + 15_000));
 
             assertTrue(first.tryAcquireJobLease("interest", "run-2", "server-a", now, now + 1));
+            Thread.sleep(1_100L);
             assertTrue(second.tryAcquireJobLease("interest", "run-2", "server-b", now + 2, now + 5_000));
         }
     }

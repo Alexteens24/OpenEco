@@ -7,6 +7,7 @@ package dev.alexisbinh.openeco.enhancements;
 import dev.alexisbinh.openeco.api.EconomyMutationPolicyProvider;
 import dev.alexisbinh.openeco.api.MutationPolicyContext;
 import dev.alexisbinh.openeco.api.MutationPolicyDecision;
+import dev.alexisbinh.openeco.api.NetworkPolicyStateStore;
 import org.bukkit.configuration.file.FileConfiguration;
 
 import java.math.BigDecimal;
@@ -30,32 +31,63 @@ final class EnhancementsPolicyProvider implements EconomyMutationPolicyProvider 
 
     private final PolicySettings settings;
     private final Map<UUID, PlayerPolicySnapshot> playerSnapshots;
+    private final NetworkPolicyStateStore networkState;
 
     EnhancementsPolicyProvider(PolicySettings settings, Map<UUID, PlayerPolicySnapshot> playerSnapshots) {
+        this(settings, playerSnapshots, null);
+    }
+
+    EnhancementsPolicyProvider(PolicySettings settings, Map<UUID, PlayerPolicySnapshot> playerSnapshots,
+                               NetworkPolicyStateStore networkState) {
         this.settings = settings;
         this.playerSnapshots = playerSnapshots;
+        this.networkState = networkState;
     }
 
     @Override
     public MutationPolicyDecision evaluate(MutationPolicyContext context) {
-        BigDecimal cap = permissionCap(context);
+        PlayerPolicySnapshot targetSnapshot = permissionSnapshotRequired(context)
+                ? snapshot(context.targetId()) : null;
+        if (permissionSnapshotRequired(context) && targetSnapshot == null) {
+            return new MutationPolicyDecision(false,
+                    "Authoritative permission snapshot unavailable", null, null);
+        }
+        BigDecimal cap = targetSnapshot == null ? null : targetSnapshot.maximumBalance();
         MutationPolicyDecision.RollingLimit rolling = payLimit(context);
         return new MutationPolicyDecision(true, null, cap, rolling);
     }
 
-    private BigDecimal permissionCap(MutationPolicyContext context) {
-        if (!settings.permCapEnabled()) return null;
-        if (context.kind() == MutationPolicyContext.Kind.WITHDRAW) return null;
-        PlayerPolicySnapshot snapshot = playerSnapshots.get(context.targetId());
-        return snapshot == null ? null : snapshot.maximumBalance();
+    private boolean permissionSnapshotRequired(MutationPolicyContext context) {
+        return settings.permCapEnabled()
+                && context.kind() != MutationPolicyContext.Kind.WITHDRAW;
     }
 
     private MutationPolicyDecision.RollingLimit payLimit(MutationPolicyContext context) {
         if (context.kind() != MutationPolicyContext.Kind.PAY
                 || !settings.payLimitEnabled() || settings.payLimit() == null
                 || context.sourceId() == null) return null;
-        PlayerPolicySnapshot snapshot = playerSnapshots.get(context.sourceId());
+        PlayerPolicySnapshot snapshot = snapshot(context.sourceId());
         return snapshot != null && snapshot.payLimitBypass() ? null : settings.payLimit();
+    }
+
+    private PlayerPolicySnapshot snapshot(UUID subjectId) {
+        PlayerPolicySnapshot local = playerSnapshots.get(subjectId);
+        if (local != null || networkState == null) return local;
+        return networkState.load("openeco-enhancements", subjectId)
+                .map(EnhancementsPolicyProvider::decodeSnapshot)
+                .orElse(null);
+    }
+
+    static String encodeSnapshot(PlayerPolicySnapshot snapshot) {
+        return (snapshot.maximumBalance() == null ? "" : snapshot.maximumBalance().toPlainString())
+                + '|' + (snapshot.payLimitBypass() ? '1' : '0');
+    }
+
+    static PlayerPolicySnapshot decodeSnapshot(String encoded) {
+        String[] parts = encoded.split("\\|", -1);
+        if (parts.length != 2) throw new IllegalArgumentException("Invalid policy snapshot");
+        BigDecimal cap = parts[0].isBlank() ? null : new BigDecimal(parts[0]);
+        return new PlayerPolicySnapshot(cap, "1".equals(parts[1]));
     }
 
     static PolicySettings settingsFrom(FileConfiguration config) {

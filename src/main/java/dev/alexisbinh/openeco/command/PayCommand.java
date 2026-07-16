@@ -17,7 +17,8 @@
 package dev.alexisbinh.openeco.command;
 
 import dev.alexisbinh.openeco.Messages;
-import dev.alexisbinh.openeco.model.PayResult;
+import dev.alexisbinh.openeco.api.OpenEcoAsyncApi;
+import dev.alexisbinh.openeco.api.TransferResult;
 import dev.alexisbinh.openeco.service.AccountService;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.command.Command;
@@ -37,14 +38,12 @@ public class PayCommand implements CommandExecutor, TabCompleter {
     private final AccountService service;
     private final Messages messages;
     private final JavaPlugin plugin;
+    private final OpenEcoAsyncApi asyncApi;
 
-    public PayCommand(AccountService service, Messages messages) {
-        this(null, service, messages);
-    }
-
-    public PayCommand(JavaPlugin plugin, AccountService service, Messages messages) {
+    public PayCommand(JavaPlugin plugin, AccountService service, OpenEcoAsyncApi asyncApi, Messages messages) {
         this.plugin = plugin;
         this.service = service;
+        this.asyncApi = java.util.Objects.requireNonNull(asyncApi, "asyncApi");
         this.messages = messages;
     }
 
@@ -104,44 +103,56 @@ public class PayCommand implements CommandExecutor, TabCompleter {
             }
         }
 
-        PayResult result = service.pay(payer.getUniqueId(), target.getId(), currencyId, amount);
-        switch (result.getStatus()) {
-            case UNKNOWN_CURRENCY    -> messages.send(payer, "unknown-currency");
-            case INVALID_AMOUNT      -> messages.send(payer, "invalid-amount");
-            case SELF_TRANSFER      -> messages.send(payer, "self-pay");
+        String resolvedCurrencyId = currencyId;
+        asyncApi.transfer(payer.getUniqueId(), target.getId(), resolvedCurrencyId, amount)
+                .whenComplete((result, error) -> payer.getScheduler().run(plugin, task -> {
+                    if (error != null) {
+                        messages.send(payer, "storage-error");
+                        return;
+                    }
+                    handleAsyncResult(payer, target.getId(), target.getLastKnownName(),
+                            resolvedCurrencyId, result);
+                }, null));
+        return true;
+    }
+
+    private void handleAsyncResult(Player payer, java.util.UUID targetId, String targetName,
+                                   String currencyId, TransferResult result) {
+        switch (result.status()) {
+            case UNKNOWN_CURRENCY -> messages.send(payer, "unknown-currency");
+            case INVALID_AMOUNT -> messages.send(payer, "invalid-amount");
+            case SELF_TRANSFER -> messages.send(payer, "self-pay");
             case INSUFFICIENT_FUNDS -> messages.send(payer, "insufficient-funds");
-            case TOO_LOW            -> messages.send(payer, "pay-too-low",
-                Placeholder.unparsed("min", service.format(result.getMinimumAmount(), currencyId)));
-            case CANCELLED          -> messages.send(payer, "pay-cancelled");
-            case BALANCE_LIMIT      -> messages.send(payer, "pay-balance-limit",
-                    Placeholder.unparsed("player", target.getLastKnownName()));
-            case ACCOUNT_NOT_FOUND  -> messages.send(payer, "account-not-found",
-                    Placeholder.unparsed("player", target.getLastKnownName()));
-            case FROZEN             -> messages.send(payer, "account-frozen");
-            case STORAGE_ERROR      -> messages.send(payer, "storage-error");
-            case POLICY_REJECTED    -> messages.send(payer, "pay-policy-rejected");
-            case COOLDOWN -> {
-                long secs = (result.getCooldownRemainingMs() + 999) / 1000;
-                messages.send(payer, "pay-cooldown",
-                        Placeholder.unparsed("seconds", String.valueOf(secs)));
-            }
+            case TOO_LOW -> messages.send(payer, "pay-too-low",
+                    Placeholder.unparsed("min", service.format(
+                            service.getMinimumPayAmount(currencyId), currencyId)));
+            case CANCELLED -> messages.send(payer, "pay-cancelled");
+            case BALANCE_LIMIT -> messages.send(payer, "pay-balance-limit",
+                    Placeholder.unparsed("player", targetName));
+            case ACCOUNT_NOT_FOUND -> messages.send(payer, "account-not-found",
+                    Placeholder.unparsed("player", targetName));
+            case FROZEN -> messages.send(payer, "account-frozen");
+            case STORAGE_ERROR -> messages.send(payer, "storage-error");
+            case POLICY_REJECTED -> messages.send(payer, "pay-policy-rejected");
+            case COOLDOWN -> messages.send(payer, "pay-cooldown",
+                    Placeholder.unparsed("seconds", String.valueOf(
+                            (result.cooldownRemainingMs() + 999) / 1000)));
             case SUCCESS -> {
                 messages.send(payer, "pay-sent",
-                        Placeholder.unparsed("player", target.getLastKnownName()),
-                        Placeholder.unparsed("amount", service.format(result.getSent(), currencyId)));
-                if (result.getTax().compareTo(BigDecimal.ZERO) > 0) {
+                        Placeholder.unparsed("player", targetName),
+                        Placeholder.unparsed("amount", service.format(result.sent(), currencyId)));
+                if (result.tax().compareTo(BigDecimal.ZERO) > 0) {
                     messages.send(payer, "pay-tax",
-                            Placeholder.unparsed("tax", service.format(result.getTax(), currencyId)));
+                            Placeholder.unparsed("tax", service.format(result.tax(), currencyId)));
                 }
-                Player onlineTarget = payer.getServer().getPlayer(target.getId());
+                Player onlineTarget = payer.getServer().getPlayer(targetId);
                 if (onlineTarget != null) {
-                    messages.send(onlineTarget, "pay-received",
-                            Placeholder.unparsed("amount", service.format(result.getReceived(), currencyId)),
-                            Placeholder.unparsed("player", payer.getName()));
+                    onlineTarget.getScheduler().run(plugin, task -> messages.send(onlineTarget, "pay-received",
+                            Placeholder.unparsed("amount", service.format(result.received(), currencyId)),
+                            Placeholder.unparsed("player", payer.getName())), null);
                 }
             }
         }
-        return true;
     }
 
     @Override

@@ -60,7 +60,9 @@ perm-cap:
   # Set to true to enforce addon-side balance ceilings based on permissions.
   # This listener cannot raise OpenEco's own currency max-balance.
   # If you want a player to hold more, raise the matching currency max-balance in OpenEco too.
-  # Only online-player operations that reach these addon listeners are affected.
+  # In multi-writer mode, snapshots are persisted by UUID and enforced on every backend,
+  # including when the target is online elsewhere or offline. Missing authoritative state
+  # fails closed until the player joins a backend and their permissions are captured.
   # Startup warnings are logged for any tier that sits above the configured core currency limit.
   enabled: false
 
