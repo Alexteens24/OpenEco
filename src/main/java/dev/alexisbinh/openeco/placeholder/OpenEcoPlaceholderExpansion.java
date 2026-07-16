@@ -25,11 +25,13 @@ import org.jetbrains.annotations.Nullable;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 public class OpenEcoPlaceholderExpansion extends PlaceholderExpansion {
 
     private final AccountService service;
     private final String version;
+    private final PlaceholderSnapshotCache snapshots = new PlaceholderSnapshotCache(10_000);
 
     public OpenEcoPlaceholderExpansion(AccountService service, String version) {
         this.service = service;
@@ -50,6 +52,21 @@ public class OpenEcoPlaceholderExpansion extends PlaceholderExpansion {
 
     @Override
     public @Nullable String onRequest(OfflinePlayer player, @NotNull String params) {
+        if (!service.isLazyAccountModeEnabled() || !isStorageBacked(params)) {
+            return resolveRequest(player, params);
+        }
+        if (player == null && !params.startsWith("top_")) return "";
+        String fallback = fallback(params);
+        if (fallback == null) return resolveRequest(player, params);
+        String owner = player == null ? "global" : player.getUniqueId().toString();
+        long ttl = params.startsWith("rank") || params.startsWith("top_")
+                ? TimeUnit.MILLISECONDS.toNanos(service.getLeaderboardRefreshIntervalMillis())
+                : TimeUnit.SECONDS.toNanos(1);
+        return snapshots.get(owner + ':' + params, ttl, fallback,
+                () -> resolveRequest(player, params), service::supplyAsync);
+    }
+
+    private @Nullable String resolveRequest(OfflinePlayer player, String params) {
         // ── Player-specific placeholders ─────────────────────────────────────
         if (params.equals("balance")) {
             if (player == null) return "";
@@ -137,6 +154,45 @@ public class OpenEcoPlaceholderExpansion extends PlaceholderExpansion {
         }
 
         return null; // unknown placeholder
+    }
+
+    private boolean isStorageBacked(String params) {
+        return params.equals("balance")
+                || params.equals("balance_formatted")
+                || params.startsWith("balance_")
+                || params.equals("rank")
+                || params.startsWith("rank_")
+                || params.equals("frozen")
+                || params.startsWith("top_");
+    }
+
+    private @Nullable String fallback(String params) {
+        if (params.equals("balance")) return "0";
+        if (params.equals("balance_formatted")) return service.format(BigDecimal.ZERO);
+        if (params.startsWith("balance_formatted_")) {
+            String currencyId = params.substring("balance_formatted_".length());
+            return service.hasCurrency(currencyId) ? service.format(BigDecimal.ZERO, currencyId) : null;
+        }
+        if (params.startsWith("balance_")) {
+            String currencyId = params.substring("balance_".length());
+            return service.hasCurrency(currencyId) ? "0" : null;
+        }
+        if (params.equals("rank") || params.startsWith("rank_")) return "";
+        if (params.equals("frozen")) return "false";
+        if (params.startsWith("top_")) {
+            String rest = params.substring(4);
+            int underscore = rest.indexOf('_');
+            if (underscore < 1) return null;
+            ParsedTopField parsed = parseTopField(rest.substring(underscore + 1));
+            if (parsed == null) return null;
+            return switch (parsed.field()) {
+                case "name" -> "---";
+                case "balance" -> "0";
+                case "balance_formatted" -> service.format(BigDecimal.ZERO, parsed.currencyId());
+                default -> null;
+            };
+        }
+        return null;
     }
 
     private @Nullable ParsedTopField parseTopField(String descriptor) {

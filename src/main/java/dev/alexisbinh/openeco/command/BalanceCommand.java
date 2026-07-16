@@ -25,6 +25,7 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
+import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.Collections;
 import java.util.List;
@@ -33,8 +34,14 @@ public class BalanceCommand implements CommandExecutor, TabCompleter {
 
     private final AccountService service;
     private final Messages messages;
+    private final JavaPlugin plugin;
 
     public BalanceCommand(AccountService service, Messages messages) {
+        this(null, service, messages);
+    }
+
+    public BalanceCommand(JavaPlugin plugin, AccountService service, Messages messages) {
+        this.plugin = plugin;
         this.service = service;
         this.messages = messages;
     }
@@ -62,15 +69,23 @@ public class BalanceCommand implements CommandExecutor, TabCompleter {
         }
 
         if (args.length == 1 && sender instanceof Player player && service.hasCurrency(args[0])
-                && (!sender.hasPermission("openeco.command.balance.others") || service.findByName(args[0]).isEmpty())) {
+                && sender.hasPermission("openeco.command.balance.others")
+                && service.isLazyAccountModeEnabled()
+                && !service.isAccountNameCached(args[0])) {
+            String currencyId = args[0];
+            if (CommandAccountResolver.deferColdLookup(plugin, service, messages, sender, args[0],
+                    () -> showSelfBalance(player, currencyId),
+                    () -> onCommand(sender, command, label, args.clone()))) return true;
+        }
+
+        if (args.length == 1 && sender instanceof Player player && service.hasCurrency(args[0])
+                && (!sender.hasPermission("openeco.command.balance.others")
+                || service.findByName(args[0]).isEmpty())) {
             if (!player.hasPermission("openeco.command.balance")) {
                 messages.send(sender, "no-permission");
                 return true;
             }
-
-            String currencyId = args[0];
-            String bal = service.format(service.getBalance(player.getUniqueId(), currencyId), currencyId);
-            messages.send(player, "balance-self", Placeholder.unparsed("balance", bal));
+            showSelfBalance(player, args[0]);
             return true;
         }
 
@@ -89,6 +104,9 @@ public class BalanceCommand implements CommandExecutor, TabCompleter {
             }
         }
 
+        if (CommandAccountResolver.deferColdLookup(plugin, service, messages, sender, targetName,
+                () -> onCommand(sender, command, label, args.clone()))) return true;
+
         var optAccount = service.findByName(targetName);
         if (optAccount.isEmpty()) {
             messages.send(sender, "account-not-found", Placeholder.unparsed("player", targetName));
@@ -100,6 +118,15 @@ public class BalanceCommand implements CommandExecutor, TabCompleter {
                 Placeholder.unparsed("player", account.getLastKnownName()),
                 Placeholder.unparsed("balance", bal));
         return true;
+    }
+
+    private void showSelfBalance(Player player, String currencyId) {
+        if (!player.hasPermission("openeco.command.balance")) {
+            messages.send(player, "no-permission");
+            return;
+        }
+        String bal = service.format(service.getBalance(player.getUniqueId(), currencyId), currencyId);
+        messages.send(player, "balance-self", Placeholder.unparsed("balance", bal));
     }
 
     @Override
@@ -133,4 +160,3 @@ public class BalanceCommand implements CommandExecutor, TabCompleter {
         return Collections.emptyList();
     }
 }
-

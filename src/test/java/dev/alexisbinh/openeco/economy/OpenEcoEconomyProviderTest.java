@@ -34,9 +34,14 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -60,6 +65,26 @@ class OpenEcoEconomyProviderTest {
     void exposesAsyncEconomyForVaultUnlocked220() {
         assertTrue(provider.supportsAsync());
         assertTrue(provider.async().isPresent());
+    }
+
+    @Test
+    void asyncEconomyDefersSyncProviderWorkToServiceExecutor() {
+        UUID accountId = UUID.randomUUID();
+        AtomicReference<Supplier<?>> scheduled = new AtomicReference<>();
+        CompletableFuture<Object> completion = new CompletableFuture<>();
+        when(service.supplyAsync(any())).thenAnswer(invocation -> {
+            scheduled.set(invocation.getArgument(0));
+            return completion;
+        });
+        when(service.hasAccount(accountId)).thenReturn(true);
+
+        CompletableFuture<Boolean> result = provider.async().orElseThrow().hasAccount(accountId);
+
+        assertFalse(result.isDone());
+        verify(service, never()).hasAccount(accountId);
+        completion.complete(scheduled.get().get());
+        assertTrue(result.join());
+        verify(service).hasAccount(accountId);
     }
 
     @Test

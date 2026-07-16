@@ -65,6 +65,7 @@ public class OpenEcoPlugin extends JavaPlugin {
     private ScheduledTask historyPruneTask;
     private ScheduledTask leaderboardRefreshTask;
     private ScheduledTask multiWriterPollTask;
+    private ScheduledTask accountCacheMaintenanceTask;
     private BukkitContext fastStatsContext;
     private RedisChangeBus redisChangeBus;
 
@@ -158,13 +159,13 @@ public class OpenEcoPlugin extends JavaPlugin {
         registerLegacyEconomy(service);
 
         // ── Commands ──────────────────────────────────────────────────────────
-        BalanceCommand balance = new BalanceCommand(service, messages);
+        BalanceCommand balance = new BalanceCommand(this, service, messages);
         getCommand("balance").setExecutor(balance);
         getCommand("balance").setTabCompleter(balance);
-        BalTopCommand balTop = new BalTopCommand(service, messages);
+        BalTopCommand balTop = new BalTopCommand(this, service, messages);
         getCommand("baltop").setExecutor(balTop);
         getCommand("baltop").setTabCompleter(balTop);
-        PayCommand pay = new PayCommand(service, messages);
+        PayCommand pay = new PayCommand(this, service, messages);
         getCommand("pay").setExecutor(pay);
         getCommand("pay").setTabCompleter(pay);
         EcoCommand eco = new EcoCommand(service, this, messages);
@@ -197,6 +198,9 @@ public class OpenEcoPlugin extends JavaPlugin {
 
         // ── Leaderboard refresh scheduler ────────────────────────────────────
         restartLeaderboardRefreshTask();
+
+        // ── Lazy account cache maintenance ─────────────────────────────────
+        restartAccountCacheMaintenanceTask();
 
         // ── History prune scheduler ───────────────────────────────────────────
         restartPruneTask();
@@ -234,6 +238,7 @@ public class OpenEcoPlugin extends JavaPlugin {
         }
         restartAutoSaveTask();
         restartLeaderboardRefreshTask();
+        restartAccountCacheMaintenanceTask();
         restartPruneTask();
         restartMultiWriterPollTask();
         return true;
@@ -376,6 +381,21 @@ public class OpenEcoPlugin extends JavaPlugin {
         }
     }
 
+    private void restartAccountCacheMaintenanceTask() {
+        if (accountCacheMaintenanceTask != null) {
+            accountCacheMaintenanceTask.cancel();
+            accountCacheMaintenanceTask = null;
+        }
+        if (!service.isLazyAccountModeEnabled()) return;
+        long intervalSeconds = service.getAccountCacheMaintenanceIntervalSeconds();
+        accountCacheMaintenanceTask = getServer().getAsyncScheduler().runAtFixedRate(
+                this,
+                task -> service.maintainAccountCache(),
+                intervalSeconds,
+                intervalSeconds,
+                TimeUnit.SECONDS);
+    }
+
     private void startFastStats(DatabaseDialect dialect) {
         String storageBackend = dialect.name().toLowerCase(Locale.ROOT);
         String[] integrations = getServer().getPluginManager().getPlugin("PlaceholderAPI") == null
@@ -451,6 +471,9 @@ public class OpenEcoPlugin extends JavaPlugin {
         }
         if (multiWriterPollTask != null) {
             multiWriterPollTask.cancel();
+        }
+        if (accountCacheMaintenanceTask != null) {
+            accountCacheMaintenanceTask.cancel();
         }
         getServer().getServicesManager().unregisterAll(this);
         if (asyncApi != null) {

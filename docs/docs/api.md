@@ -67,7 +67,7 @@ Call synchronous mutating methods from a safe server thread:
 
 OpenEco uses result objects for normal business-rule failures (insufficient funds, account not found, balance limit, cooldown, policy rejection, cancelled events). `STORAGE_ERROR` means the database mutation failed and no success was reported.
 
-`OpenEcoApiException` is reserved for API-level failures such as history read failures.
+`OpenEcoApiException` reports storage-backed API failures such as cold account, leaderboard, or history reads.
 
 ## Accounts
 

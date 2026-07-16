@@ -25,6 +25,8 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
+import org.bukkit.entity.Player;
+import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Collections;
@@ -34,8 +36,14 @@ public class BalTopCommand implements CommandExecutor, TabCompleter {
 
     private final AccountService service;
     private final Messages messages;
+    private final JavaPlugin plugin;
 
     public BalTopCommand(AccountService service, Messages messages) {
+        this(null, service, messages);
+    }
+
+    public BalTopCommand(JavaPlugin plugin, AccountService service, Messages messages) {
+        this.plugin = plugin;
         this.service = service;
         this.messages = messages;
     }
@@ -80,25 +88,61 @@ public class BalTopCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        LeaderboardView summary = service.getLeaderboardPage(currencyId, 0, 0);
-        int totalPages = (int) Math.ceil((double) summary.totalEntries() / pageSize);
+        final int requestedPage = page;
+        final int resolvedPageSize = pageSize;
+        final String resolvedCurrencyId = currencyId;
+        if (plugin != null && service.isLazyAccountModeEnabled()) {
+            plugin.getServer().getAsyncScheduler().runNow(plugin, task -> {
+                try {
+                    LeaderboardResult result = loadLeaderboard(resolvedCurrencyId, resolvedPageSize, requestedPage);
+                    dispatchReply(sender, () -> sendLeaderboard(sender, resolvedCurrencyId, result));
+                } catch (RuntimeException e) {
+                    plugin.getLogger().warning("Failed to load leaderboard: " + e.getMessage());
+                    dispatchReply(sender, () -> messages.send(sender, "storage-error"));
+                }
+            });
+            return true;
+        }
+
+        sendLeaderboard(sender, resolvedCurrencyId,
+                loadLeaderboard(resolvedCurrencyId, resolvedPageSize, requestedPage));
+        return true;
+    }
+
+    private LeaderboardResult loadLeaderboard(String currencyId, int pageSize, int requestedPage) {
+        int requestedStart = pageOffset(requestedPage, pageSize);
+        LeaderboardView view = service.getLeaderboardPage(currencyId, requestedStart, pageSize);
+        int totalPages = (int) Math.ceil((double) view.totalEntries() / pageSize);
         if (totalPages == 0) totalPages = 1;
-        if (page > totalPages) page = totalPages;
+        int page = Math.min(requestedPage, totalPages);
+        if (page == requestedPage) {
+            return new LeaderboardResult(page, totalPages, requestedStart, view);
+        }
 
-        int start = (page - 1) * pageSize;
-        LeaderboardView view = service.getLeaderboardPage(currencyId, start, pageSize);
+        int clampedStart = pageOffset(page, pageSize);
+        LeaderboardView clampedView = service.getLeaderboardPage(currencyId, clampedStart, pageSize);
+        return new LeaderboardResult(page, totalPages, clampedStart, clampedView);
+    }
 
+    private void sendLeaderboard(CommandSender sender, String currencyId, LeaderboardResult result) {
         messages.send(sender, "baltop-header",
-                Placeholder.unparsed("page", String.valueOf(page)),
-                Placeholder.unparsed("total", String.valueOf(totalPages)));
-        for (int i = 0; i < view.entries().size(); i++) {
-            LeaderboardEntry entry = view.entries().get(i);
+                Placeholder.unparsed("page", String.valueOf(result.page())),
+                Placeholder.unparsed("total", String.valueOf(result.totalPages())));
+        for (int i = 0; i < result.view().entries().size(); i++) {
+            LeaderboardEntry entry = result.view().entries().get(i);
             messages.send(sender, "baltop-entry",
-                    Placeholder.unparsed("rank", String.valueOf(start + i + 1)),
+                    Placeholder.unparsed("rank", String.valueOf(result.start() + i + 1)),
                     Placeholder.unparsed("player", entry.name()),
                     Placeholder.unparsed("balance", service.format(entry.balance(), currencyId)));
         }
-        return true;
+    }
+
+    private void dispatchReply(CommandSender sender, Runnable reply) {
+        if (sender instanceof Player player) {
+            player.getScheduler().run(plugin, task -> reply.run(), () -> { });
+            return;
+        }
+        plugin.getServer().getGlobalRegionScheduler().run(plugin, task -> reply.run());
     }
 
     @Override
@@ -137,5 +181,12 @@ public class BalTopCommand implements CommandExecutor, TabCompleter {
         } catch (NumberFormatException e) {
             return 1;
         }
+    }
+
+    private static int pageOffset(int page, int pageSize) {
+        return (int) Math.min(Integer.MAX_VALUE, (long) (page - 1) * pageSize);
+    }
+
+    private record LeaderboardResult(int page, int totalPages, int start, LeaderboardView view) {
     }
 }

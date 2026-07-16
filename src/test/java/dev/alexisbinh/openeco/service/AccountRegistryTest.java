@@ -130,4 +130,39 @@ class AccountRegistryTest {
         assertEquals(new BigDecimal("10.00"), registry.getLiveRecord(aliceId).getBalance());
         assertEquals("Bob", registry.findSnapshotByName("bob").orElseThrow().getLastKnownName());
     }
+
+    @Test
+    void evictionKeepsOnlineAndDirtyAccounts() {
+        AccountRegistry registry = new AccountRegistry();
+        AccountRecord online = new AccountRecord(UUID.randomUUID(), "Online", BigDecimal.ZERO, 1L, 1L);
+        AccountRecord dirty = new AccountRecord(UUID.randomUUID(), "Dirty", BigDecimal.ZERO, 1L, 1L);
+        AccountRecord idle = new AccountRecord(UUID.randomUUID(), "Idle", BigDecimal.ZERO, 1L, 1L);
+        assertTrue(registry.create(online));
+        assertTrue(registry.create(dirty));
+        assertTrue(registry.create(idle));
+        registry.markOnline(online.getId());
+        dirty.markDirty();
+
+        assertEquals(1, registry.evict(Long.MAX_VALUE, 1));
+        assertEquals(2, registry.size());
+        assertTrue(registry.hasAccount(online.getId()));
+        assertTrue(registry.hasAccount(dirty.getId()));
+        assertFalse(registry.hasAccount(idle.getId()));
+    }
+
+    @Test
+    void evictionKeepsAccountUntilActiveLeaseCloses() {
+        AccountRegistry registry = new AccountRegistry();
+        AccountRecord record = new AccountRecord(UUID.randomUUID(), "Leased", BigDecimal.ZERO, 1L, 1L);
+        assertTrue(registry.create(record));
+
+        AccountLease lease = registry.acquireLease(record.getId());
+        assertNotNull(lease);
+        assertEquals(0, registry.evict(Long.MAX_VALUE, 0));
+        assertTrue(registry.hasAccount(record.getId()));
+
+        lease.close();
+        assertEquals(1, registry.evict(Long.MAX_VALUE, 0));
+        assertFalse(registry.hasAccount(record.getId()));
+    }
 }

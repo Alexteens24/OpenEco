@@ -35,6 +35,8 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -62,6 +64,23 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
         if (args.length > 3) {
             sender.sendMessage("§cUsage: /history [self|player] [page] [currency]");
             return true;
+        }
+
+        boolean playerSelfArgument = sender instanceof Player && args.length > 0
+                && (args[0].equalsIgnoreCase("self")
+                || isPageNumber(args[0])
+                || (service.hasCurrency(args[0])
+                    && (!sender.hasPermission("openeco.command.history.others")
+                        || service.isAccountNameKnownMissing(args[0])
+                        || (!service.isLazyAccountModeEnabled() && service.findByName(args[0]).isEmpty()))));
+        if (args.length > 0 && !playerSelfArgument
+                && sender.hasPermission("openeco.command.history.others")
+                && service.isLazyAccountModeEnabled() && !service.isAccountNameCached(args[0])) {
+            Runnable missing = service.hasCurrency(args[0]) && sender instanceof Player
+                    ? () -> onCommand(sender, command, label, withSelfPrefix(args))
+                    : () -> messages.send(sender, "account-not-found", Placeholder.unparsed("player", args[0]));
+            if (CommandAccountResolver.deferColdLookup(plugin, service, messages, sender, args[0], missing,
+                    () -> onCommand(sender, command, label, args.clone()))) return true;
         }
 
         HistoryRequest request;
@@ -92,7 +111,7 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
                 int totalPages = Math.max(1, (int) Math.ceil((double) totalEntries / pageSize));
                 int page = Math.min(requestedPage, totalPages);
                 List<TransactionEntry> entries = service.getTransactions(targetId, currencyId, page, pageSize);
-                Map<UUID, String> nameMap = service.getUUIDNameMap();
+                Map<UUID, String> nameMap = loadCounterpartNames(entries);
 
                 dispatchReply(sender, () -> {
                     messages.send(sender, "history-header",
@@ -107,7 +126,7 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
                         sender.sendMessage(formatEntry(entry, nameMap, currencyId));
                     }
                 });
-            } catch (SQLException ex) {
+            } catch (SQLException | RuntimeException ex) {
                 plugin.getLogger().warning("Failed to load transaction history for " + targetId + ": " + ex.getMessage());
                 dispatchReply(sender, () -> messages.send(sender, "history-error"));
             }
@@ -132,7 +151,8 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
             return createSelfRequest(player, args, 1);
         }
 
-        if (player.hasPermission("openeco.command.history.others")) {
+        if (player.hasPermission("openeco.command.history.others")
+                && (!service.isLazyAccountModeEnabled() || service.isAccountNameCached(args[0]))) {
             var target = service.findByName(args[0]);
             if (target.isPresent()) {
                 return createOtherRequest(target.get(), args, 1);
@@ -184,6 +204,15 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
         return new HistoryRequest(target.getId(), target.getLastKnownName(), parsed.page(), parsed.currencyId());
     }
 
+    private Map<UUID, String> loadCounterpartNames(List<TransactionEntry> entries) throws SQLException {
+        LinkedHashSet<UUID> counterpartIds = new LinkedHashSet<>();
+        for (TransactionEntry entry : entries) {
+            UUID counterpartId = entry.getCounterpartId();
+            if (counterpartId != null) counterpartIds.add(counterpartId);
+        }
+        return service.loadAccountNames(counterpartIds);
+    }
+
     private ParsedArguments parseArguments(String[] args, int startIndex) {
         int page = 1;
         String currencyId = service.getCurrencyId();
@@ -203,6 +232,13 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
         }
 
         return new ParsedArguments(page, currencyId);
+    }
+
+    private static String[] withSelfPrefix(String[] args) {
+        String[] prefixed = new String[args.length + 1];
+        prefixed[0] = "self";
+        System.arraycopy(args, 0, prefixed, 1, args.length);
+        return prefixed;
     }
 
     private void dispatchReply(CommandSender sender, Runnable reply) {

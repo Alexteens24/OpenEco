@@ -26,6 +26,7 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
+import org.bukkit.plugin.java.JavaPlugin;
 
 import java.math.BigDecimal;
 import java.util.Collections;
@@ -35,8 +36,14 @@ public class PayCommand implements CommandExecutor, TabCompleter {
 
     private final AccountService service;
     private final Messages messages;
+    private final JavaPlugin plugin;
 
     public PayCommand(AccountService service, Messages messages) {
+        this(null, service, messages);
+    }
+
+    public PayCommand(JavaPlugin plugin, AccountService service, Messages messages) {
+        this.plugin = plugin;
         this.service = service;
         this.messages = messages;
     }
@@ -56,6 +63,9 @@ public class PayCommand implements CommandExecutor, TabCompleter {
             payer.sendMessage("§cUsage: /pay <player> <amount> [currency]");
             return true;
         }
+
+        if (CommandAccountResolver.deferColdLookup(plugin, service, messages, payer, args[0],
+                () -> onCommand(sender, command, label, args.clone()))) return true;
 
         var optTarget = service.findByName(args[0]);
         if (optTarget.isEmpty()) {
@@ -108,7 +118,7 @@ public class PayCommand implements CommandExecutor, TabCompleter {
             case ACCOUNT_NOT_FOUND  -> messages.send(payer, "account-not-found",
                     Placeholder.unparsed("player", target.getLastKnownName()));
             case FROZEN             -> messages.send(payer, "account-frozen");
-            case STORAGE_ERROR      -> messages.send(payer, "storage-unavailable");
+            case STORAGE_ERROR      -> messages.send(payer, "storage-error");
             case POLICY_REJECTED    -> messages.send(payer, "pay-policy-rejected");
             case COOLDOWN -> {
                 long secs = (result.getCooldownRemainingMs() + 999) / 1000;

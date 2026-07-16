@@ -4,11 +4,17 @@ Operational details behind OpenEco's runtime model. For contributor internals, s
 
 ## Runtime model
 
-OpenEco keeps a read cache in memory. Local and handoff modes write dirty snapshots in the background; multi-writer mode commits mutations synchronously through JDBC before updating the cache.
+OpenEco supports eager in-memory state and an opt-in lazy working-set cache. Local and handoff modes write dirty snapshots in the background; multi-writer mode commits mutations synchronously through JDBC before updating the selected read cache.
 
 ### Account loading
 
-Accounts and their balances are read with one ordered streaming join, assembled a row at a time, and emitted into the in-memory registry in bounded batches. After startup, balance reads and writes never fall back to database queries.
+In the default `eager` mode, accounts and balances are read with one ordered streaming join and retained in the in-memory registry.
+
+In `lazy` mode, startup does not scan account balances and cold UUID/name lookups load from JDBC. With `account-loading.lazy.cache.enabled: true`, recently accessed accounts form a bounded hot set and clean offline entries expire after the configured idle period. With caching disabled, clean records are removed on a short maintenance cycle while dirty, online, login-pinned, and actively leased records remain for correctness. Concurrent UUID and normalized-name misses are coalesced, and loader queues are bounded. Synchronous Vault and OpenEco API calls can therefore wait for database I/O on a cold lookup; VaultUnlocked's async facade uses a separate bounded worker pool.
+
+Lazy PlaceholderAPI requests never wait for a cold database read. They return the most recent bounded snapshot (or a safe zero/blank fallback) and refresh it asynchronously. Player account creation/rename and required storage checks run during async pre-login; a storage failure denies login instead of admitting a player with an unusable economy account.
+
+Explicit bulk APIs such as `getUUIDNameMap()` still materialize the requested full result for compatibility. Addons that iterate every account can therefore create temporary memory and database load even when lazy caching is enabled.
 
 Dirty account snapshots flush on the autosave interval and on normal shutdown.
 
@@ -18,7 +24,7 @@ Transaction history is written on a dedicated single-thread executor. Before a d
 
 ### Baltop cache
 
-Lightweight per-currency leaderboard snapshots are refreshed in the background at the configured interval. Requests keep using the previous immutable snapshot while a refresh is running; rank lookup is constant-time.
+Eager mode uses lightweight per-currency snapshots. Lazy mode flushes dirty balances on the configured refresh interval and queries leaderboard pages/ranks from the database, avoiding an all-account leaderboard copy in RAM.
 
 ## Storage
 
@@ -37,7 +43,7 @@ Redis Pub/Sub is optional and never authoritative. A dropped Redis message is re
 In legacy `handoff` mode:
 
 1. Account flush on backend disconnect.
-2. Account refresh on backend join completion.
+2. Account refresh during async pre-login, including remote deletion detection.
 3. `openeco:sync` plugin messaging channel for proxy-triggered flush/refresh.
 
 Handoff does not allow safe simultaneous writers.
@@ -51,7 +57,7 @@ Handoff does not allow safe simultaneous writers.
 ## Scaling notes
 
 - Multi-writer deployments can mutate one account from multiple backends; database contention becomes the scaling limit.
-- Large account counts increase startup load time and leaderboard work.
+- Large account counts increase eager startup load time and leaderboard work. Lazy mode trades cold-read latency and database work for bounded retained heap.
 - `/pay`, `/baltop`, and name tab-complete are the most visible features under account-count growth.
 - Large history volumes can dominate file size before account rows do.
 
@@ -62,11 +68,11 @@ Observed staging signal (not a guarantee for every server):
 
 ## Hot path callers
 
-These all read and write through the in-memory registry:
+These use the hot account registry; in lazy mode a cold synchronous call may first load from JDBC:
 
 - Player commands (`/balance`, `/pay`, `/eco`, …)
 - Vault v1 and VaultUnlocked v2 providers
-- PlaceholderAPI expansion
+- PlaceholderAPI expansion (non-blocking snapshots in lazy mode)
 - `OpenEcoApi` for addon integrations
 
 For architecture and component details, see [Development](/docs/development).

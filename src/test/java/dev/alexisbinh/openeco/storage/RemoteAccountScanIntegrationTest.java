@@ -93,6 +93,13 @@ class RemoteAccountScanIntegrationTest {
             assertEquals(0, last.getBalance("gems")
                     .compareTo(BigDecimal.valueOf((count - 1L) * 2L)), dialect.name());
             assertTrue(repository.loadAccount(last.getId()).isPresent(), dialect.name());
+            assertEquals(last.getId(), repository.loadAccountByName(last.getLastKnownName().toUpperCase()).orElseThrow().getId(),
+                    dialect.name());
+            assertEquals(2, repository.loadNames(List.of(loaded.getFirst().getId(), last.getId())).size(), dialect.name());
+            var leaderboard = repository.loadLeaderboardPage("OPENECO", 0, 25);
+            assertEquals(count, leaderboard.totalEntries(), dialect.name());
+            assertEquals(25, leaderboard.entries().size(), dialect.name());
+            assertEquals(1, repository.loadLeaderboardRank("openeco", last.getId()), dialect.name());
             try (var connection = dataSource.getConnection()) {
                 assertTrue(connection.getAutoCommit(), dialect.name());
             }
