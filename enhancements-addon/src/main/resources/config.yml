@@ -63,6 +63,8 @@ perm-cap:
   # In multi-writer mode, snapshots are persisted by UUID and enforced on every backend,
   # including when the target is online elsewhere or offline. Missing authoritative state
   # fails closed until the player joins a backend and their permissions are captured.
+  # On an existing network, deploy once with this disabled and let players join before enabling;
+  # OpenEco does not currently query LuckPerms offline data to seed legacy accounts automatically.
   # Startup warnings are logged for any tier that sits above the configured core currency limit.
   enabled: false
 

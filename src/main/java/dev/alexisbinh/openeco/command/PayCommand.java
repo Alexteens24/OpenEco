@@ -138,6 +138,7 @@ public class PayCommand implements CommandExecutor, TabCompleter {
                     Placeholder.unparsed("seconds", String.valueOf(
                             (result.cooldownRemainingMs() + 999) / 1000)));
             case SUCCESS -> {
+                String payerName = payer.getName();
                 messages.send(payer, "pay-sent",
                         Placeholder.unparsed("player", targetName),
                         Placeholder.unparsed("amount", service.format(result.sent(), currencyId)));
@@ -149,7 +150,7 @@ public class PayCommand implements CommandExecutor, TabCompleter {
                 if (onlineTarget != null) {
                     onlineTarget.getScheduler().run(plugin, task -> messages.send(onlineTarget, "pay-received",
                             Placeholder.unparsed("amount", service.format(result.received(), currencyId)),
-                            Placeholder.unparsed("player", payer.getName())), null);
+                            Placeholder.unparsed("player", payerName)), null);
                 }
             }
         }

@@ -39,6 +39,9 @@ import java.util.UUID;
 public class JdbcAccountRepository implements AccountRepository, MultiWriterRepository {
 
     private static final int ACCOUNT_SCAN_FETCH_SIZE = 1_000;
+    private static final Object LOCAL_SCHEMA_MIGRATION_LOCK = new Object();
+    private static final String MYSQL_SCHEMA_MIGRATION_LOCK = "openeco:schema-migration";
+    private static final long POSTGRES_SCHEMA_MIGRATION_LOCK = 0x4F50454E45434F4CL;
     private static final String ACCOUNT_SCAN_SQL = """
             SELECT a.id AS account_id,
                    a.name AS account_name,
@@ -106,9 +109,46 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
     // ── Schema ────────────────────────────────────────────────────────────────
 
     private void createSchema() throws SQLException {
+        if (dialect.isLocal()) {
+            synchronized (LOCAL_SCHEMA_MIGRATION_LOCK) {
+                createSchemaWithConnection(false);
+            }
+            return;
+        }
+        createSchemaWithConnection(true);
+    }
+
+    private void createSchemaWithConnection(boolean acquireDatabaseLock) throws SQLException {
         try (Connection conn = dataSource.getConnection()) {
-            conn.setAutoCommit(false);
-            try (Statement stmt = conn.createStatement()) {
+            if (!acquireDatabaseLock) {
+                migrateSchema(conn);
+                return;
+            }
+
+            acquireSchemaMigrationLock(conn);
+            SQLException migrationFailure = null;
+            try {
+                migrateSchema(conn);
+            } catch (SQLException e) {
+                migrationFailure = e;
+                throw e;
+            } finally {
+                try {
+                    releaseSchemaMigrationLock(conn);
+                } catch (SQLException releaseFailure) {
+                    if (migrationFailure != null) {
+                        migrationFailure.addSuppressed(releaseFailure);
+                    } else {
+                        throw releaseFailure;
+                    }
+                }
+            }
+        }
+    }
+
+    private void migrateSchema(Connection conn) throws SQLException {
+        conn.setAutoCommit(false);
+        try (Statement stmt = conn.createStatement()) {
                 stmt.execute("""
                     CREATE TABLE IF NOT EXISTS accounts (
                         id         VARCHAR(36)   NOT NULL PRIMARY KEY,
@@ -160,12 +200,59 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                 backfillDefaultBalances(conn);
                 backfillTransactionCurrencies(conn);
                 conn.commit();
-            } catch (SQLException e) {
-                conn.rollback();
-                throw e;
-            } finally {
-                conn.setAutoCommit(true);
+        } catch (SQLException e) {
+            conn.rollback();
+            throw e;
+        } finally {
+            conn.setAutoCommit(true);
+        }
+    }
+
+    private void acquireSchemaMigrationLock(Connection conn) throws SQLException {
+        switch (dialect) {
+            case MYSQL, MARIADB -> {
+                try (PreparedStatement ps = conn.prepareStatement("SELECT GET_LOCK(?, 300)")) {
+                    ps.setString(1, MYSQL_SCHEMA_MIGRATION_LOCK);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (!rs.next() || rs.getInt(1) != 1) {
+                            throw new SQLException("Timed out acquiring the OpenEco schema migration lock");
+                        }
+                    }
+                }
             }
+            case POSTGRESQL -> {
+                try (PreparedStatement ps = conn.prepareStatement("SELECT pg_advisory_lock(?)")) {
+                    ps.setLong(1, POSTGRES_SCHEMA_MIGRATION_LOCK);
+                    ps.execute();
+                }
+            }
+            default -> throw new SQLException("Database-wide schema locking is unsupported for " + dialect);
+        }
+    }
+
+    private void releaseSchemaMigrationLock(Connection conn) throws SQLException {
+        switch (dialect) {
+            case MYSQL, MARIADB -> {
+                try (PreparedStatement ps = conn.prepareStatement("SELECT RELEASE_LOCK(?)")) {
+                    ps.setString(1, MYSQL_SCHEMA_MIGRATION_LOCK);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (!rs.next() || rs.getInt(1) != 1) {
+                            throw new SQLException("OpenEco schema migration lock was not owned by this connection");
+                        }
+                    }
+                }
+            }
+            case POSTGRESQL -> {
+                try (PreparedStatement ps = conn.prepareStatement("SELECT pg_advisory_unlock(?)")) {
+                    ps.setLong(1, POSTGRES_SCHEMA_MIGRATION_LOCK);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (!rs.next() || !rs.getBoolean(1)) {
+                            throw new SQLException("OpenEco schema migration lock was not owned by this connection");
+                        }
+                    }
+                }
+            }
+            default -> throw new SQLException("Database-wide schema locking is unsupported for " + dialect);
         }
     }
 
@@ -1062,9 +1149,9 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
             } catch (SQLException e) {
                 conn.rollback();
                 if (isConstraintViolation(e)) {
-                    Optional<AccountRecord> existing = loadAccount(accountId);
-                    return existing.isPresent()
-                            ? new AccountWriteResult(MutationStatus.ALREADY_EXISTS, existing.get())
+                    LockedAccount existing = lockAccount(conn, accountId);
+                    return existing != null
+                            ? new AccountWriteResult(MutationStatus.ALREADY_EXISTS, existing.toRecord())
                             : new AccountWriteResult(MutationStatus.NAME_IN_USE, null);
                 }
                 throw e;

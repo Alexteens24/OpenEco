@@ -30,6 +30,7 @@ import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.LongSupplier;
 import java.util.logging.Logger;
 
 /**
@@ -43,6 +44,7 @@ public class InterestTask implements Runnable {
     private final Logger log;
     private final ClusterJobCoordinator coordinator;
     private final OpenEcoAsyncApi asyncApi;
+    private final LongSupplier nanoTime;
 
     public InterestTask(OpenEcoApi api, JavaPlugin plugin) {
         this(api, plugin, null, null);
@@ -54,11 +56,17 @@ public class InterestTask implements Runnable {
 
     public InterestTask(OpenEcoApi api, JavaPlugin plugin, ClusterJobCoordinator coordinator,
                         OpenEcoAsyncApi asyncApi) {
+        this(api, plugin, coordinator, asyncApi, System::nanoTime);
+    }
+
+    InterestTask(OpenEcoApi api, JavaPlugin plugin, ClusterJobCoordinator coordinator,
+                 OpenEcoAsyncApi asyncApi, LongSupplier nanoTime) {
         this.api = api;
         this.plugin = plugin;
         this.log = plugin.getLogger();
         this.coordinator = coordinator;
         this.asyncApi = asyncApi;
+        this.nanoTime = nanoTime;
     }
 
     @Override
@@ -68,20 +76,22 @@ public class InterestTask implements Runnable {
         long authoritativeNow = coordinator == null
                 ? System.currentTimeMillis() : coordinator.currentTimeMillis();
         String runId = Long.toString(authoritativeNow / intervalMs);
+        long leaseMs = retryIntervalMs(intervalMs);
         java.util.Optional<ClusterJobCoordinator.Lease> acquired = coordinator == null
                 ? java.util.Optional.empty() : coordinator.tryAcquire("interest", runId,
-                retryIntervalMs(intervalMs));
+                leaseMs);
         if (coordinator != null && acquired.isEmpty()) return;
+        long leaseAcquiredAtNanos = nanoTime.getAsLong();
         if (asyncApi != null) {
             try {
-                runInterestCycle(null, runId, acquired.orElse(null));
+                runInterestCycle(null, runId, acquired.orElse(null), leaseMs, leaseAcquiredAtNanos);
                 acquired.ifPresent(ClusterJobCoordinator.Lease::complete);
             } catch (RuntimeException e) {
                 log.warning("[Interest] Cycle failed; lease will expire for retry: " + e.getMessage());
             }
         } else {
             plugin.getServer().getGlobalRegionScheduler().run(plugin, task -> {
-                runInterestCycle(task, runId, acquired.orElse(null));
+                runInterestCycle(task, runId, acquired.orElse(null), leaseMs, leaseAcquiredAtNanos);
                 acquired.ifPresent(ClusterJobCoordinator.Lease::complete);
             });
         }
@@ -92,7 +102,8 @@ public class InterestTask implements Runnable {
     }
 
     private void runInterestCycle(ScheduledTask task, String runId,
-                                  ClusterJobCoordinator.Lease lease) {
+                                  ClusterJobCoordinator.Lease lease, long leaseMs,
+                                  long leaseAcquiredAtNanos) {
         FileConfiguration config = plugin.getConfig();
         double rate = config.getDouble("interest.rate", 5.0);
         long intervalSeconds = config.getLong("interest.interval-seconds", 3600);
@@ -119,13 +130,20 @@ public class InterestTask implements Runnable {
         int credited = 0;
         int skipped = 0;
         RuntimeException firstFailure = null;
+        long renewIntervalNanos = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(
+                Math.max(1_000L, leaseMs / 3L));
+        long nextLeaseRenewalNanos = leaseAcquiredAtNanos + renewIntervalNanos;
 
         Map<UUID, String> accounts = api.getUUIDNameMap();
         for (UUID id : accounts.keySet()) {
-            try {
-                if (lease != null && !lease.renew()) {
+            long nowNanos = nanoTime.getAsLong();
+            if (lease != null && nowNanos - nextLeaseRenewalNanos >= 0L) {
+                if (!lease.renew()) {
                     throw new IllegalStateException("Cluster job lease ownership was lost");
                 }
+                nextLeaseRenewalNanos = nowNanos + renewIntervalNanos;
+            }
+            try {
                 credited += processAccount(id, currencyId, explicitCurrency, factor,
                         minBalance, maxPerInterval, fractionalDigits, runId) ? 1 : 0;
             } catch (Exception e) {

@@ -33,8 +33,10 @@ class RemoteMultiWriterIntegrationTest {
 
     private static void verifyDialect(
             DatabaseDialect dialect, int port, String username, String password) throws Exception {
-        try (JdbcAccountRepository first = repository(dialect, port, username, password);
-             JdbcAccountRepository second = repository(dialect, port, username, password)) {
+        try (RepositoryPair repositories = openRepositoriesConcurrently(
+                dialect, port, username, password)) {
+            JdbcAccountRepository first = repositories.first();
+            JdbcAccountRepository second = repositories.second();
             UUID accountId = UUID.randomUUID();
             long now = System.currentTimeMillis();
             String prefix = dialect.name().substring(0, 2).toLowerCase(Locale.ROOT);
@@ -141,6 +143,34 @@ class RemoteMultiWriterIntegrationTest {
             assertEquals(0, nothingExpired.operations(), dialect.name());
             assertEquals(0, nothingExpired.policyUsage(), dialect.name());
             assertEquals(0, nothingExpired.clusterJobs(), dialect.name());
+        }
+    }
+
+    private static RepositoryPair openRepositoriesConcurrently(
+            DatabaseDialect dialect, int port, String username, String password) throws Exception {
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var repositories = executor.invokeAll(List.<Callable<JdbcAccountRepository>>of(
+                    () -> repository(dialect, port, username, password),
+                    () -> repository(dialect, port, username, password)));
+            JdbcAccountRepository first = repositories.get(0).get();
+            try {
+                return new RepositoryPair(first, repositories.get(1).get());
+            } catch (Exception e) {
+                first.close();
+                throw e;
+            }
+        }
+    }
+
+    private record RepositoryPair(JdbcAccountRepository first,
+                                  JdbcAccountRepository second) implements AutoCloseable {
+        @Override
+        public void close() throws Exception {
+            try {
+                second.close();
+            } finally {
+                first.close();
+            }
         }
     }
 

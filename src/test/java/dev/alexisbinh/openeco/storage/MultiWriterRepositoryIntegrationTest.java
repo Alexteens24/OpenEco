@@ -201,6 +201,35 @@ class MultiWriterRepositoryIntegrationTest {
     }
 
     @Test
+    void duplicateNameCreateWorksWithSingleConnectionPool() throws Exception {
+        try (JdbcAccountRepository repository = repository("single-connection-duplicate-name")) {
+            long now = System.currentTimeMillis();
+            assertEquals(MultiWriterRepository.MutationStatus.SUCCESS,
+                    repository.createAccount(UUID.randomUUID(), UUID.randomUUID(), "Alice",
+                            Map.of("coins", BigDecimal.ZERO), "coins", now).status());
+            org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
+                    java.time.Duration.ofSeconds(2), () -> assertEquals(
+                            MultiWriterRepository.MutationStatus.NAME_IN_USE,
+                            repository.createAccount(UUID.randomUUID(), UUID.randomUUID(), "ALICE",
+                                    Map.of("coins", BigDecimal.ZERO), "coins", now + 1).status()));
+        }
+    }
+
+    @Test
+    void concurrentLocalSchemaInitializationIsSerialized() throws Exception {
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var repositories = executor.invokeAll(java.util.List.<Callable<JdbcAccountRepository>>of(
+                    () -> repository("concurrent-schema"),
+                    () -> repository("concurrent-schema")));
+            try (JdbcAccountRepository first = repositories.get(0).get();
+                 JdbcAccountRepository second = repositories.get(1).get()) {
+                assertEquals(0L, first.currentChangeSequence());
+                assertEquals(0L, second.currentChangeSequence());
+            }
+        }
+    }
+
+    @Test
     void expiredMultiWriterStateIsPruned() throws Exception {
         try (JdbcAccountRepository repository = repository("multi-writer-state-prune")) {
             UUID sender = UUID.randomUUID();

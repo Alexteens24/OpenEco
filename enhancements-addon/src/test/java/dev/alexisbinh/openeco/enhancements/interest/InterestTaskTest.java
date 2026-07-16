@@ -42,6 +42,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.IntStream;
 import java.util.logging.Logger;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -195,5 +196,28 @@ class InterestTaskTest {
         verify(retryLease).complete();
         verify(asyncApi, org.mockito.Mockito.times(2)).depositOnce(
                 any(UUID.class), eq(retryAccountId), eq("coins"), eq(new BigDecimal("5.00")));
+    }
+
+    @Test
+    void leaseIsNotRenewedForEveryAccountBeforeHeartbeatIsDue() {
+        Map<UUID, String> accounts = IntStream.range(0, 1_000).boxed().collect(
+                java.util.stream.Collectors.toMap(ignored -> UUID.randomUUID(), index -> "Player" + index));
+        when(api.getUUIDNameMap()).thenReturn(accounts);
+        when(api.getBalance(any(UUID.class))).thenReturn(new BigDecimal("100.00"));
+
+        OpenEcoAsyncApi asyncApi = org.mockito.Mockito.mock(OpenEcoAsyncApi.class);
+        when(asyncApi.findAppliedDeposit(any(UUID.class)))
+                .thenReturn(CompletableFuture.completedFuture(java.util.Optional.empty()));
+        when(asyncApi.depositOnce(any(UUID.class), any(UUID.class), eq("coins"), eq(new BigDecimal("5.00"))))
+                .thenReturn(CompletableFuture.completedFuture(true));
+        ClusterJobCoordinator coordinator = org.mockito.Mockito.mock(ClusterJobCoordinator.class);
+        ClusterJobCoordinator.Lease lease = org.mockito.Mockito.mock(ClusterJobCoordinator.Lease.class);
+        when(coordinator.tryAcquire(eq("interest"), any(String.class), org.mockito.ArgumentMatchers.anyLong()))
+                .thenReturn(java.util.Optional.of(lease));
+
+        new InterestTask(api, plugin, coordinator, asyncApi, () -> 1L).run();
+
+        verify(lease, never()).renew();
+        verify(lease).complete();
     }
 }

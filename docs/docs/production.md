@@ -53,6 +53,7 @@ Use MySQL, MariaDB, or PostgreSQL when you need one authoritative shared databas
 
 - Required for cross-server mode.
 - In `multi-writer` mode, concurrent mutations are serialized safely in database transactions.
+- Schema upgrades use a database-wide migration lock, so backends may be started together; later nodes wait for the first migration to finish before checking or changing columns and indexes.
 
 ### Changing backends
 
@@ -146,6 +147,20 @@ These source IDs and types must match the data sources configured in the FastSta
 3. Optionally install the proxy addon on Velocity.
 4. Restart everything after toggling cross-server mode.
 5. Test at least one server switch, one disconnect, and one `/ecosync <player>`.
+
+## Upgrading permission caps on an existing network
+
+OpenEcoEnhancements stores permission-cap snapshots by player UUID so every backend can enforce the same recipient cap without reading Bukkit player objects from an async thread. The snapshot is captured when the player joins a backend.
+
+When `perm-cap.enabled` is turned on, missing state deliberately fails closed. An existing offline account that has not joined since the upgrade can therefore receive `POLICY_REJECTED` from `/pay`, `/eco give`, or API mutations until its owner joins once.
+
+For a smooth rollout:
+
+1. Deploy the updated core and OpenEcoEnhancements JARs with `perm-cap.enabled: false`.
+2. Let active players join so their shared `economy_policy_state` rows are populated.
+3. Decide how to handle long-term offline accounts, then enable the cap on every backend together.
+
+OpenEco does not currently query LuckPerms offline data directly. Networks that must mutate never-seen offline accounts should keep the cap disabled until those snapshots have been populated by player joins or by a custom integration using the shared policy-state API.
 
 ## Rollout advice
 
