@@ -115,6 +115,7 @@ public class InterestTask implements Runnable {
 
         int credited = 0;
         int skipped = 0;
+        RuntimeException firstFailure = null;
 
         Map<UUID, String> accounts = api.getUUIDNameMap();
         for (UUID id : accounts.keySet()) {
@@ -124,9 +125,18 @@ public class InterestTask implements Runnable {
             } catch (Exception e) {
                 log.warning("[Interest] Error processing account " + id + ": " + e.getMessage());
                 skipped++;
+                if (firstFailure == null) {
+                    firstFailure = e instanceof RuntimeException runtime
+                            ? runtime : new IllegalStateException(e);
+                }
             }
         }
-        log.info("[Interest] Cycle complete — credited: " + credited + ", skipped/error: " + skipped);
+        if (firstFailure != null) {
+            log.warning("[Interest] Cycle incomplete — credited: " + credited
+                    + ", errors: " + skipped + "; lease will remain retryable.");
+            throw new IllegalStateException("Interest payout failed for " + skipped + " account(s)", firstFailure);
+        }
+        log.info("[Interest] Cycle complete — credited: " + credited + ", skipped: " + skipped);
     }
 
     private boolean processAccount(UUID id, String currencyId, boolean explicitCurrency, BigDecimal factor, BigDecimal minBalance,
@@ -147,8 +157,10 @@ public class InterestTask implements Runnable {
             UUID operationId = UUID.nameUUIDFromBytes(
                     ("openeco:interest:" + runId + ':' + id + ':' + currencyId)
                             .getBytes(StandardCharsets.UTF_8));
-            return asyncApi.depositOnce(operationId, id, currencyId, interest)
+            boolean applied = asyncApi.depositOnce(operationId, id, currencyId, interest)
                     .toCompletableFuture().join();
+            if (!applied) throw new IllegalStateException("Idempotent interest deposit was rejected");
+            return true;
         }
         BalanceChangeResult result = explicitCurrency
                 ? api.deposit(id, currencyId, interest) : api.deposit(id, interest);

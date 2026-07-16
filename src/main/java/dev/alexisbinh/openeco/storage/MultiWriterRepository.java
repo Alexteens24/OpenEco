@@ -55,6 +55,13 @@ public interface MultiWriterRepository {
             BigDecimal after,
             @Nullable AccountRecord account) {}
 
+    record AppliedBalanceMutation(
+            UUID accountId,
+            String currencyId,
+            TransactionType transactionType,
+            BigDecimal amount,
+            BigDecimal balanceAfter) {}
+
     record TransferMutationRequest(
             UUID operationId,
             UUID fromId,
@@ -138,6 +145,8 @@ public interface MultiWriterRepository {
     record AccountWriteResult(MutationStatus status, @Nullable AccountRecord account) {}
 
     BalanceMutationResult mutateBalance(BalanceMutationRequest request) throws SQLException;
+
+    Optional<AppliedBalanceMutation> findAppliedBalanceMutation(UUID operationId) throws SQLException;
 
     TransferMutationResult transfer(TransferMutationRequest request) throws SQLException;
 

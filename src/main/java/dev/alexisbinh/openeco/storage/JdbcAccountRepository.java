@@ -180,9 +180,19 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                 CREATE TABLE IF NOT EXISTS economy_operations (
                     operation_id VARCHAR(36) NOT NULL PRIMARY KEY,
                     kind VARCHAR(32) NOT NULL,
-                    created_at BIGINT NOT NULL
+                    created_at BIGINT NOT NULL,
+                    account_id VARCHAR(36),
+                    currency_id VARCHAR(32),
+                    transaction_type VARCHAR(16),
+                    amount DECIMAL(30,8),
+                    balance_after DECIMAL(30,8)
                 )
                 """);
+        ensureColumn(stmt.getConnection(), stmt, "economy_operations", "account_id", "VARCHAR(36)");
+        ensureColumn(stmt.getConnection(), stmt, "economy_operations", "currency_id", "VARCHAR(32)");
+        ensureColumn(stmt.getConnection(), stmt, "economy_operations", "transaction_type", "VARCHAR(16)");
+        ensureColumn(stmt.getConnection(), stmt, "economy_operations", "amount", "DECIMAL(30,8)");
+        ensureColumn(stmt.getConnection(), stmt, "economy_operations", "balance_after", "DECIMAL(30,8)");
         stmt.execute("CREATE TABLE IF NOT EXISTS account_changes ("
                 + "seq " + sequenceColumn + ","
                 + "account_id VARCHAR(36) NOT NULL,"
@@ -793,7 +803,7 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                 insertTransaction(conn, request.operationId(), request.transactionType(), null,
                         request.accountId(), request.amount(), before, after, request.timestamp(),
                         request.source(), request.note(), request.currencyId());
-                recordOperation(conn, request.operationId(), "BALANCE", request.timestamp());
+                recordBalanceOperation(conn, request, after);
                 insertChange(conn, request.operationId(), request.accountId(), version, ChangeKind.UPSERT, request.timestamp());
                 LockedAccount updated = locked.withBalance(request.currencyId(), after, request.timestamp(), version);
                 conn.commit();
@@ -803,6 +813,32 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                 throw e;
             } finally {
                 restoreAutoCommit(conn);
+            }
+        }
+    }
+
+    @Override
+    public Optional<AppliedBalanceMutation> findAppliedBalanceMutation(UUID operationId) throws SQLException {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement("""
+                     SELECT COALESCE(o.account_id,t.target_id),
+                            COALESCE(o.currency_id,t.currency_id),
+                            COALESCE(o.transaction_type,t.type),
+                            COALESCE(o.amount,t.amount),
+                            COALESCE(o.balance_after,t.balance_after)
+                       FROM economy_operations o
+                       LEFT JOIN transactions t ON t.operation_id=o.operation_id
+                      WHERE o.operation_id=? AND o.kind='BALANCE'
+                     """)) {
+            ps.setString(1, operationId.toString());
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next() || rs.getString(1) == null) return Optional.empty();
+                return Optional.of(new AppliedBalanceMutation(
+                        UUID.fromString(rs.getString(1)),
+                        rs.getString(2),
+                        TransactionType.valueOf(rs.getString(3)),
+                        rs.getBigDecimal(4),
+                        rs.getBigDecimal(5)));
             }
         }
     }
@@ -1364,6 +1400,25 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
             ps.setString(1, operationId.toString());
             ps.setString(2, kind);
             ps.setLong(3, timestamp);
+            ps.executeUpdate();
+        }
+    }
+
+    private void recordBalanceOperation(Connection conn, BalanceMutationRequest request,
+                                        BigDecimal balanceAfter) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("""
+                INSERT INTO economy_operations(
+                    operation_id,kind,created_at,account_id,currency_id,transaction_type,amount,balance_after
+                ) VALUES(?,?,?,?,?,?,?,?)
+                """)) {
+            ps.setString(1, request.operationId().toString());
+            ps.setString(2, "BALANCE");
+            ps.setLong(3, request.timestamp());
+            ps.setString(4, request.accountId().toString());
+            ps.setString(5, request.currencyId());
+            ps.setString(6, request.transactionType().name());
+            ps.setBigDecimal(7, request.amount());
+            ps.setBigDecimal(8, balanceAfter);
             ps.executeUpdate();
         }
     }

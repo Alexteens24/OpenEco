@@ -76,6 +76,8 @@ class RemoteMultiWriterIntegrationTest {
                     first.mutateBalance(onceRequest).status(), dialect.name());
             assertEquals(MultiWriterRepository.MutationStatus.ALREADY_APPLIED,
                     second.mutateBalance(onceRequest).status(), dialect.name());
+            assertEquals(accountId,
+                    first.findAppliedBalanceMutation(once).orElseThrow().accountId(), dialect.name());
             assertTrue(first.loadAccounts(List.of(accountId, UUID.randomUUID())).get(accountId).isPresent(),
                     dialect.name());
 

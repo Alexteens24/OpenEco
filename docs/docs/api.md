@@ -52,7 +52,7 @@ OpenEcoApi api = registration.getProvider();
 
 Resolve during plugin startup and fail fast if missing.
 
-Resolve `OpenEcoAsyncApi` the same way when your integration must not block a server thread. Its mutation methods return `CompletionStage`, use a bounded I/O executor, and expose fresh account/balance reads. In multi-writer mode, successful completion means the authoritative database transaction committed. `depositOnce(operationId, accountId, currencyId, amount)` supports durable scheduled work: retrying the same operation ID never applies the deposit twice.
+Resolve `OpenEcoAsyncApi` the same way when your integration must not block a server thread. Its mutation methods return `CompletionStage`, use a bounded I/O executor, and expose fresh account/balance reads. In multi-writer mode, successful completion means the authoritative database transaction committed. `depositOnce(operationId, accountId, currencyId, amount)` supports durable scheduled work: retrying the same operation ID never applies the deposit twice, and an already-committed retry succeeds before events or current policy are evaluated again.
 
 ## Threading
 

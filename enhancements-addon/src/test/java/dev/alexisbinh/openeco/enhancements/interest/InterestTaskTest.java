@@ -21,6 +21,7 @@ import dev.alexisbinh.openeco.api.CurrencyInfo;
 import dev.alexisbinh.openeco.api.EconomyRulesSnapshot;
 import dev.alexisbinh.openeco.api.OpenEcoApi;
 import dev.alexisbinh.openeco.api.OpenEcoAsyncApi;
+import dev.alexisbinh.openeco.api.ClusterJobCoordinator;
 import dev.alexisbinh.openeco.api.TransactionKind;
 import dev.alexisbinh.openeco.api.TransactionMetadata;
 import io.papermc.paper.threadedregions.scheduler.GlobalRegionScheduler;
@@ -40,6 +41,7 @@ import java.math.BigDecimal;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -136,5 +138,36 @@ class InterestTaskTest {
         org.junit.jupiter.api.Assertions.assertEquals(
                 operationIds.getAllValues().get(0), operationIds.getAllValues().get(1));
         verify(api, never()).deposit(any(UUID.class), any(BigDecimal.class));
+    }
+
+    @Test
+    void failedAccountKeepsLeaseRetryableAndNextAttemptCompletes() {
+        UUID retryAccountId = UUID.randomUUID();
+        when(api.getUUIDNameMap()).thenReturn(Map.of(accountId, "Alice", retryAccountId, "Bob"));
+        when(api.getBalance(retryAccountId)).thenReturn(new BigDecimal("100.00"));
+
+        OpenEcoAsyncApi asyncApi = org.mockito.Mockito.mock(OpenEcoAsyncApi.class);
+        when(asyncApi.depositOnce(any(UUID.class), eq(accountId), eq("coins"), eq(new BigDecimal("5.00"))))
+                .thenReturn(CompletableFuture.completedFuture(true));
+        AtomicInteger retryAttempts = new AtomicInteger();
+        when(asyncApi.depositOnce(any(UUID.class), eq(retryAccountId), eq("coins"), eq(new BigDecimal("5.00"))))
+                .thenAnswer(ignored -> retryAttempts.incrementAndGet() == 1
+                        ? CompletableFuture.failedFuture(new IllegalStateException("temporary database failure"))
+                        : CompletableFuture.completedFuture(true));
+
+        ClusterJobCoordinator coordinator = org.mockito.Mockito.mock(ClusterJobCoordinator.class);
+        ClusterJobCoordinator.Lease firstLease = org.mockito.Mockito.mock(ClusterJobCoordinator.Lease.class);
+        ClusterJobCoordinator.Lease retryLease = org.mockito.Mockito.mock(ClusterJobCoordinator.Lease.class);
+        when(coordinator.tryAcquire(eq("interest"), any(String.class), org.mockito.ArgumentMatchers.anyLong()))
+                .thenReturn(java.util.Optional.of(firstLease), java.util.Optional.of(retryLease));
+        InterestTask multiWriterTask = new InterestTask(api, plugin, coordinator, asyncApi);
+
+        multiWriterTask.run();
+        verify(firstLease, never()).complete();
+
+        multiWriterTask.run();
+        verify(retryLease).complete();
+        verify(asyncApi, org.mockito.Mockito.times(2)).depositOnce(
+                any(UUID.class), eq(retryAccountId), eq("coins"), eq(new BigDecimal("5.00")));
     }
 }

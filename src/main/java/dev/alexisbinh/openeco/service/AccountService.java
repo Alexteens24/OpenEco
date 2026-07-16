@@ -771,6 +771,27 @@ public class AccountService {
         if (multiWriterRepository == null) {
             throw new IllegalStateException("Idempotent deposits require multi-writer mode");
         }
+        try {
+            Optional<MultiWriterRepository.AppliedBalanceMutation> applied =
+                    multiWriterRepository.findAppliedBalanceMutation(operationId);
+            if (applied.isPresent()) {
+                MultiWriterRepository.AppliedBalanceMutation existing = applied.get();
+                boolean sameDeposit = existing.accountId().equals(id)
+                        && existing.currencyId().equalsIgnoreCase(currencyId)
+                        && existing.transactionType() == TransactionType.GIVE
+                        && existing.amount().compareTo(amount) == 0;
+                if (!sameDeposit) {
+                    return operationFailure(amount, existing.balanceAfter(),
+                            "Operation ID was already used for another mutation");
+                }
+                return new EconomyOperationResponse(
+                        existing.amount(), existing.balanceAfter(),
+                        EconomyOperationResponse.ResponseType.SUCCESS, "Already applied");
+            }
+        } catch (SQLException e) {
+            log.severe("Could not check idempotent deposit " + operationId + ": " + e.getMessage());
+            return operationFailure(amount, BigDecimal.ZERO, "Storage unavailable");
+        }
         return mutateBalanceMultiWriter(operationId, id, currencyId, amount,
                 MultiWriterRepository.BalanceMutationKind.DEPOSIT,
                 TransactionType.GIVE, BalanceChangeEvent.Reason.GIVE);
@@ -1321,22 +1342,37 @@ public class AccountService {
                 return;
             }
             Map<UUID, MultiWriterRepository.AccountChange> latest = new java.util.LinkedHashMap<>();
+            long nextCursor = changeCursor;
             for (MultiWriterRepository.AccountChange change : changes) {
                 latest.put(change.accountId(), change);
-                changeCursor = Math.max(changeCursor, change.sequence());
+                nextCursor = Math.max(nextCursor, change.sequence());
             }
             List<UUID> reload = latest.values().stream()
                     .filter(change -> change.kind() == MultiWriterRepository.ChangeKind.UPSERT)
                     .map(MultiWriterRepository.AccountChange::accountId).toList();
             Map<UUID, Optional<AccountRecord>> loaded = multiWriterRepository.loadAccounts(reload);
+            latest.values().stream()
+                    .filter(change -> change.kind() == MultiWriterRepository.ChangeKind.DELETE)
+                    .forEach(change -> removeCachedAccount(change.accountId(), change.version()));
+            boolean appliedAll = true;
             for (MultiWriterRepository.AccountChange change : latest.values()) {
-                if (change.kind() == MultiWriterRepository.ChangeKind.DELETE) {
-                    removeCachedAccount(change.accountId(), change.version());
-                    continue;
+                if (change.kind() == MultiWriterRepository.ChangeKind.DELETE) continue;
+                Optional<AccountRecord> fresh = loaded.getOrDefault(change.accountId(), Optional.empty());
+                if (fresh.isEmpty()) {
+                    // The account was deleted after this UPSERT was logged. The later DELETE
+                    // remains in the change log, but the authoritative absence is safe to apply now.
+                    removeCachedAccount(change.accountId());
+                } else if (!applyAuthoritativeAccount(fresh.get())) {
+                    appliedAll = false;
                 }
-                loaded.getOrDefault(change.accountId(), Optional.empty()).ifPresent(this::applyAuthoritativeAccount);
             }
             markAllLeaderboardsDirty();
+            if (!appliedAll) {
+                log.warning("Multi-writer change batch was not acknowledged because an authoritative "
+                        + "account could not be applied; it will be retried.");
+                return;
+            }
+            changeCursor = nextCursor;
         } catch (SQLException e) {
             log.warning("Multi-writer change polling failed: " + e.getMessage());
         } finally {
@@ -1344,34 +1380,37 @@ public class AccountService {
         }
     }
 
-    private void resyncAuthoritativeCache() throws SQLException {
+    private boolean resyncAuthoritativeCache() throws SQLException {
         long watermark = multiWriterRepository.currentChangeSequence();
         if (lazyAccountMode) {
             List<UUID> cachedIds = accountRegistry.liveRecords().stream()
                     .map(AccountRecord::getId).toList();
             Map<UUID, Optional<AccountRecord>> loaded = multiWriterRepository.loadAccounts(cachedIds);
+            boolean appliedAll = true;
             for (UUID id : cachedIds) {
                 Optional<AccountRecord> fresh = loaded.getOrDefault(id, Optional.empty());
-                if (fresh.isPresent()) applyAuthoritativeAccount(fresh.get());
+                if (fresh.isPresent()) appliedAll &= applyAuthoritativeAccount(fresh.get());
                 else removeCachedAccount(id);
             }
-            changeCursor = watermark;
             markAllLeaderboardsDirty();
-            return;
+            if (appliedAll) changeCursor = watermark;
+            return appliedAll;
         }
         HashSet<UUID> seen = new HashSet<>();
+        AtomicBoolean appliedAll = new AtomicBoolean(true);
         repository.loadBatches(ACCOUNT_LOAD_BATCH_SIZE, records -> {
             for (AccountRecord record : records) {
                 alignLoadedRecordCurrencies(record, config);
                 seen.add(record.getId());
-                applyAuthoritativeAccount(record);
+                if (!applyAuthoritativeAccount(record)) appliedAll.set(false);
             }
         });
         for (AccountRecord record : List.copyOf(accountRegistry.liveRecords())) {
             if (!seen.contains(record.getId())) removeCachedAccount(record.getId());
         }
-        changeCursor = watermark;
         markAllLeaderboardsDirty();
+        if (appliedAll.get()) changeCursor = watermark;
+        return appliedAll.get();
     }
 
     public long getChangeCursor() {
@@ -1762,20 +1801,21 @@ public class AccountService {
                 .toList();
     }
 
-    private void applyAuthoritativeAccount(@Nullable AccountRecord fresh) {
-        if (fresh == null) return;
+    private boolean applyAuthoritativeAccount(@Nullable AccountRecord fresh) {
+        if (fresh == null) return true;
         synchronized (persistenceLock) {
             synchronized (accountIdentityLock) {
                 AccountRecord live = accountRegistry.getLiveRecord(fresh.getId());
-                if (live != null && live.getVersion() > fresh.getVersion()) return;
+                if (live != null && live.getVersion() > fresh.getVersion()) return true;
                 if (!accountRegistry.refreshInPlace(fresh)) {
                     log.warning("Could not apply authoritative account " + fresh.getId()
                             + " because its name is claimed by another cached account");
-                    return;
+                    return false;
                 }
                 accountIdentityVersion.incrementAndGet();
                 missingAccounts.remove(fresh.getId());
                 missingNames.remove(AccountRegistry.normalizeName(fresh.getLastKnownName()));
+                return true;
             }
         }
     }

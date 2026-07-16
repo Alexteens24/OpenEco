@@ -39,6 +39,7 @@ Eager mode uses lightweight per-currency snapshots. Lazy mode flushes dirty bala
 In `multi-writer` mode, the shared database is authoritative. Mutations lock affected account rows, validate balance caps/cooldowns/policies, update balances and versions, append history, and append durable cache-invalidation rows in the same transaction. Transfers lock account UUIDs in deterministic order. A persistent per-UUID version ledger survives account deletion, so recreating the same UUID cannot be mistaken for an older cache value. Poll refreshes load changed accounts in bounded `IN (...)` chunks instead of issuing one query per UUID. Reads are cached and may be stale for `cache-refresh-interval-ms`.
 
 Redis Pub/Sub is optional and never authoritative. A dropped Redis message is repaired by JDBC polling.
+Polling acknowledges its durable change cursor only after the complete batch has loaded and every authoritative cache update has applied. Temporary database failures or cache identity conflicts therefore retry the same batch instead of silently skipping it.
 
 In legacy `handoff` mode:
 

@@ -125,6 +125,13 @@ class MultiWriterRepositoryIntegrationTest {
                     repository.mutateBalance(request).status());
             assertEquals(0, new BigDecimal("5").compareTo(
                     repository.loadAccount(accountId).orElseThrow().getBalance("coins")));
+
+            repository.deleteAccount(UUID.randomUUID(), accountId, now + 2);
+            var durableResult = repository.findAppliedBalanceMutation(operationId).orElseThrow();
+            assertEquals(accountId, durableResult.accountId());
+            assertEquals("coins", durableResult.currencyId());
+            assertEquals(TransactionType.GIVE, durableResult.transactionType());
+            assertEquals(0, new BigDecimal("5").compareTo(durableResult.amount()));
         }
     }
 

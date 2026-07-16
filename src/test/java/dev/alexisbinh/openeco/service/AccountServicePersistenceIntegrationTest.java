@@ -16,6 +16,7 @@
 
 package dev.alexisbinh.openeco.service;
 
+import dev.alexisbinh.openeco.api.MutationPolicyDecision;
 import dev.alexisbinh.openeco.model.AccountRecord;
 import dev.alexisbinh.openeco.model.PayResult;
 import dev.alexisbinh.openeco.model.TransactionEntry;
@@ -23,6 +24,7 @@ import dev.alexisbinh.openeco.model.TransactionType;
 import dev.alexisbinh.openeco.storage.AccountRepository;
 import dev.alexisbinh.openeco.storage.DatabaseDialect;
 import dev.alexisbinh.openeco.storage.JdbcAccountRepository;
+import dev.alexisbinh.openeco.storage.MultiWriterRepository;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -47,6 +49,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -624,6 +627,103 @@ class AccountServicePersistenceIntegrationTest {
     }
 
     @Test
+    void multiWriterPollDoesNotAdvanceCursorWhenBatchAccountLoadFails() throws Exception {
+        FailingBatchLoadRepository repository = new FailingBatchLoadRepository(
+                tempDir, "multi-writer-poll-retry-test");
+        YamlConfiguration config = testConfig(0.0, -1);
+        config.set("cross-server.enabled", true);
+        config.set("cross-server.mode", "multi-writer");
+        AccountService writer = newServiceWithConfig(repository, config);
+        AccountService reader = newServiceWithConfig(repository, config);
+        try {
+            UUID accountId = UUID.randomUUID();
+            writer.loadAll();
+            assertEquals(AccountService.CreateAccountStatus.CREATED,
+                    writer.createAccountDetailed(accountId, "Alice"));
+            reader.loadAll();
+            long cursorBeforeMutation = reader.getChangeCursor();
+
+            assertTrue(writer.deposit(accountId, new BigDecimal("3.00")).transactionSuccess());
+            repository.failNextBatchLoad();
+            reader.pollMultiWriterChanges(100);
+
+            assertEquals(cursorBeforeMutation, reader.getChangeCursor());
+            assertEquals(0, new BigDecimal("5.00").compareTo(reader.getBalance(accountId)));
+
+            reader.pollMultiWriterChanges(100);
+            assertTrue(reader.getChangeCursor() > cursorBeforeMutation);
+            assertEquals(0, new BigDecimal("8.00").compareTo(reader.getBalance(accountId)));
+        } finally {
+            writer.shutdown();
+            reader.shutdown();
+            repository.close();
+        }
+    }
+
+    @Test
+    void multiWriterPollDoesNotAdvanceCursorWhenAuthoritativeNameCannotBeApplied() throws Exception {
+        JdbcAccountRepository repository = new JdbcAccountRepository(
+                DatabaseDialect.H2, tempDir.toString(), "multi-writer-poll-name-conflict-test");
+        YamlConfiguration config = testConfig(0.0, -1);
+        config.set("cross-server.enabled", true);
+        config.set("cross-server.mode", "multi-writer");
+        AccountService writer = newServiceWithConfig(repository, config);
+        AccountService reader = newServiceWithConfig(repository, config);
+        try {
+            UUID aliceId = UUID.randomUUID();
+            UUID bobId = UUID.randomUUID();
+            writer.loadAll();
+            assertTrue(writer.createAccount(aliceId, "Alice"));
+            assertTrue(writer.createAccount(bobId, "Bob"));
+            reader.loadAll();
+            long cursorBeforeRenames = reader.getChangeCursor();
+
+            assertEquals(AccountService.RenameAccountStatus.RENAMED,
+                    writer.renameAccountDetailed(aliceId, "Temporary"));
+            assertEquals(AccountService.RenameAccountStatus.RENAMED,
+                    writer.renameAccountDetailed(bobId, "Alice"));
+            assertEquals(AccountService.RenameAccountStatus.RENAMED,
+                    writer.renameAccountDetailed(aliceId, "Bob"));
+
+            reader.pollMultiWriterChanges(100);
+
+            assertEquals(cursorBeforeRenames, reader.getChangeCursor());
+        } finally {
+            writer.shutdown();
+            reader.shutdown();
+            repository.close();
+        }
+    }
+
+    @Test
+    void depositOnceSucceedsBeforeReevaluatingChangedPolicy() throws Exception {
+        JdbcAccountRepository repository = new JdbcAccountRepository(
+                DatabaseDialect.H2, tempDir.toString(), "deposit-once-policy-retry-test");
+        YamlConfiguration config = testConfig(0.0, -1);
+        config.set("cross-server.enabled", true);
+        config.set("cross-server.mode", "multi-writer");
+        AccountService service = newServiceWithConfig(repository, config);
+        try {
+            UUID accountId = UUID.randomUUID();
+            UUID operationId = UUID.randomUUID();
+            service.loadAll();
+            assertTrue(service.createAccount(accountId, "Alice"));
+            assertTrue(service.depositOnce(operationId, accountId, "openeco", new BigDecimal("5.00"))
+                    .transactionSuccess());
+
+            service.getPolicyRegistry().register("deny-retries", ignored ->
+                    new MutationPolicyDecision(false, "denied", null, null));
+
+            assertTrue(service.depositOnce(operationId, accountId, "openeco", new BigDecimal("5.00"))
+                    .transactionSuccess());
+            assertEquals(0, new BigDecimal("10.00").compareTo(service.getBalance(accountId)));
+        } finally {
+            service.shutdown();
+            repository.close();
+        }
+    }
+
+    @Test
     void depositAndWithdrawLogTransactionHistory() throws Exception {
         JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "history-log-test");
         try {
@@ -1164,6 +1264,26 @@ class AccountServicePersistenceIntegrationTest {
         config.set("baltop.refresh-interval-seconds", 30);
         config.set("history.retention-days", -1);
         return config;
+    }
+
+    private static final class FailingBatchLoadRepository extends JdbcAccountRepository {
+        private final AtomicBoolean failNextBatchLoad = new AtomicBoolean();
+
+        private FailingBatchLoadRepository(Path dataFolder, String filename) throws SQLException {
+            super(DatabaseDialect.H2, dataFolder.toString(), filename);
+        }
+
+        private void failNextBatchLoad() {
+            failNextBatchLoad.set(true);
+        }
+
+        @Override
+        public Map<UUID, Optional<AccountRecord>> loadAccounts(Iterable<UUID> ids) throws SQLException {
+            if (failNextBatchLoad.compareAndSet(true, false)) {
+                throw new SQLException("simulated temporary batch load failure");
+            }
+            return super.loadAccounts(ids);
+        }
     }
 
     private static final class BlockingRepository implements AccountRepository {
