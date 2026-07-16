@@ -10,14 +10,23 @@ import dev.alexisbinh.openeco.api.MutationPolicyContext;
 import dev.alexisbinh.openeco.api.MutationPolicyDecision;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class EconomyPolicyRegistryImpl implements EconomyPolicyRegistry {
+    public record RollingConstraint(String providerId, MutationPolicyDecision.RollingLimit limit) { }
+
     public record ResolvedPolicy(boolean allowed, String providerId, String reason,
                                  BigDecimal maximumTargetBalance,
-                                 MutationPolicyDecision.RollingLimit rollingLimit) {
-        static ResolvedPolicy allow() { return new ResolvedPolicy(true, null, null, null, null); }
+                                 List<RollingConstraint> rollingConstraints) {
+        public ResolvedPolicy {
+            rollingConstraints = rollingConstraints == null ? List.of() : List.copyOf(rollingConstraints);
+        }
+
+        static ResolvedPolicy allow() { return new ResolvedPolicy(true, null, null, null, List.of()); }
     }
 
     private final Map<String, EconomyMutationPolicyProvider> providers = new ConcurrentHashMap<>();
@@ -38,9 +47,11 @@ public final class EconomyPolicyRegistryImpl implements EconomyPolicyRegistry {
 
     public ResolvedPolicy evaluate(MutationPolicyContext context) {
         BigDecimal cap = null;
-        MutationPolicyDecision.RollingLimit rolling = null;
-        String rollingProvider = null;
-        for (Map.Entry<String, EconomyMutationPolicyProvider> entry : providers.entrySet()) {
+        List<RollingConstraint> rollingConstraints = new ArrayList<>();
+        List<Map.Entry<String, EconomyMutationPolicyProvider>> orderedProviders = providers.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey(Comparator.naturalOrder()))
+                .toList();
+        for (Map.Entry<String, EconomyMutationPolicyProvider> entry : orderedProviders) {
             MutationPolicyDecision decision;
             try {
                 decision = entry.getValue().evaluate(context);
@@ -57,10 +68,9 @@ public final class EconomyPolicyRegistryImpl implements EconomyPolicyRegistry {
                 cap = decision.maximumTargetBalance();
             }
             if (decision.rollingLimit() != null) {
-                rolling = decision.rollingLimit();
-                rollingProvider = entry.getKey();
+                rollingConstraints.add(new RollingConstraint(entry.getKey(), decision.rollingLimit()));
             }
         }
-        return new ResolvedPolicy(true, rollingProvider, null, cap, rolling);
+        return new ResolvedPolicy(true, null, null, cap, rollingConstraints);
     }
 }

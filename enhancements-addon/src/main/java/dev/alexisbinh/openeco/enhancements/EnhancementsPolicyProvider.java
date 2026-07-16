@@ -8,58 +8,78 @@ import dev.alexisbinh.openeco.api.EconomyMutationPolicyProvider;
 import dev.alexisbinh.openeco.api.MutationPolicyContext;
 import dev.alexisbinh.openeco.api.MutationPolicyDecision;
 import org.bukkit.configuration.file.FileConfiguration;
-import org.bukkit.entity.Player;
-import org.bukkit.plugin.java.JavaPlugin;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 final class EnhancementsPolicyProvider implements EconomyMutationPolicyProvider {
-    private final JavaPlugin plugin;
+    record PermissionTier(String permission, BigDecimal cap) { }
 
-    EnhancementsPolicyProvider(JavaPlugin plugin) {
-        this.plugin = plugin;
+    record PolicySettings(boolean permCapEnabled, List<PermissionTier> permissionTiers,
+                          boolean payLimitEnabled,
+                          MutationPolicyDecision.RollingLimit payLimit) {
+        PolicySettings {
+            permissionTiers = List.copyOf(permissionTiers);
+        }
+    }
+
+    record PlayerPolicySnapshot(BigDecimal maximumBalance, boolean payLimitBypass) { }
+
+    private final PolicySettings settings;
+    private final Map<UUID, PlayerPolicySnapshot> playerSnapshots;
+
+    EnhancementsPolicyProvider(PolicySettings settings, Map<UUID, PlayerPolicySnapshot> playerSnapshots) {
+        this.settings = settings;
+        this.playerSnapshots = playerSnapshots;
     }
 
     @Override
     public MutationPolicyDecision evaluate(MutationPolicyContext context) {
-        FileConfiguration config = plugin.getConfig();
-        BigDecimal cap = permissionCap(context, config);
-        MutationPolicyDecision.RollingLimit rolling = payLimit(context, config);
+        BigDecimal cap = permissionCap(context);
+        MutationPolicyDecision.RollingLimit rolling = payLimit(context);
         return new MutationPolicyDecision(true, null, cap, rolling);
     }
 
-    private BigDecimal permissionCap(MutationPolicyContext context, FileConfiguration config) {
-        if (!config.getBoolean("perm-cap.enabled", false)) return null;
+    private BigDecimal permissionCap(MutationPolicyContext context) {
+        if (!settings.permCapEnabled()) return null;
         if (context.kind() == MutationPolicyContext.Kind.WITHDRAW) return null;
-        Player target = plugin.getServer().getPlayer(context.targetId());
-        if (target == null || target.hasPermission("openeco.enhancements.bypass.permcap")) return null;
-        BigDecimal highest = null;
+        PlayerPolicySnapshot snapshot = playerSnapshots.get(context.targetId());
+        return snapshot == null ? null : snapshot.maximumBalance();
+    }
+
+    private MutationPolicyDecision.RollingLimit payLimit(MutationPolicyContext context) {
+        if (context.kind() != MutationPolicyContext.Kind.PAY
+                || !settings.payLimitEnabled() || settings.payLimit() == null
+                || context.sourceId() == null) return null;
+        PlayerPolicySnapshot snapshot = playerSnapshots.get(context.sourceId());
+        return snapshot != null && snapshot.payLimitBypass() ? null : settings.payLimit();
+    }
+
+    static PolicySettings settingsFrom(FileConfiguration config) {
+        List<PermissionTier> tiers = new ArrayList<>();
         for (Map<?, ?> tier : config.getMapList("perm-cap.tiers")) {
             Object permission = tier.get("permission");
             Object rawCap = tier.get("cap");
-            if (!(permission instanceof String node) || rawCap == null || !target.hasPermission(node)) continue;
+            if (!(permission instanceof String node) || node.isBlank() || rawCap == null) continue;
             try {
-                BigDecimal candidate = new BigDecimal(rawCap.toString());
-                if (candidate.signum() >= 0 && (highest == null || candidate.compareTo(highest) > 0)) highest = candidate;
+                BigDecimal cap = new BigDecimal(rawCap.toString());
+                if (cap.signum() >= 0) tiers.add(new PermissionTier(node, cap));
             } catch (NumberFormatException ignored) { }
         }
-        return highest;
-    }
-
-    private MutationPolicyDecision.RollingLimit payLimit(MutationPolicyContext context, FileConfiguration config) {
-        if (context.kind() != MutationPolicyContext.Kind.PAY
-                || !config.getBoolean("pay-limit.enabled", false) || context.sourceId() == null) return null;
-        Player source = plugin.getServer().getPlayer(context.sourceId());
-        if (source != null && source.hasPermission("openeco.enhancements.bypass.paylimit")) return null;
+        MutationPolicyDecision.RollingLimit payLimit = null;
         long windowMs = config.getLong("pay-limit.window-seconds", 86_400L) * 1_000L;
-        if (windowMs <= 0) return null;
         Object configured = config.get("pay-limit.max-amount");
         try {
             BigDecimal maximum = new BigDecimal(configured == null ? "10000" : configured.toString());
-            return maximum.signum() > 0 ? new MutationPolicyDecision.RollingLimit(maximum, windowMs) : null;
-        } catch (NumberFormatException ignored) {
-            return null;
-        }
+            if (maximum.signum() > 0 && windowMs > 0) {
+                payLimit = new MutationPolicyDecision.RollingLimit(maximum, windowMs);
+            }
+        } catch (NumberFormatException ignored) { }
+        return new PolicySettings(
+                config.getBoolean("perm-cap.enabled", false), tiers,
+                config.getBoolean("pay-limit.enabled", false), payLimit);
     }
 }

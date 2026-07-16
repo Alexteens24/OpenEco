@@ -27,6 +27,7 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.UUID;
 import java.util.logging.Logger;
@@ -63,27 +64,32 @@ public class InterestTask implements Runnable {
     @Override
     public void run() {
         long intervalSeconds = plugin.getConfig().getLong("interest.interval-seconds", 3600L);
-        String runId = Long.toString(System.currentTimeMillis() / Math.max(1_000L, intervalSeconds * 1_000L));
+        long intervalMs = Math.max(1_000L, intervalSeconds * 1_000L);
+        String runId = Long.toString(System.currentTimeMillis() / intervalMs);
         java.util.Optional<ClusterJobCoordinator.Lease> acquired = coordinator == null
                 ? java.util.Optional.empty() : coordinator.tryAcquire("interest", runId,
-                Math.max(60_000L, intervalSeconds * 2_000L));
+                retryIntervalMs(intervalMs));
         if (coordinator != null && acquired.isEmpty()) return;
         if (asyncApi != null) {
             try {
-                runInterestCycle(null);
+                runInterestCycle(null, runId);
                 acquired.ifPresent(ClusterJobCoordinator.Lease::complete);
             } catch (RuntimeException e) {
                 log.warning("[Interest] Cycle failed; lease will expire for retry: " + e.getMessage());
             }
         } else {
             plugin.getServer().getGlobalRegionScheduler().run(plugin, task -> {
-                runInterestCycle(task);
+                runInterestCycle(task, runId);
                 acquired.ifPresent(ClusterJobCoordinator.Lease::complete);
             });
         }
     }
 
-    private void runInterestCycle(ScheduledTask task) {
+    public static long retryIntervalMs(long intervalMs) {
+        return Math.max(1_000L, Math.min(60_000L, Math.max(1L, intervalMs / 4L)));
+    }
+
+    private void runInterestCycle(ScheduledTask task, String runId) {
         FileConfiguration config = plugin.getConfig();
         double rate = config.getDouble("interest.rate", 5.0);
         long intervalSeconds = config.getLong("interest.interval-seconds", 3600);
@@ -113,7 +119,8 @@ public class InterestTask implements Runnable {
         Map<UUID, String> accounts = api.getUUIDNameMap();
         for (UUID id : accounts.keySet()) {
             try {
-                credited += processAccount(id, currencyId, explicitCurrency, factor, minBalance, maxPerInterval, fractionalDigits) ? 1 : 0;
+                credited += processAccount(id, currencyId, explicitCurrency, factor,
+                        minBalance, maxPerInterval, fractionalDigits, runId) ? 1 : 0;
             } catch (Exception e) {
                 log.warning("[Interest] Error processing account " + id + ": " + e.getMessage());
                 skipped++;
@@ -123,7 +130,7 @@ public class InterestTask implements Runnable {
     }
 
     private boolean processAccount(UUID id, String currencyId, boolean explicitCurrency, BigDecimal factor, BigDecimal minBalance,
-                                   BigDecimal maxPerInterval, int fractionalDigits) {
+                                   BigDecimal maxPerInterval, int fractionalDigits, String runId) {
         BigDecimal balance = explicitCurrency ? api.getBalance(id, currencyId) : api.getBalance(id);
         if (balance.compareTo(minBalance) < 0) return false;
 
@@ -136,12 +143,15 @@ public class InterestTask implements Runnable {
             interest = maxPerInterval;
         }
 
-        BalanceChangeResult result;
         if (asyncApi != null) {
-            result = asyncApi.deposit(id, currencyId, interest).toCompletableFuture().join();
-        } else {
-            result = explicitCurrency ? api.deposit(id, currencyId, interest) : api.deposit(id, interest);
+            UUID operationId = UUID.nameUUIDFromBytes(
+                    ("openeco:interest:" + runId + ':' + id + ':' + currencyId)
+                            .getBytes(StandardCharsets.UTF_8));
+            return asyncApi.depositOnce(operationId, id, currencyId, interest)
+                    .toCompletableFuture().join();
         }
+        BalanceChangeResult result = explicitCurrency
+                ? api.deposit(id, currencyId, interest) : api.deposit(id, interest);
         return result.isSuccess();
     }
 }

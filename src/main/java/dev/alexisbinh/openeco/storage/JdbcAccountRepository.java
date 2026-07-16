@@ -191,6 +191,12 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                 + "operation_id VARCHAR(36) NOT NULL,"
                 + "changed_at BIGINT NOT NULL)");
         stmt.execute("""
+                CREATE TABLE IF NOT EXISTS account_versions (
+                    account_id VARCHAR(36) NOT NULL PRIMARY KEY,
+                    version BIGINT NOT NULL
+                )
+                """);
+        stmt.execute("""
                 CREATE TABLE IF NOT EXISTS account_pay_state (
                     account_id VARCHAR(36) NOT NULL PRIMARY KEY,
                     last_pay_at BIGINT NOT NULL
@@ -222,6 +228,41 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
         if (!indexExists(stmt.getConnection(), "economy_policy_usage", "idx_policy_usage_window")) {
             stmt.execute("CREATE INDEX idx_policy_usage_window ON economy_policy_usage(provider_id,subject_id,currency_id,occurred_at)");
         }
+        backfillAccountVersions(stmt.getConnection());
+    }
+
+    private void backfillAccountVersions(Connection conn) throws SQLException {
+        try (PreparedStatement count = conn.prepareStatement("SELECT COUNT(*) FROM account_versions");
+             ResultSet rs = count.executeQuery()) {
+            if (rs.next() && rs.getLong(1) > 0L) return;
+        }
+        String sql = "SELECT account_id,MAX(version_value) FROM ("
+                + "SELECT id AS account_id,version AS version_value FROM accounts "
+                + "UNION ALL SELECT account_id,account_version AS version_value FROM account_changes"
+                + ") stored_versions GROUP BY account_id";
+        try (PreparedStatement select = conn.prepareStatement(sql);
+             ResultSet rs = select.executeQuery();
+             PreparedStatement upsert = conn.prepareStatement(accountVersionBackfillSql())) {
+            while (rs.next()) {
+                String accountId = rs.getString(1);
+                long version = rs.getLong(2);
+                upsert.setString(1, accountId);
+                upsert.setLong(2, version);
+                upsert.executeUpdate();
+            }
+        }
+    }
+
+    private String accountVersionBackfillSql() {
+        return switch (dialect) {
+            case SQLITE, POSTGRESQL -> "INSERT INTO account_versions(account_id,version) VALUES(?,?) "
+                    + "ON CONFLICT(account_id) DO UPDATE SET version=CASE "
+                    + "WHEN excluded.version>account_versions.version THEN excluded.version "
+                    + "ELSE account_versions.version END";
+            case MYSQL, MARIADB -> "INSERT INTO account_versions(account_id,version) VALUES(?,?) "
+                    + "ON DUPLICATE KEY UPDATE version=GREATEST(version,VALUES(version))";
+            case H2 -> "MERGE INTO account_versions(account_id,version) KEY(account_id) VALUES(?,?)";
+        };
     }
 
     private void createIndexIfMissingForMultiWriter(Statement stmt, String name, String sql) throws SQLException {
@@ -723,6 +764,11 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                             BigDecimal.ZERO, BigDecimal.ZERO, null);
                 }
                 BigDecimal before = locked.balance(request.currencyId());
+                if (operationExists(conn, request.operationId())) {
+                    conn.rollback();
+                    return new BalanceMutationResult(MutationStatus.ALREADY_APPLIED, request.amount(),
+                            before, before, locked.toRecord());
+                }
                 if (locked.frozen()) {
                     conn.rollback();
                     return new BalanceMutationResult(MutationStatus.FROZEN, request.amount(), before, before, locked.toRecord());
@@ -741,7 +787,7 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                     return new BalanceMutationResult(MutationStatus.BALANCE_LIMIT, request.amount(), before, before, locked.toRecord());
                 }
 
-                long version = locked.version() + 1;
+                long version = advanceAccountVersion(conn, request.accountId(), locked.version());
                 upsertBalance(conn, request.accountId(), request.currencyId(), after, request.timestamp());
                 updateAccountMetadata(conn, locked, request.currencyId(), after, request.timestamp(), version);
                 insertTransaction(conn, request.operationId(), request.transactionType(), null,
@@ -788,11 +834,10 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                         return transferFailure(request, MutationStatus.COOLDOWN, remaining, from, to);
                     }
                 }
-                if (request.rollingPolicyId() != null && request.rollingMaximum() != null
-                        && request.rollingWindowMs() > 0) {
-                    BigDecimal used = loadPolicyUsage(conn, request.rollingPolicyId(), request.fromId(),
-                            request.currencyId(), request.timestamp() - request.rollingWindowMs());
-                    if (used.add(request.sent()).compareTo(request.rollingMaximum()) > 0) {
+                for (RollingPolicyConstraint constraint : request.rollingPolicies()) {
+                    BigDecimal used = loadPolicyUsage(conn, constraint.providerId(), request.fromId(),
+                            request.currencyId(), request.timestamp() - constraint.windowMs());
+                    if (used.add(request.sent()).compareTo(constraint.maximumAmount()) > 0) {
                         conn.rollback();
                         return transferFailure(request, MutationStatus.POLICY_REJECTED, 0L, from, to);
                     }
@@ -810,16 +855,17 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                     return transferFailure(request, MutationStatus.BALANCE_LIMIT, 0L, from, to);
                 }
 
-                long fromVersion = from.version() + 1;
-                long toVersion = to.version() + 1;
+                long firstVersion = advanceAccountVersion(conn, firstId, first.version());
+                long secondVersion = advanceAccountVersion(conn, secondId, second.version());
+                long fromVersion = firstId.equals(request.fromId()) ? firstVersion : secondVersion;
+                long toVersion = firstId.equals(request.toId()) ? firstVersion : secondVersion;
                 upsertBalance(conn, request.fromId(), request.currencyId(), fromAfter, request.timestamp());
                 upsertBalance(conn, request.toId(), request.currencyId(), toAfter, request.timestamp());
                 updateAccountMetadata(conn, from, request.currencyId(), fromAfter, request.timestamp(), fromVersion);
                 updateAccountMetadata(conn, to, request.currencyId(), toAfter, request.timestamp(), toVersion);
                 if (request.applyCooldown()) upsertLastPayAt(conn, request.fromId(), request.timestamp());
-                if (request.rollingPolicyId() != null && request.rollingMaximum() != null
-                        && request.rollingWindowMs() > 0) {
-                    insertPolicyUsage(conn, request.rollingPolicyId(), request.fromId(), request.currencyId(),
+                for (RollingPolicyConstraint constraint : request.rollingPolicies()) {
+                    insertPolicyUsage(conn, constraint.providerId(), request.fromId(), request.currencyId(),
                             request.operationId(), request.sent(), request.timestamp());
                 }
                 insertTransaction(conn, request.operationId(), TransactionType.PAY_SENT, request.toId(), request.fromId(),
@@ -870,7 +916,7 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                     conn.rollback();
                     return new ExchangeMutationResult(MutationStatus.BALANCE_LIMIT, fromBefore, fromBefore, toBefore, toBefore, account.toRecord());
                 }
-                long version = account.version() + 1;
+                long version = advanceAccountVersion(conn, request.accountId(), account.version());
                 upsertBalance(conn, request.accountId(), request.fromCurrencyId(), fromAfter, request.timestamp());
                 upsertBalance(conn, request.accountId(), request.toCurrencyId(), toAfter, request.timestamp());
                 updateAccountMetadata(conn, account, request.fromCurrencyId(), fromAfter, request.timestamp(), version);
@@ -906,6 +952,7 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                     conn.rollback();
                     return new AccountWriteResult(MutationStatus.ALREADY_EXISTS, loadAccount(accountId).orElse(null));
                 }
+                long version = advanceAccountVersion(conn, accountId, 0L);
                 try (PreparedStatement ps = conn.prepareStatement(
                         "INSERT INTO accounts(id,name,normalized_name,balance,created_at,updated_at,frozen,version) VALUES(?,?,?,?,?,?,?,?)")) {
                     ps.setString(1, accountId.toString());
@@ -915,23 +962,26 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                     ps.setLong(5, timestamp);
                     ps.setLong(6, timestamp);
                     ps.setBoolean(7, false);
-                    ps.setLong(8, 1L);
+                    ps.setLong(8, version);
                     ps.executeUpdate();
                 }
                 for (Map.Entry<String, BigDecimal> balance : balances.entrySet()) {
                     upsertBalance(conn, accountId, balance.getKey(), balance.getValue(), timestamp);
                 }
                 recordOperation(conn, operationId, "ACCOUNT_CREATE", timestamp);
-                insertChange(conn, operationId, accountId, 1L, ChangeKind.UPSERT, timestamp);
-                AccountRecord created = new AccountRecord(accountId, name, primaryCurrencyId, balances, timestamp, timestamp, 1L);
+                insertChange(conn, operationId, accountId, version, ChangeKind.UPSERT, timestamp);
+                AccountRecord created = new AccountRecord(
+                        accountId, name, primaryCurrencyId, balances, timestamp, timestamp, version);
                 conn.commit();
                 return new AccountWriteResult(MutationStatus.SUCCESS, created);
-            } catch (SQLIntegrityConstraintViolationException e) {
-                conn.rollback();
-                return new AccountWriteResult(MutationStatus.NAME_IN_USE, null);
             } catch (SQLException e) {
                 conn.rollback();
-                if (isConstraintViolation(e)) return new AccountWriteResult(MutationStatus.NAME_IN_USE, null);
+                if (isConstraintViolation(e)) {
+                    Optional<AccountRecord> existing = loadAccount(accountId);
+                    return existing.isPresent()
+                            ? new AccountWriteResult(MutationStatus.ALREADY_EXISTS, existing.get())
+                            : new AccountWriteResult(MutationStatus.NAME_IN_USE, null);
+                }
                 throw e;
             } finally {
                 restoreAutoCommit(conn);
@@ -989,11 +1039,12 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                     for (PreparedStatement ps : List.of(tx, balances, pay, acc)) ps.setString(1, accountId.toString());
                     tx.executeUpdate(); balances.executeUpdate(); pay.executeUpdate(); acc.executeUpdate();
                 }
-                long tombstoneVersion = account.version() + 1;
+                long tombstoneVersion = advanceAccountVersion(conn, accountId, account.version());
                 recordOperation(conn, operationId, "ACCOUNT_DELETE", timestamp);
                 insertChange(conn, operationId, accountId, tombstoneVersion, ChangeKind.DELETE, timestamp);
                 conn.commit();
-                return new AccountWriteResult(MutationStatus.SUCCESS, account.toRecord());
+                return new AccountWriteResult(MutationStatus.SUCCESS,
+                        account.withVersion(tombstoneVersion).toRecord());
             } catch (SQLException e) {
                 conn.rollback();
                 throw e;
@@ -1033,8 +1084,61 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
     @Override
     public Map<UUID, Optional<AccountRecord>> loadAccounts(Iterable<UUID> ids) throws SQLException {
         Map<UUID, Optional<AccountRecord>> result = new LinkedHashMap<>();
-        for (UUID id : ids) result.put(id, loadAccount(id));
+        for (UUID id : ids) {
+            if (id != null) result.putIfAbsent(id, Optional.empty());
+        }
+        if (result.isEmpty()) return result;
+        List<UUID> accountIds = List.copyOf(result.keySet());
+        try (Connection conn = dataSource.getConnection()) {
+            for (int start = 0; start < accountIds.size(); start += 500) {
+                loadAccountChunk(conn,
+                        accountIds.subList(start, Math.min(accountIds.size(), start + 500)), result);
+            }
+        }
         return result;
+    }
+
+    private void loadAccountChunk(Connection conn, List<UUID> accountIds,
+                                  Map<UUID, Optional<AccountRecord>> result) throws SQLException {
+        String placeholders = String.join(",", java.util.Collections.nCopies(accountIds.size(), "?"));
+        String sql = "SELECT a.id AS account_id,a.name AS account_name,"
+                + "a.created_at AS account_created_at,a.updated_at AS account_updated_at,"
+                + "a.frozen AS account_frozen,a.version AS account_version,"
+                + "b.currency_id AS balance_currency_id,b.balance AS balance_value,b.updated_at AS balance_updated_at "
+                + "FROM accounts a LEFT JOIN account_balances b ON b.account_id=a.id "
+                + "WHERE a.id IN (" + placeholders + ") ORDER BY a.id,b.currency_id";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (int i = 0; i < accountIds.size(); i++) {
+                ps.setString(i + 1, accountIds.get(i).toString());
+            }
+            try (ResultSet rs = ps.executeQuery()) {
+                UUID currentId = null;
+                PersistedAccountRow currentAccount = null;
+                Map<String, PersistedBalanceRow> balances = new LinkedHashMap<>();
+                while (rs.next()) {
+                    UUID rowId = UUID.fromString(rs.getString("account_id"));
+                    if (currentId != null && !currentId.equals(rowId)) {
+                        result.put(currentId, Optional.of(buildScannedRecord(
+                                currentId, currentAccount, balances)));
+                        balances = new LinkedHashMap<>();
+                    }
+                    if (!rowId.equals(currentId)) {
+                        currentId = rowId;
+                        currentAccount = new PersistedAccountRow(
+                                rs.getString("account_name"),
+                                rs.getLong("account_created_at"),
+                                rs.getLong("account_updated_at"),
+                                rs.getBoolean("account_frozen"),
+                                rs.getLong("account_version"));
+                    }
+                    addPersistedBalance(rs, balances);
+                }
+                if (currentId != null) {
+                    result.put(currentId, Optional.of(buildScannedRecord(
+                            currentId, currentAccount, balances)));
+                }
+            }
+        }
     }
 
     @Override
@@ -1116,7 +1220,7 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                     conn.rollback();
                     return new AccountWriteResult(MutationStatus.ACCOUNT_NOT_FOUND, null);
                 }
-                long version = account.version() + 1;
+                long version = advanceAccountVersion(conn, accountId, account.version());
                 LockedAccount updated = mutation.apply(conn, account, version);
                 recordOperation(conn, operationId, kind, timestamp);
                 insertChange(conn, operationId, accountId, version, ChangeKind.UPSERT, timestamp);
@@ -1151,6 +1255,34 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
                         rs.getBoolean(4), rs.getLong(5), loadBalances(conn, id));
             }
         }
+    }
+
+    private long advanceAccountVersion(Connection conn, UUID accountId, long currentVersion) throws SQLException {
+        long storedVersion = -1L;
+        try (PreparedStatement select = conn.prepareStatement(
+                "SELECT version FROM account_versions WHERE account_id=? FOR UPDATE")) {
+            select.setString(1, accountId.toString());
+            try (ResultSet rs = select.executeQuery()) {
+                if (rs.next()) storedVersion = rs.getLong(1);
+            }
+        }
+        if (storedVersion < 0L) {
+            try (PreparedStatement insert = conn.prepareStatement(
+                    "INSERT INTO account_versions(account_id,version) VALUES(?,?)")) {
+                insert.setString(1, accountId.toString());
+                insert.setLong(2, Math.max(0L, currentVersion));
+                insert.executeUpdate();
+                storedVersion = Math.max(0L, currentVersion);
+            }
+        }
+        long version = Math.max(storedVersion, currentVersion) + 1L;
+        try (PreparedStatement update = conn.prepareStatement(
+                "UPDATE account_versions SET version=? WHERE account_id=?")) {
+            update.setLong(1, version);
+            update.setString(2, accountId.toString());
+            update.executeUpdate();
+        }
+        return version;
     }
 
     private Map<String, BigDecimal> loadBalances(Connection conn, UUID accountId) throws SQLException {
@@ -1233,6 +1365,16 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
             ps.setString(2, kind);
             ps.setLong(3, timestamp);
             ps.executeUpdate();
+        }
+    }
+
+    private boolean operationExists(Connection conn, UUID operationId) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT 1 FROM economy_operations WHERE operation_id=?")) {
+            ps.setString(1, operationId.toString());
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
         }
     }
 
@@ -1339,6 +1481,10 @@ public class JdbcAccountRepository implements AccountRepository, MultiWriterRepo
 
         LockedAccount withFrozen(boolean newFrozen, long timestamp, long newVersion) {
             return new LockedAccount(id, name, primaryCurrencyId, createdAt, timestamp, newFrozen, newVersion, balances);
+        }
+
+        LockedAccount withVersion(long newVersion) {
+            return new LockedAccount(id, name, primaryCurrencyId, createdAt, updatedAt, frozen, newVersion, balances);
         }
 
         AccountRecord toRecord() {

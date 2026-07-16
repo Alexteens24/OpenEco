@@ -52,7 +52,7 @@ OpenEcoApi api = registration.getProvider();
 
 Resolve during plugin startup and fail fast if missing.
 
-Resolve `OpenEcoAsyncApi` the same way when your integration must not block a server thread. Its mutation methods return `CompletionStage`, use a bounded I/O executor, and expose fresh account/balance reads. In multi-writer mode, successful completion means the authoritative database transaction committed.
+Resolve `OpenEcoAsyncApi` the same way when your integration must not block a server thread. Its mutation methods return `CompletionStage`, use a bounded I/O executor, and expose fresh account/balance reads. In multi-writer mode, successful completion means the authoritative database transaction committed. `depositOnce(operationId, accountId, currencyId, amount)` supports durable scheduled work: retrying the same operation ID never applies the deposit twice.
 
 ## Threading
 
@@ -154,7 +154,7 @@ Post-success: `AccountCreateEvent`, `AccountRenamedEvent`, `AccountDeletedEvent`
 
 ## Multi-writer addon hooks
 
-- `EconomyPolicyRegistry` lets addons register policy providers whose caps and rolling transfer limits are evaluated inside the authoritative transaction.
+- `EconomyPolicyRegistry` lets addons register policy providers whose caps and rolling transfer limits are all evaluated inside the authoritative transaction. Providers may run on an async I/O worker, so they must read thread-safe snapshots rather than Bukkit player or world objects.
 - `ClusterJobCoordinator` provides database leases for scheduled network jobs such as interest payouts, ensuring one server owns a given run.
 
 ## Practical example

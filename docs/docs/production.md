@@ -115,6 +115,7 @@ After a restore, verify `/balance`, `/history`, `/baltop`, and any Vault or Plac
 
 - In multi-writer mode, mutations commit to JDBC before success is returned and database errors fail closed.
 - Cached reads on another backend may lag by `cache-refresh-interval-ms`; Redis can shorten this but JDBC polling remains the recovery path.
+- Account generations remain monotonic across delete/recreate, and enhancement interest retries are deduplicated per run, account, and currency.
 - Local and handoff modes still flush dirty balances on autosave and can lose up to one interval after an unclean stop.
 
 ## Telemetry

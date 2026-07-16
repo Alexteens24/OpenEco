@@ -82,6 +82,53 @@ class MultiWriterRepositoryIntegrationTest {
     }
 
     @Test
+    void recreateWithSameUuidContinuesThePersistedVersionSequence() throws Exception {
+        try (JdbcAccountRepository repository = repository("recreate-version")) {
+            UUID accountId = UUID.randomUUID();
+            long now = System.currentTimeMillis();
+            var created = repository.createAccount(UUID.randomUUID(), accountId, "Alice",
+                    Map.of("coins", BigDecimal.ONE), "coins", now);
+            assertEquals(1L, created.account().getVersion());
+
+            var mutated = repository.mutateBalance(new MultiWriterRepository.BalanceMutationRequest(
+                    UUID.randomUUID(), accountId, "coins",
+                    MultiWriterRepository.BalanceMutationKind.DEPOSIT,
+                    BigDecimal.ONE, null, TransactionType.GIVE, now + 1, "test", null));
+            assertEquals(2L, mutated.account().getVersion());
+
+            var deleted = repository.deleteAccount(UUID.randomUUID(), accountId, now + 2);
+            assertEquals(3L, deleted.account().getVersion());
+
+            var recreated = repository.createAccount(UUID.randomUUID(), accountId, "Bob",
+                    Map.of("coins", new BigDecimal("9")), "coins", now + 3);
+            assertEquals(4L, recreated.account().getVersion());
+            assertEquals(4L, repository.loadAccount(accountId).orElseThrow().getVersion());
+        }
+    }
+
+    @Test
+    void repeatedBalanceOperationIdIsAppliedExactlyOnce() throws Exception {
+        try (JdbcAccountRepository repository = repository("idempotent-balance")) {
+            UUID accountId = UUID.randomUUID();
+            UUID operationId = UUID.randomUUID();
+            long now = System.currentTimeMillis();
+            repository.createAccount(UUID.randomUUID(), accountId, "Alice",
+                    Map.of("coins", BigDecimal.ZERO), "coins", now);
+            var request = new MultiWriterRepository.BalanceMutationRequest(
+                    operationId, accountId, "coins",
+                    MultiWriterRepository.BalanceMutationKind.DEPOSIT,
+                    new BigDecimal("5"), null, TransactionType.GIVE, now + 1, "interest", null);
+
+            assertEquals(MultiWriterRepository.MutationStatus.SUCCESS,
+                    repository.mutateBalance(request).status());
+            assertEquals(MultiWriterRepository.MutationStatus.ALREADY_APPLIED,
+                    repository.mutateBalance(request).status());
+            assertEquals(0, new BigDecimal("5").compareTo(
+                    repository.loadAccount(accountId).orElseThrow().getBalance("coins")));
+        }
+    }
+
+    @Test
     void concurrentTransfersCannotSpendTheSameBalanceTwice() throws Exception {
         try (JdbcAccountRepository first = repository("transfers");
              JdbcAccountRepository second = repository("transfers")) {
@@ -132,6 +179,35 @@ class MultiWriterRepositoryIntegrationTest {
             assertEquals(MultiWriterRepository.MutationStatus.POLICY_REJECTED,
                     first.transfer(transferRequest(sender, recipient, new BigDecimal("6"), now + 10_002,
                             5_000L, true, "daily-pay", new BigDecimal("25"), 60_000L)).status());
+        }
+    }
+
+    @Test
+    void everyRollingPolicyConstraintIsCheckedAndRecorded() throws Exception {
+        try (JdbcAccountRepository repository = repository("multiple-policies")) {
+            UUID sender = UUID.randomUUID();
+            UUID recipient = UUID.randomUUID();
+            long now = System.currentTimeMillis();
+            repository.createAccount(UUID.randomUUID(), sender, "Sender",
+                    Map.of("coins", new BigDecimal("100")), "coins", now);
+            repository.createAccount(UUID.randomUUID(), recipient, "Recipient",
+                    Map.of("coins", BigDecimal.ZERO), "coins", now);
+            var constraints = java.util.List.of(
+                    new MultiWriterRepository.RollingPolicyConstraint(
+                            "strict", new BigDecimal("15"), 60_000L),
+                    new MultiWriterRepository.RollingPolicyConstraint(
+                            "loose", new BigDecimal("100"), 60_000L));
+
+            assertEquals(MultiWriterRepository.MutationStatus.SUCCESS,
+                    repository.transfer(new MultiWriterRepository.TransferMutationRequest(
+                            UUID.randomUUID(), sender, recipient, "coins",
+                            BigDecimal.TEN, BigDecimal.TEN, BigDecimal.ZERO,
+                            null, 0L, false, constraints, now + 1)).status());
+            assertEquals(MultiWriterRepository.MutationStatus.POLICY_REJECTED,
+                    repository.transfer(new MultiWriterRepository.TransferMutationRequest(
+                            UUID.randomUUID(), sender, recipient, "coins",
+                            new BigDecimal("6"), new BigDecimal("6"), BigDecimal.ZERO,
+                            null, 0L, false, constraints, now + 2)).status());
         }
     }
 

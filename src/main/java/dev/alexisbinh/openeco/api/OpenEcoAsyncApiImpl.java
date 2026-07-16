@@ -68,6 +68,10 @@ public final class OpenEcoAsyncApiImpl implements OpenEcoAsyncApi, AutoCloseable
     @Override public CompletionStage<BalanceChangeResult> deposit(UUID id, String currency, BigDecimal amount) {
         return submit(() -> sync.deposit(id, currency, amount));
     }
+    @Override public CompletionStage<Boolean> depositOnce(
+            UUID operationId, UUID id, String currency, BigDecimal amount) {
+        return submit(() -> service.depositOnce(operationId, id, currency, amount).transactionSuccess());
+    }
     @Override public CompletionStage<BalanceChangeResult> withdraw(UUID id, String currency, BigDecimal amount) {
         return submit(() -> sync.withdraw(id, currency, amount));
     }

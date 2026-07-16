@@ -54,7 +54,7 @@ Imports balances from EssentialsX, CMI, LiteEco, XConomy, BOSEconomy, TheNewEcon
 
 ### OpenEcoEnhancements
 
-Adds interest payouts, pay limits, permission-based balance caps, and `/exchange` for currency conversion.
+Adds interest payouts, pay limits, permission-based balance caps, and `/exchange` for currency conversion. In multi-writer mode, permission policies consume region-safe player snapshots and interest payouts use idempotent operation IDs for safe retry after partial runs.
 
 ### OpenEco Proxy (Velocity)
 
@@ -62,7 +62,7 @@ Coordinates account flush and refresh during server transfers when `cross-server
 
 ## Network modes
 
-With `cross-server.mode: multi-writer`, every balance, transfer, exchange, account mutation, cooldown, and registered policy check commits in one database transaction. Row locking and deterministic account lock order prevent lost updates, overspending, and transfer deadlocks. A durable change log refreshes each backend's read cache; optional Redis only reduces notification latency.
+With `cross-server.mode: multi-writer`, every balance, transfer, exchange, account mutation, cooldown, and registered policy check commits in one database transaction. Row locking and deterministic account lock order prevent lost updates, overspending, and transfer deadlocks. Versions remain monotonic even when the same account UUID is deleted and recreated. A durable change log refreshes each backend's read cache in batches; optional Redis only reduces notification latency.
 
 With `cross-server.mode: handoff`:
 

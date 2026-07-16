@@ -41,13 +41,11 @@ final class OpenEcoAsyncEconomy implements AsyncEconomy {
     private final OpenEcoEconomyProvider sync;
     private final OpenEcoAsyncApi asyncApi;
     private final AccountService service;
-    private final String defaultCurrency;
 
     OpenEcoAsyncEconomy(OpenEcoEconomyProvider sync, OpenEcoAsyncApi asyncApi, AccountService service) {
         this.sync = sync;
         this.asyncApi = asyncApi;
         this.service = service;
-        this.defaultCurrency = service.getCurrencyId();
     }
 
     @Override
@@ -146,13 +144,13 @@ final class OpenEcoAsyncEconomy implements AsyncEconomy {
     @Override
     public @NotNull CompletableFuture<EconomyResponse> set(
             @NotNull String pluginName, @NotNull UUID accountID, @NotNull BigDecimal amount) {
-        return future(asyncApi.setBalance(accountID, defaultCurrency, amount)).thenApply(OpenEcoAsyncEconomy::toEconomyResponse);
+        return future(asyncApi.setBalance(accountID, service.getCurrencyId(), amount)).thenApply(OpenEcoAsyncEconomy::toEconomyResponse);
     }
 
     @Override
     public @NotNull CompletableFuture<EconomyResponse> set(
             @NotNull String pluginName, @NotNull UUID accountID, @NotNull String world, @NotNull BigDecimal amount) {
-        return future(asyncApi.setBalance(accountID, defaultCurrency, amount)).thenApply(OpenEcoAsyncEconomy::toEconomyResponse);
+        return future(asyncApi.setBalance(accountID, service.getCurrencyId(), amount)).thenApply(OpenEcoAsyncEconomy::toEconomyResponse);
     }
 
     @Override
@@ -168,7 +166,7 @@ final class OpenEcoAsyncEconomy implements AsyncEconomy {
     @Override
     public CompletableFuture<MultiEconomyResponse> transfer(
             @NotNull String pluginName, @NotNull UUID from, @NotNull UUID to, @NotNull BigDecimal amount) {
-        return future(asyncApi.directTransfer(from, to, defaultCurrency, amount))
+        return future(asyncApi.directTransfer(from, to, service.getCurrencyId(), amount))
                 .thenApply(result -> toMultiTransfer(result, from, to));
     }
 
@@ -179,7 +177,7 @@ final class OpenEcoAsyncEconomy implements AsyncEconomy {
             @NotNull UUID to,
             @NotNull String worldName,
             @NotNull BigDecimal amount) {
-        return future(asyncApi.directTransfer(from, to, defaultCurrency, amount))
+        return future(asyncApi.directTransfer(from, to, service.getCurrencyId(), amount))
                 .thenApply(result -> toMultiTransfer(result, from, to));
     }
 
@@ -220,13 +218,13 @@ final class OpenEcoAsyncEconomy implements AsyncEconomy {
     @Override
     public @NotNull CompletableFuture<EconomyResponse> withdraw(
             @NotNull String pluginName, @NotNull UUID accountID, @NotNull BigDecimal amount) {
-        return future(asyncApi.withdraw(accountID, defaultCurrency, amount)).thenApply(OpenEcoAsyncEconomy::toEconomyResponse);
+        return future(asyncApi.withdraw(accountID, service.getCurrencyId(), amount)).thenApply(OpenEcoAsyncEconomy::toEconomyResponse);
     }
 
     @Override
     public @NotNull CompletableFuture<EconomyResponse> withdraw(
             @NotNull String pluginName, @NotNull UUID accountID, @NotNull String world, @NotNull BigDecimal amount) {
-        return future(asyncApi.withdraw(accountID, defaultCurrency, amount)).thenApply(OpenEcoAsyncEconomy::toEconomyResponse);
+        return future(asyncApi.withdraw(accountID, service.getCurrencyId(), amount)).thenApply(OpenEcoAsyncEconomy::toEconomyResponse);
     }
 
     @Override
@@ -264,13 +262,13 @@ final class OpenEcoAsyncEconomy implements AsyncEconomy {
     @Override
     public @NotNull CompletableFuture<EconomyResponse> deposit(
             @NotNull String pluginName, @NotNull UUID accountID, @NotNull BigDecimal amount) {
-        return future(asyncApi.deposit(accountID, defaultCurrency, amount)).thenApply(OpenEcoAsyncEconomy::toEconomyResponse);
+        return future(asyncApi.deposit(accountID, service.getCurrencyId(), amount)).thenApply(OpenEcoAsyncEconomy::toEconomyResponse);
     }
 
     @Override
     public @NotNull CompletableFuture<EconomyResponse> deposit(
             @NotNull String pluginName, @NotNull UUID accountID, @NotNull String world, @NotNull BigDecimal amount) {
-        return future(asyncApi.deposit(accountID, defaultCurrency, amount)).thenApply(OpenEcoAsyncEconomy::toEconomyResponse);
+        return future(asyncApi.deposit(accountID, service.getCurrencyId(), amount)).thenApply(OpenEcoAsyncEconomy::toEconomyResponse);
     }
 
     @Override

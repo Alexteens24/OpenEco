@@ -75,6 +75,50 @@ class JdbcAccountRepositoryIntegrationTest {
     }
 
     @Test
+    void schemaUpgradeBackfillsPersistentAccountVersionLedger() throws Exception {
+        String filename = "legacy-version-ledger-test";
+        UUID accountId = UUID.randomUUID();
+        try (Connection connection = DriverManager.getConnection(
+                DatabaseDialect.H2.getJdbcUrl(tempDir.toString(), filename));
+             Statement stmt = connection.createStatement()) {
+            stmt.execute("""
+                CREATE TABLE accounts (
+                    id VARCHAR(36) NOT NULL PRIMARY KEY,
+                    name VARCHAR(16) NOT NULL,
+                    balance DECIMAL(30,8) NOT NULL DEFAULT 0,
+                    created_at BIGINT NOT NULL,
+                    updated_at BIGINT NOT NULL,
+                    frozen BOOLEAN NOT NULL DEFAULT FALSE,
+                    version BIGINT NOT NULL DEFAULT 0
+                )
+                """);
+            stmt.execute("""
+                CREATE TABLE transactions (
+                    type VARCHAR(16) NOT NULL,
+                    counterpart_id VARCHAR(36),
+                    target_id VARCHAR(36) NOT NULL,
+                    amount DECIMAL(30,8) NOT NULL,
+                    balance_before DECIMAL(30,8) NOT NULL,
+                    balance_after DECIMAL(30,8) NOT NULL,
+                    ts BIGINT NOT NULL
+                )
+                """);
+            stmt.execute("INSERT INTO accounts(id,name,balance,created_at,updated_at,frozen,version) VALUES('"
+                    + accountId + "','Legacy',5,1,1,FALSE,7)");
+        }
+
+        try (JdbcAccountRepository repository = new JdbcAccountRepository(
+                DatabaseDialect.H2, tempDir.toString(), filename, "openeco")) {
+            var deleted = repository.deleteAccount(UUID.randomUUID(), accountId, 2L);
+            var recreated = repository.createAccount(UUID.randomUUID(), accountId, "Recreated",
+                    java.util.Map.of("openeco", BigDecimal.ONE), "openeco", 3L);
+
+            assertEquals(8L, deleted.account().getVersion());
+            assertEquals(9L, recreated.account().getVersion());
+        }
+    }
+
+    @Test
     void lazyLookupAndLeaderboardQueriesWorkOnLocalDialects() throws Exception {
         for (DatabaseDialect dialect : List.of(DatabaseDialect.SQLITE, DatabaseDialect.H2)) {
             String filename = "lazy-query-" + dialect.name().toLowerCase() + (dialect == DatabaseDialect.SQLITE ? ".db" : "");

@@ -7,6 +7,7 @@ package dev.alexisbinh.openeco.api;
 import java.math.BigDecimal;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
 /** Non-blocking facade for operations that can perform remote storage I/O. */
@@ -23,6 +24,13 @@ public interface OpenEcoAsyncApi {
     CompletionStage<AccountOperationResult> deleteAccount(UUID accountId);
 
     CompletionStage<BalanceChangeResult> deposit(UUID accountId, String currencyId, BigDecimal amount);
+
+    /** Returns true when the deposit was applied now or had already been applied with this operation id. */
+    default CompletionStage<Boolean> depositOnce(
+            UUID operationId, UUID accountId, String currencyId, BigDecimal amount) {
+        return CompletableFuture.failedFuture(
+                new UnsupportedOperationException("Idempotent deposits are not supported"));
+    }
 
     CompletionStage<BalanceChangeResult> withdraw(UUID accountId, String currencyId, BigDecimal amount);
 

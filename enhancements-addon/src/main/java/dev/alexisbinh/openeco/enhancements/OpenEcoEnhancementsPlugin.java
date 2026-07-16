@@ -40,6 +40,7 @@ public class OpenEcoEnhancementsPlugin extends JavaPlugin {
 
     private OpenEcoApi api;
     private ScheduledTask interestTask;
+    private ScheduledTask permissionSnapshotTask;
     private ClusterJobCoordinator clusterJobCoordinator;
     private OpenEcoAsyncApi asyncApi;
     private boolean multiWriter;
@@ -68,7 +69,20 @@ public class OpenEcoEnhancementsPlugin extends JavaPlugin {
         RegisteredServiceProvider<EconomyPolicyRegistry> policyRegistration =
                 getServer().getServicesManager().getRegistration(EconomyPolicyRegistry.class);
         if (multiWriter && policyRegistration != null) {
-            policyRegistration.getProvider().register("openeco-enhancements", new EnhancementsPolicyProvider(this));
+            EnhancementsPolicyProvider.PolicySettings policySettings =
+                    EnhancementsPolicyProvider.settingsFrom(getConfig());
+            EnhancementsPermissionSnapshots permissionSnapshots =
+                    new EnhancementsPermissionSnapshots(policySettings);
+            getServer().getPluginManager().registerEvents(permissionSnapshots, this);
+            policyRegistration.getProvider().register("openeco-enhancements",
+                    new EnhancementsPolicyProvider(policySettings, permissionSnapshots.view()));
+            permissionSnapshotTask = getServer().getGlobalRegionScheduler().runAtFixedRate(
+                    this,
+                    ignored -> getServer().getOnlinePlayers().forEach(player ->
+                            player.getScheduler().run(this,
+                                    task -> permissionSnapshots.refresh(player), null)),
+                    1L,
+                    20L);
             getLogger().info("Network-wide mutation policies registered.");
         }
         if (multiWriter) {
@@ -76,7 +90,7 @@ public class OpenEcoEnhancementsPlugin extends JavaPlugin {
                     getServer().getServicesManager().getRegistration(OpenEcoAsyncApi.class);
             asyncApi = asyncRegistration == null ? null : asyncRegistration.getProvider();
             if (asyncApi == null) {
-                getLogger().warning("OpenEcoAsyncApi unavailable; interest payouts may block the global scheduler.");
+                getLogger().warning("OpenEcoAsyncApi unavailable; multi-writer interest payouts will be disabled.");
             }
         }
 
@@ -120,10 +134,17 @@ public class OpenEcoEnhancementsPlugin extends JavaPlugin {
         if (interestTask != null) {
             interestTask.cancel();
         }
+        if (permissionSnapshotTask != null) {
+            permissionSnapshotTask.cancel();
+        }
     }
 
     private void startInterestTask() {
         if (interestTask != null) interestTask.cancel();
+        if (multiWriter && asyncApi == null) {
+            getLogger().warning("Interest task disabled because idempotent OpenEcoAsyncApi is unavailable.");
+            return;
+        }
         long intervalSeconds = getConfig().getLong("interest.interval-seconds", 3600);
         if (intervalSeconds <= 0) {
             getLogger().warning("Interest task disabled because interest.interval-seconds must be > 0.");
@@ -135,9 +156,15 @@ public class OpenEcoEnhancementsPlugin extends JavaPlugin {
             return;
         }
         long intervalMs = intervalSeconds * 1000L;
+        long initialDelayMs = multiWriter
+                ? Math.max(1L, intervalMs - Math.floorMod(System.currentTimeMillis(), intervalMs))
+                : intervalMs;
+        long schedulePeriodMs = multiWriter
+                ? InterestTask.retryIntervalMs(intervalMs)
+                : intervalMs;
         InterestTask task = new InterestTask(api, this, clusterJobCoordinator, multiWriter ? asyncApi : null);
         interestTask = getServer().getAsyncScheduler().runAtFixedRate(
-                this, st -> task.run(), intervalMs, intervalMs, TimeUnit.MILLISECONDS);
+                this, st -> task.run(), initialDelayMs, schedulePeriodMs, TimeUnit.MILLISECONDS);
         getLogger().info("Interest task scheduled every " + intervalSeconds + "s.");
     }
 

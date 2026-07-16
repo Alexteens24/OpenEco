@@ -145,4 +145,4 @@ jobs:
       - name: Test remote storage operations
         env:
           OPEN_ECO_REMOTE_TESTS: 'true'
-        run: ./gradlew --no-daemon :test --tests '*RemoteAccountScanIntegrationTest'
+        run: ./gradlew --no-daemon :test --tests '*Remote*IntegrationTest'

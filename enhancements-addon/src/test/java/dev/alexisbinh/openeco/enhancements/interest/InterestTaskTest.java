@@ -20,6 +20,7 @@ import dev.alexisbinh.openeco.api.BalanceChangeResult;
 import dev.alexisbinh.openeco.api.CurrencyInfo;
 import dev.alexisbinh.openeco.api.EconomyRulesSnapshot;
 import dev.alexisbinh.openeco.api.OpenEcoApi;
+import dev.alexisbinh.openeco.api.OpenEcoAsyncApi;
 import dev.alexisbinh.openeco.api.TransactionKind;
 import dev.alexisbinh.openeco.api.TransactionMetadata;
 import io.papermc.paper.threadedregions.scheduler.GlobalRegionScheduler;
@@ -29,12 +30,16 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
 import java.math.BigDecimal;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.logging.Logger;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -45,6 +50,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 class InterestTaskTest {
 
     @Mock
@@ -112,5 +118,23 @@ class InterestTaskTest {
             any(BigDecimal.class),
             any(TransactionKind.class),
             any(TransactionMetadata.class));
+    }
+
+    @Test
+    void multiWriterRetriesReuseDeterministicPerAccountOperationId() {
+        OpenEcoAsyncApi asyncApi = org.mockito.Mockito.mock(OpenEcoAsyncApi.class);
+        when(asyncApi.depositOnce(any(UUID.class), eq(accountId), eq("coins"), eq(new BigDecimal("5.00"))))
+                .thenReturn(CompletableFuture.completedFuture(true));
+        InterestTask multiWriterTask = new InterestTask(api, plugin, null, asyncApi);
+
+        multiWriterTask.run();
+        multiWriterTask.run();
+
+        ArgumentCaptor<UUID> operationIds = ArgumentCaptor.forClass(UUID.class);
+        verify(asyncApi, org.mockito.Mockito.times(2)).depositOnce(
+                operationIds.capture(), eq(accountId), eq("coins"), eq(new BigDecimal("5.00")));
+        org.junit.jupiter.api.Assertions.assertEquals(
+                operationIds.getAllValues().get(0), operationIds.getAllValues().get(1));
+        verify(api, never()).deposit(any(UUID.class), any(BigDecimal.class));
     }
 }

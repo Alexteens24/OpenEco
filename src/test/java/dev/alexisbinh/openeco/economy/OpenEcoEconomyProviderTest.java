@@ -17,6 +17,7 @@
 package dev.alexisbinh.openeco.economy;
 
 import dev.alexisbinh.openeco.api.BalanceCheckResult;
+import dev.alexisbinh.openeco.api.BalanceChangeResult;
 import dev.alexisbinh.openeco.api.AccountTransferResult;
 import dev.alexisbinh.openeco.api.OpenEcoAsyncApi;
 import dev.alexisbinh.openeco.model.DirectTransferResult;
@@ -56,7 +57,6 @@ class OpenEcoEconomyProviderTest {
 
     @BeforeEach
     void setUp() {
-        when(service.getCurrencyId()).thenReturn("coins");
         asyncApi = org.mockito.Mockito.mock(OpenEcoAsyncApi.class);
         provider = new OpenEcoEconomyProvider(service, asyncApi);
     }
@@ -108,6 +108,7 @@ class OpenEcoEconomyProviderTest {
         UUID fromId = UUID.randomUUID();
         UUID toId = UUID.randomUUID();
         BigDecimal amount = new BigDecimal("10.00");
+        when(service.getCurrencyId()).thenReturn("coins");
         when(asyncApi.directTransfer(fromId, toId, "coins", amount)).thenReturn(
                 CompletableFuture.completedFuture(new AccountTransferResult(
                         AccountTransferResult.Status.SUCCESS, amount,
@@ -119,6 +120,22 @@ class OpenEcoEconomyProviderTest {
         assertEquals(EconomyResponse.ResponseType.SUCCESS, response.type);
         assertEquals(0, new BigDecimal("40.00").compareTo(response.balance(fromId).orElseThrow()));
         verify(asyncApi).directTransfer(fromId, toId, "coins", amount);
+    }
+
+    @Test
+    void asyncMutationsResolveDefaultCurrencyAtCallTimeAfterReload() {
+        UUID accountId = UUID.randomUUID();
+        BigDecimal amount = new BigDecimal("2.00");
+        when(service.getCurrencyId()).thenReturn("gems");
+        when(asyncApi.deposit(accountId, "gems", amount)).thenReturn(
+                CompletableFuture.completedFuture(new BalanceChangeResult(
+                        BalanceChangeResult.Status.SUCCESS, amount, BigDecimal.ZERO, amount)));
+
+        EconomyResponse response = provider.async().orElseThrow()
+                .deposit("shop", accountId, amount).join();
+
+        assertEquals(EconomyResponse.ResponseType.SUCCESS, response.type);
+        verify(asyncApi).deposit(accountId, "gems", amount);
     }
 
     @Test

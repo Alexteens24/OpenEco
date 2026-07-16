@@ -36,7 +36,7 @@ Eager mode uses lightweight per-currency snapshots. Lazy mode flushes dirty bala
 
 ## Cross-server consistency
 
-In `multi-writer` mode, the shared database is authoritative. Mutations lock affected account rows, validate balance caps/cooldowns/policies, update balances and versions, append history, and append durable cache-invalidation rows in the same transaction. Transfers lock account UUIDs in deterministic order. Reads are cached and may be stale for `cache-refresh-interval-ms`.
+In `multi-writer` mode, the shared database is authoritative. Mutations lock affected account rows, validate balance caps/cooldowns/policies, update balances and versions, append history, and append durable cache-invalidation rows in the same transaction. Transfers lock account UUIDs in deterministic order. A persistent per-UUID version ledger survives account deletion, so recreating the same UUID cannot be mistaken for an older cache value. Poll refreshes load changed accounts in bounded `IN (...)` chunks instead of issuing one query per UUID. Reads are cached and may be stale for `cache-refresh-interval-ms`.
 
 Redis Pub/Sub is optional and never authoritative. A dropped Redis message is repaired by JDBC polling.
 
@@ -57,6 +57,7 @@ Handoff does not allow safe simultaneous writers.
 ## Scaling notes
 
 - Multi-writer deployments can mutate one account from multiple backends; database contention becomes the scaling limit.
+- Enhancement permission policies read region-thread snapshots, and interest uses deterministic per-run/per-account operation IDs so partial runs can be retried without double-paying completed accounts.
 - Large account counts increase eager startup load time and leaderboard work. Lazy mode trades cold-read latency and database work for bounded retained heap.
 - `/pay`, `/baltop`, and name tab-complete are the most visible features under account-count growth.
 - Large history volumes can dominate file size before account rows do.

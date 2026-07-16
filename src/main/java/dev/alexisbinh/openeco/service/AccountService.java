@@ -764,6 +764,18 @@ public class AccountService {
         return economyOperations.deposit(id, currencyId, amount);
     }
 
+    /** Applies a multi-writer deposit at most once for the supplied durable operation id. */
+    public EconomyOperationResponse depositOnce(
+            UUID operationId, UUID id, String currencyId, BigDecimal amount) {
+        if (operationId == null) throw new IllegalArgumentException("operationId must not be null");
+        if (multiWriterRepository == null) {
+            throw new IllegalStateException("Idempotent deposits require multi-writer mode");
+        }
+        return mutateBalanceMultiWriter(operationId, id, currencyId, amount,
+                MultiWriterRepository.BalanceMutationKind.DEPOSIT,
+                TransactionType.GIVE, BalanceChangeEvent.Reason.GIVE);
+    }
+
     public EconomyOperationResponse withdraw(UUID id, BigDecimal amount) {
         return withdraw(id, config.currencyId(), amount);
     }
@@ -1521,7 +1533,7 @@ public class AccountService {
             }
             if (result.status() != MultiWriterRepository.MutationStatus.SUCCESS) return DeleteAccountStatus.FAILED;
             removeCachedAccount(id);
-            changeNotifier.publish(id, result.account().getVersion() + 1,
+            changeNotifier.publish(id, result.account().getVersion(),
                     MultiWriterRepository.ChangeKind.DELETE);
             markAllLeaderboardsDirty();
             eventDispatcher.dispatch(new AccountDeletedEvent(id, event.getPlayerName(), event.getBalance()));
@@ -1548,6 +1560,14 @@ public class AccountService {
 
     private EconomyOperationResponse mutateBalanceMultiWriter(
             UUID id, String currencyId, BigDecimal rawAmount,
+            MultiWriterRepository.BalanceMutationKind kind,
+            TransactionType transactionType, BalanceChangeEvent.Reason reason) {
+        return mutateBalanceMultiWriter(UUID.randomUUID(), id, currencyId, rawAmount,
+                kind, transactionType, reason);
+    }
+
+    private EconomyOperationResponse mutateBalanceMultiWriter(
+            UUID operationId, UUID id, String currencyId, BigDecimal rawAmount,
             MultiWriterRepository.BalanceMutationKind kind,
             TransactionType transactionType, BalanceChangeEvent.Reason reason) {
         CurrencyDefinition currency = resolveCurrency(currencyId);
@@ -1582,8 +1602,13 @@ public class AccountService {
         long now = System.currentTimeMillis();
         try {
             MultiWriterRepository.BalanceMutationResult result = multiWriterRepository.mutateBalance(
-                    new MultiWriterRepository.BalanceMutationRequest(UUID.randomUUID(), id, currency.id(), kind,
+                    new MultiWriterRepository.BalanceMutationRequest(operationId, id, currency.id(), kind,
                             amount, effectiveCap, transactionType, now, null, null));
+            if (result.status() == MultiWriterRepository.MutationStatus.ALREADY_APPLIED) {
+                applyAuthoritativeAccount(result.account());
+                return new EconomyOperationResponse(
+                        amount, result.after(), EconomyOperationResponse.ResponseType.SUCCESS, "Already applied");
+            }
             if (result.status() != MultiWriterRepository.MutationStatus.SUCCESS) {
                 return operationFailure(amount, result.before(), mutationError(result.status()));
             }
@@ -1625,9 +1650,7 @@ public class AccountService {
             MultiWriterRepository.TransferMutationResult result = multiWriterRepository.transfer(
                     new MultiWriterRepository.TransferMutationRequest(UUID.randomUUID(), fromId, toId,
                             currency.id(), sent, received, tax, effectiveCap,
-                            config.payCooldownMs(), true, policy.providerId(),
-                            policy.rollingLimit() == null ? null : policy.rollingLimit().maximumAmount(),
-                            policy.rollingLimit() == null ? 0L : policy.rollingLimit().windowMs(), now));
+                            config.payCooldownMs(), true, toRollingPolicies(policy), now));
             PayResult mapped = mapPayResult(result);
             if (!mapped.isSuccess()) return mapped;
             applyAuthoritativeAccount(result.fromAccount());
@@ -1669,8 +1692,7 @@ public class AccountService {
                     new MultiWriterRepository.TransferMutationRequest(UUID.randomUUID(), fromId, toId,
                             currency.id(), amount, amount, BigDecimal.ZERO,
                             minimumCap(currency.maxBalance(), policy.maximumTargetBalance()), 0L, false,
-                            policy.providerId(), policy.rollingLimit() == null ? null : policy.rollingLimit().maximumAmount(),
-                            policy.rollingLimit() == null ? 0L : policy.rollingLimit().windowMs(), System.currentTimeMillis()));
+                            toRollingPolicies(policy), System.currentTimeMillis()));
             if (result.status() != MultiWriterRepository.MutationStatus.SUCCESS) {
                 return DirectTransferResult.failure(mapDirectStatus(result.status()), amount, mutationError(result.status()));
             }
@@ -1730,6 +1752,14 @@ public class AccountService {
         if (first == null) return second;
         if (second == null) return first;
         return first.min(second);
+    }
+
+    private static List<MultiWriterRepository.RollingPolicyConstraint> toRollingPolicies(
+            EconomyPolicyRegistryImpl.ResolvedPolicy policy) {
+        return policy.rollingConstraints().stream()
+                .map(constraint -> new MultiWriterRepository.RollingPolicyConstraint(
+                        constraint.providerId(), constraint.limit().maximumAmount(), constraint.limit().windowMs()))
+                .toList();
     }
 
     private void applyAuthoritativeAccount(@Nullable AccountRecord fresh) {

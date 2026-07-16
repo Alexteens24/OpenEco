@@ -588,6 +588,42 @@ class AccountServicePersistenceIntegrationTest {
     }
 
     @Test
+    void multiWriterPollReplacesCachedAccountAfterDeleteAndRecreateWithSameUuid() throws Exception {
+        JdbcAccountRepository repository = new JdbcAccountRepository(
+                DatabaseDialect.H2, tempDir.toString(), "multi-writer-recreate-test");
+        YamlConfiguration config = testConfig(0.0, -1);
+        config.set("cross-server.enabled", true);
+        config.set("cross-server.mode", "multi-writer");
+        AccountService writer = newServiceWithConfig(repository, config);
+        AccountService reader = newServiceWithConfig(repository, config);
+        try {
+            UUID accountId = UUID.randomUUID();
+            writer.loadAll();
+            assertEquals(AccountService.CreateAccountStatus.CREATED,
+                    writer.createAccountDetailed(accountId, "Alice"));
+            reader.loadAll();
+            assertEquals("Alice", reader.getAccount(accountId).orElseThrow().getLastKnownName());
+
+            assertTrue(writer.deposit(accountId, BigDecimal.ONE).transactionSuccess());
+            assertTrue(writer.deposit(accountId, BigDecimal.ONE).transactionSuccess());
+            assertEquals(AccountService.DeleteAccountStatus.DELETED, writer.deleteAccountDetailed(accountId));
+            assertEquals(AccountService.CreateAccountStatus.CREATED,
+                    writer.createAccountDetailed(accountId, "Bob"));
+            assertTrue(writer.deposit(accountId, new BigDecimal("4.00")).transactionSuccess());
+
+            reader.pollMultiWriterChanges(100);
+            AccountRecord refreshed = reader.getAccount(accountId).orElseThrow();
+            assertEquals("Bob", refreshed.getLastKnownName());
+            assertEquals(0, new BigDecimal("9.00").compareTo(refreshed.getBalance()));
+            assertTrue(refreshed.getVersion() > 3L);
+        } finally {
+            writer.shutdown();
+            reader.shutdown();
+            repository.close();
+        }
+    }
+
+    @Test
     void depositAndWithdrawLogTransactionHistory() throws Exception {
         JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "history-log-test");
         try {

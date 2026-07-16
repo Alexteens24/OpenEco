@@ -28,6 +28,7 @@ public interface MultiWriterRepository {
         COOLDOWN,
         NAME_IN_USE,
         ALREADY_EXISTS,
+        ALREADY_APPLIED,
         POLICY_REJECTED
     }
 
@@ -65,10 +66,44 @@ public interface MultiWriterRepository {
             @Nullable BigDecimal recipientMaxBalance,
             long cooldownMs,
             boolean applyCooldown,
-            @Nullable String rollingPolicyId,
-            @Nullable BigDecimal rollingMaximum,
-            long rollingWindowMs,
-            long timestamp) {}
+            List<RollingPolicyConstraint> rollingPolicies,
+            long timestamp) {
+        public TransferMutationRequest {
+            rollingPolicies = rollingPolicies == null ? List.of() : List.copyOf(rollingPolicies);
+            long distinctProviders = rollingPolicies.stream()
+                    .map(RollingPolicyConstraint::providerId).distinct().count();
+            if (distinctProviders != rollingPolicies.size()) {
+                throw new IllegalArgumentException("rolling policy provider ids must be unique");
+            }
+        }
+
+        public TransferMutationRequest(
+                UUID operationId, UUID fromId, UUID toId, String currencyId,
+                BigDecimal sent, BigDecimal received, BigDecimal tax,
+                @Nullable BigDecimal recipientMaxBalance, long cooldownMs, boolean applyCooldown,
+                @Nullable String rollingPolicyId, @Nullable BigDecimal rollingMaximum,
+                long rollingWindowMs, long timestamp) {
+            this(operationId, fromId, toId, currencyId, sent, received, tax,
+                    recipientMaxBalance, cooldownMs, applyCooldown,
+                    rollingPolicyId == null || rollingMaximum == null || rollingWindowMs <= 0
+                            ? List.of()
+                            : List.of(new RollingPolicyConstraint(
+                                    rollingPolicyId, rollingMaximum, rollingWindowMs)),
+                    timestamp);
+        }
+    }
+
+    record RollingPolicyConstraint(String providerId, BigDecimal maximumAmount, long windowMs) {
+        public RollingPolicyConstraint {
+            if (providerId == null || !providerId.matches("[a-z0-9_.-]{1,64}")) {
+                throw new IllegalArgumentException("providerId must match [a-z0-9_.-]{1,64}");
+            }
+            if (maximumAmount == null || maximumAmount.signum() <= 0) {
+                throw new IllegalArgumentException("maximumAmount must be positive");
+            }
+            if (windowMs <= 0) throw new IllegalArgumentException("windowMs must be positive");
+        }
+    }
 
     record TransferMutationResult(
             MutationStatus status,
