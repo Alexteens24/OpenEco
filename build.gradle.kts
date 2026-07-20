@@ -33,7 +33,7 @@ abstract class VaultJvmFix : ComponentMetadataRule {
 plugins {
     java
     `java-library`
-    id("com.gradleup.shadow") version "9.5.1"
+    id("com.gradleup.shadow") version "9.6.0"
 }
 
 group = "dev.alexisbinh"
