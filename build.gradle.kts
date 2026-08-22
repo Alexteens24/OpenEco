@@ -66,7 +66,7 @@ dependencies {
     compileOnly("org.xerial:sqlite-jdbc:3.53.2.0")
     compileOnly("com.h2database:h2:2.4.240")
     implementation("org.bstats:bstats-bukkit:3.2.1")
-    implementation("dev.faststats.metrics:bukkit:0.27.2")
+    implementation("dev.faststats.metrics:bukkit:0.29.4")
     compileOnly("com.zaxxer:HikariCP:7.1.0")
     compileOnly("com.mysql:mysql-connector-j:9.7.0") {
         exclude(group = "com.google.protobuf") // only needed for X Protocol (mysqlx://), not standard JDBC
