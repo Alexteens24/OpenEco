@@ -76,7 +76,7 @@ dependencies {
 
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter-api")
-    testImplementation("org.mockito:mockito-junit-jupiter:5.23.0")
+    testImplementation("org.mockito:mockito-junit-jupiter:5.24.0")
     testImplementation("io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT")
     testImplementation("net.milkbowl.vault:VaultUnlockedAPI:2.20")
     testImplementation("me.clip:placeholderapi:2.12.3")

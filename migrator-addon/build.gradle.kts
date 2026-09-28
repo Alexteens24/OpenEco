@@ -41,7 +41,7 @@ dependencies {
     testImplementation(project(":"))
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter-api")
-    testImplementation("org.mockito:mockito-junit-jupiter:5.23.0")
+    testImplementation("org.mockito:mockito-junit-jupiter:5.24.0")
     testImplementation("io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT")
     testImplementation("org.xerial:sqlite-jdbc:3.53.2.0")
     testImplementation("com.zaxxer:HikariCP:7.1.0")
