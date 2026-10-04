@@ -17,46 +17,115 @@
 package dev.alexisbinh.openeco;
 
 import org.bukkit.configuration.ConfigurationSection;
-import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
 
-import java.util.Collections;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 
 final class ConfigMigrator {
 
     private static final String LEGACY_CURRENCY_ROOT = "currency";
-    private static final String NEW_CURRENCIES_ROOT = "currencies";
+    private static final String LEGACY_LOAD_STRATEGY = "accounts.load-strategy";
 
     private ConfigMigrator() {
     }
 
-    static YamlConfiguration rewrite(FileConfiguration currentConfig, FileConfiguration defaultConfig) {
+    /**
+     * Brings an existing {@code config.yml} up to the bundled schema <em>in place</em>.
+     *
+     * <p>The object is mutated rather than rebuilt because a document's leading comment block -
+     * the Apache licence header - is held by the configuration object itself and is not exposed
+     * through {@link ConfigurationSection#getComments(String)}. Rebuilding a fresh configuration
+     * would therefore silently discard the licence header and every blank line separator, so the
+     * rewrite works on what we loaded and only ever adds the keys an upgrade introduced.
+     *
+     * <p>Because it mutates in place, callers must snapshot {@link #keyPaths(ConfigurationSection)}
+     * before the call to find out whether anything was actually added.
+     *
+     * @return the same instance, for convenience
+     */
+    static YamlConfiguration rewrite(YamlConfiguration currentConfig, YamlConfiguration defaultConfig) {
         Objects.requireNonNull(currentConfig, "currentConfig");
         Objects.requireNonNull(defaultConfig, "defaultConfig");
 
-        YamlConfiguration normalizedSource = copySourceWithoutLegacy(currentConfig);
-        migrateLegacyCurrencySection(currentConfig, normalizedSource);
-        migrateRenamedSettings(currentConfig, normalizedSource);
-
-        YamlConfiguration orderedConfig = new YamlConfiguration();
-        mergeSection(defaultConfig, normalizedSource, orderedConfig);
-        return orderedConfig;
+        migrateLegacyCurrencySection(currentConfig, currentConfig);
+        migrateRenamedSettings(currentConfig, currentConfig);
+        currentConfig.set(LEGACY_LOAD_STRATEGY, null);
+        dropSectionIfEmpty(currentConfig, "accounts");
+        addMissingDefaults(defaultConfig, currentConfig);
+        adoptTemplateComments(defaultConfig, currentConfig);
+        return currentConfig;
     }
 
-    private static YamlConfiguration copySourceWithoutLegacy(FileConfiguration currentConfig) {
-        YamlConfiguration normalizedSource = new YamlConfiguration();
-        copySection(currentConfig, normalizedSource);
-        normalizedSource.set("accounts.load-strategy", null);
-        ConfigurationSection accounts = normalizedSource.getConfigurationSection("accounts");
-        if (accounts != null && accounts.getKeys(false).isEmpty()) {
-            normalizedSource.set("accounts", null);
+    /**
+     * All key paths in this configuration, sections included. Comparing this set before and
+     * after {@link #rewrite} tells a caller whether new keys were introduced, which is the only
+     * thing worth writing back. Comparing serialised text instead would fire on cosmetic value
+     * changes such as {@code 0.00} becoming {@code 0.0} and rewrite the file for nothing.
+     */
+    static Set<String> keyPaths(ConfigurationSection section) {
+        return new TreeSet<>(section.getKeys(true));
+    }
+
+    private static void addMissingDefaults(ConfigurationSection template, ConfigurationSection target) {
+        for (String key : template.getKeys(false)) {
+            ConfigurationSection templateChild = template.getConfigurationSection(key);
+
+            if (templateChild == null) {
+                if (target.contains(key)) {
+                    continue;
+                }
+                target.set(key, template.get(key));
+                continue;
+            }
+
+            ConfigurationSection targetChild = target.getConfigurationSection(key);
+            if (targetChild == null) {
+                targetChild = target.createSection(key);
+                addMissingDefaults(templateChild, targetChild);
+                continue;
+            }
+
+            addMissingDefaults(templateChild, targetChild);
         }
-        return normalizedSource;
     }
 
-    private static void migrateRenamedSettings(FileConfiguration currentConfig, YamlConfiguration targetConfig) {
+    /**
+     * Fills in the bundled documentation wherever the operator has none of their own, so an
+     * untouched setting keeps explaining itself and a deleted comment does not hide the reason
+     * a setting exists. A comment the operator wrote always wins.
+     */
+    private static void adoptTemplateComments(ConfigurationSection template, ConfigurationSection target) {
+        for (String key : template.getKeys(false)) {
+            if (!target.contains(key)) {
+                continue;
+            }
+
+            // A comment block above a key belongs to that key's path, section headers included.
+            if (target.getComments(key).isEmpty() && !template.getComments(key).isEmpty()) {
+                target.setComments(key, template.getComments(key));
+            }
+            if (target.getInlineComments(key).isEmpty() && !template.getInlineComments(key).isEmpty()) {
+                target.setInlineComments(key, template.getInlineComments(key));
+            }
+
+            ConfigurationSection templateChild = template.getConfigurationSection(key);
+            ConfigurationSection targetChild = target.getConfigurationSection(key);
+            if (templateChild != null && targetChild != null) {
+                adoptTemplateComments(templateChild, targetChild);
+            }
+        }
+    }
+
+    private static void dropSectionIfEmpty(YamlConfiguration config, String path) {
+        ConfigurationSection section = config.getConfigurationSection(path);
+        if (section != null && section.getKeys(false).isEmpty()) {
+            config.set(path, null);
+        }
+    }
+
+    private static void migrateRenamedSettings(YamlConfiguration currentConfig, YamlConfiguration targetConfig) {
         migrateRenamedSetting(currentConfig, targetConfig,
                 "autosave-interval", "persistence.autosave-interval-seconds");
         migrateRenamedSetting(currentConfig, targetConfig,
@@ -76,7 +145,7 @@ final class ConfigMigrator {
         }
     }
 
-    private static void migrateRenamedSetting(FileConfiguration source, YamlConfiguration target,
+    private static void migrateRenamedSetting(YamlConfiguration source, YamlConfiguration target,
                                               String oldPath, String newPath) {
         if (source.contains(oldPath) && !source.contains(newPath)) {
             target.set(newPath, source.get(oldPath));
@@ -84,84 +153,56 @@ final class ConfigMigrator {
         target.set(oldPath, null);
     }
 
-    private static void migrateLegacyCurrencySection(FileConfiguration currentConfig, YamlConfiguration targetConfig) {
+    /**
+     * Carries a legacy root-level {@code currency} section over to {@code currencies.definitions}.
+     *
+     * <p>Runs even when a {@code currencies} section already exists, because a partially migrated
+     * config would otherwise lose its legacy values silently. Existing keys are never overwritten.
+     */
+    private static void migrateLegacyCurrencySection(YamlConfiguration currentConfig, YamlConfiguration targetConfig) {
         if (!currentConfig.isConfigurationSection(LEGACY_CURRENCY_ROOT)) {
             return;
         }
 
-        if (!currentConfig.isConfigurationSection(NEW_CURRENCIES_ROOT)) {
-            String legacyCurrencyId = sanitized(currentConfig.getString("currency.id"), "openeco");
-            String singular = sanitized(currentConfig.getString("currency.name-singular"), "Dollar");
-            String plural = sanitized(currentConfig.getString("currency.name-plural"), "Dollars");
-            int fractionalDigits = clampFractionalDigits(currentConfig.getInt("currency.decimal-digits", 2));
-            double startingBalance = currentConfig.getDouble("currency.starting-balance", 0.0);
-            double maxBalance = currentConfig.getDouble("currency.max-balance", -1.0);
+        String legacyCurrencyId = sanitized(currentConfig.getString("currency.id"), "openeco");
+        String definitionPath = "currencies.definitions." + legacyCurrencyId;
 
+        if (!targetConfig.contains("currencies.default")) {
             targetConfig.set("currencies.default", legacyCurrencyId);
-            targetConfig.set("currencies.definitions." + legacyCurrencyId + ".name-singular", singular);
-            targetConfig.set("currencies.definitions." + legacyCurrencyId + ".name-plural", plural);
-            targetConfig.set("currencies.definitions." + legacyCurrencyId + ".decimal-digits", fractionalDigits);
-            targetConfig.set("currencies.definitions." + legacyCurrencyId + ".starting-balance", startingBalance);
-            targetConfig.set("currencies.definitions." + legacyCurrencyId + ".max-balance", maxBalance);
         }
+        if (!targetConfig.contains(definitionPath + ".name-singular")) {
+            targetConfig.set(definitionPath + ".name-singular",
+                    sanitized(currentConfig.getString("currency.name-singular"), "Dollar"));
+        }
+        if (!targetConfig.contains(definitionPath + ".name-plural")) {
+            targetConfig.set(definitionPath + ".name-plural",
+                    sanitized(currentConfig.getString("currency.name-plural"), "Dollars"));
+        }
+        if (!targetConfig.contains(definitionPath + ".decimal-digits")) {
+            targetConfig.set(definitionPath + ".decimal-digits",
+                    clampFractionalDigits(currentConfig.getInt("currency.decimal-digits", 2)));
+        }
+        if (!targetConfig.contains(definitionPath + ".starting-balance")) {
+            targetConfig.set(definitionPath + ".starting-balance",
+                    currentConfig.getDouble("currency.starting-balance", 0.0));
+        }
+        if (!targetConfig.contains(definitionPath + ".max-balance")) {
+            targetConfig.set(definitionPath + ".max-balance",
+                    currentConfig.getDouble("currency.max-balance", -1.0));
+        }
+
+        // Only the root section is retired. A nested "currency" key belongs to another plugin
+        // and must survive; a path-scoped removal keeps it intact.
+        targetConfig.set(LEGACY_CURRENCY_ROOT, null);
     }
 
-    private static void copySection(ConfigurationSection sourceSection, ConfigurationSection targetSection) {
-        for (String key : sourceSection.getKeys(false)) {
-            if (LEGACY_CURRENCY_ROOT.equals(key)) {
-                continue;
-            }
-
-            ConfigurationSection sourceChild = sourceSection.getConfigurationSection(key);
-            if (sourceChild != null) {
-                ConfigurationSection targetChild = targetSection.createSection(key);
-                copySection(sourceChild, targetChild);
-            } else {
-                targetSection.set(key, sourceSection.get(key));
-            }
-        }
-    }
-
-    private static void mergeSection(ConfigurationSection templateSection, ConfigurationSection sourceSection,
-                                     ConfigurationSection targetSection) {
-        Set<String> templateKeys = templateSection == null ? Collections.emptySet() : templateSection.getKeys(false);
-
-        if (templateSection != null) {
-            for (String key : templateKeys) {
-                ConfigurationSection templateChild = templateSection.getConfigurationSection(key);
-                ConfigurationSection sourceChild = sourceSection == null ? null : sourceSection.getConfigurationSection(key);
-
-                if (templateChild != null) {
-                    ConfigurationSection targetChild = targetSection.createSection(key);
-                    mergeSection(templateChild, sourceChild, targetChild);
-                } else {
-                    Object value = sourceSection != null && sourceSection.contains(key)
-                            ? sourceSection.get(key)
-                            : templateSection.get(key);
-                    targetSection.set(key, value);
-                }
-            }
-        }
-
-        if (sourceSection == null) {
-            return;
-        }
-
-        for (String key : sourceSection.getKeys(false)) {
-            if (templateKeys.contains(key)) {
-                continue;
-            }
-
-            ConfigurationSection sourceChild = sourceSection.getConfigurationSection(key);
-            if (sourceChild != null) {
-                ConfigurationSection targetChild = targetSection.createSection(key);
-                mergeSection(null, sourceChild, targetChild);
-            } else {
-                targetSection.set(key, sourceSection.get(key));
-            }
-        }
-    }
-
+    /**
+     * Copies every value from {@code sourceSection} into {@code targetSection}.
+     *
+     * <p>The legacy {@code currency} key is skipped at the root only: it is replaced by
+     * {@link #migrateLegacyCurrencySection}. Skipping it at any depth would silently delete a
+     * perfectly valid configuration key belonging to some other plugin.
+     */
     private static String sanitized(String value, String fallback) {
         if (value == null) {
             return fallback;

@@ -5,12 +5,20 @@
 build/
 **/build/
 
+# Eclipse / IntelliJ output — nested per module, and the outer */build/ rule
+# above does not cover these.
+bin/
+**/bin/
+
 stress-addon/
 
 *.db
 *.db-*
 *.mv.db
 *.trace.db
+
+# Kilo agent manager worktrees
+.kilo/
 
 # Local Paper server + manual migration smoke tests (not for CI)
 .test-server/

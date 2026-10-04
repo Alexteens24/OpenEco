@@ -243,25 +243,12 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
         }
         AccountRecord target = optTarget.get();
 
-        BigDecimal amount;
-        try {
-            amount = new BigDecimal(args[2]);
-            if (amount.precision() > 30 || Math.abs(amount.scale()) > 18) {
-                messages.send(sender, "invalid-amount");
-                return true;
-            }
-        } catch (NumberFormatException e) {
-            messages.send(sender, "invalid-amount");
+        AmountArgument.AmountParse parsed = AmountArgument.parse(args[2], sub.equals("set"));
+        if (!parsed.accepted()) {
+            messages.send(sender, parsed.messageKey(), Placeholder.unparsed("reason", parsed.reason()));
             return true;
         }
-        if (amount.compareTo(BigDecimal.ZERO) <= 0 && !sub.equals("set")) {
-            messages.send(sender, "negative-amount");
-            return true;
-        }
-        if (amount.compareTo(BigDecimal.ZERO) < 0 && sub.equals("set")) {
-            messages.send(sender, "negative-amount");
-            return true;
-        }
+        BigDecimal amount = parsed.amount();
 
         String currencyId = args.length == 4 ? args[3] : service.getCurrencyId();
         if (!service.hasCurrency(currencyId)) {

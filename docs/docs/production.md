@@ -146,6 +146,19 @@ These source IDs and types must match the data sources configured in the FastSta
 4. Restart everything after toggling cross-server mode.
 5. Test at least one server switch, one disconnect, and one `/ecosync <player>`.
 
+### How a switch is verified
+
+Before the player leaves a backend, the proxy asks it to flush the balance and **suspends the
+switch** until that backend confirms the write reached storage. The backend answers `flushed`
+only when the balance is durable, and `flushfailed` when the write did not happen — a failure
+cancels the switch and tells the player to retry, rather than letting the destination server
+load a stale balance and silently roll the amount back.
+
+If no answer arrives within two seconds the switch is cancelled as well. Keep in mind the proxy
+addon must be updated alongside the core plugin: an older backend that only ever sends `flushed`
+is indistinguishable from a successful one, so update every backend before relying on the failure
+path.
+
 ## Rollout advice
 
 1. Use staging first.

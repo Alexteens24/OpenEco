@@ -17,6 +17,7 @@
 package dev.alexisbinh.openeco.service;
 
 import dev.alexisbinh.openeco.api.BalanceCheckResult;
+import dev.alexisbinh.openeco.api.ExchangeResult;
 import dev.alexisbinh.openeco.api.OpenEcoApiException;
 import dev.alexisbinh.openeco.api.TransferPreviewResult;
 import dev.alexisbinh.openeco.event.AccountCreateEvent;
@@ -43,6 +44,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
@@ -100,7 +102,17 @@ public class AccountService {
 
     private final AccountRepository repository;
     private final Logger log;
+    /**
+     * Guards snapshot collection. Never hold this across JDBC I/O - that stalls every
+     * caller that needs {@link #persistenceLock} (login, account creation, admin commands).
+     */
     private final Object persistenceLock = new Object();
+
+    /**
+     * Accounts whose balance cannot be written to storage, used to report each offender once
+     * instead of flooding the console on every autosave cycle.
+     */
+    private final Set<UUID> blockedAccounts = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final Object accountIdentityLock = new Object();
     private final AccountRegistry accountRegistry = new AccountRegistry();
     private final LeaderboardCache leaderboardCache = new LeaderboardCache();
@@ -699,6 +711,15 @@ public class AccountService {
         return economyOperations.deposit(id, currencyId, amount);
     }
 
+    /**
+     * Converts {@code debited} of one currency into {@code credited} of another on one account.
+     * Both legs are applied together or not at all.
+     */
+    public ExchangeResult convertCurrency(UUID id, String fromCurrencyId, String toCurrencyId,
+                                          BigDecimal debited, BigDecimal credited) {
+        return economyOperations.convertCurrency(id, fromCurrencyId, toCurrencyId, debited, credited);
+    }
+
     public EconomyOperationResponse withdraw(UUID id, BigDecimal amount) {
         return withdraw(id, config.currencyId(), amount);
     }
@@ -977,10 +998,35 @@ public class AccountService {
     /**
      * Flushes all dirty records to the database. Thread-safe: takes a snapshot
      * under per-record lock, clears dirty flag, then batches to DB.
+     *
+     * <p>A single unwritable account can never block the rest of the economy: if the batch
+     * write fails, it is retried one record at a time so healthy accounts are still persisted.
+     * Only the records that genuinely failed stay dirty.
+     *
+     * @return true when every dirty record reached storage
      */
     public boolean flushDirty() {
+        List<AccountRecord> snapshots = collectDirtySnapshots();
+        if (snapshots.isEmpty()) return true;
+
+        if (!transactionHistoryService.waitForDrain()) {
+            log.warning("Skipping balance flush because pending transaction writes did not drain in time.");
+            markDirty(snapshots);
+            return false;
+        }
+
+        List<AccountRecord> failed = persist(snapshots);
+        if (!failed.isEmpty()) {
+            markDirty(failed);
+            return false;
+        }
+        return true;
+    }
+
+    /** Snapshots every dirty record and clears its flag. Safe: no JDBC under the lock. */
+    private List<AccountRecord> collectDirtySnapshots() {
+        List<AccountRecord> snapshots = new ArrayList<>();
         synchronized (persistenceLock) {
-            List<AccountRecord> snapshots = new ArrayList<>();
             for (AccountRecord record : accountRegistry.liveRecords()) {
                 if (!record.isDirty()) continue;
                 AccountRecord snap;
@@ -991,41 +1037,73 @@ public class AccountService {
                 }
                 snapshots.add(snap);
             }
-            if (snapshots.isEmpty()) return true;
+        }
+        return snapshots;
+    }
 
-            if (!transactionHistoryService.waitForDrain()) {
-                log.warning("Skipping balance flush because pending transaction writes did not drain in time.");
-                for (AccountRecord snap : snapshots) {
-                    AccountRecord live = accountRegistry.getLiveRecord(snap.getId());
-                    if (live != null) live.markDirty();
-                }
-                return false;
-            }
+    /**
+     * Writes the batch, degrading to per-record writes when the batch is rejected.
+     *
+     * @return the records that could not be written; empty when the batch succeeded
+     */
+    private List<AccountRecord> persist(List<AccountRecord> snapshots) {
+        try {
+            repository.upsertBatch(snapshots);
+            snapshots.forEach(snapshot -> blockedAccounts.remove(snapshot.getId()));
+            return List.of();
+        } catch (SQLException batchFailure) {
+            return persistIndividually(snapshots, batchFailure);
+        }
+    }
 
+    private List<AccountRecord> persistIndividually(List<AccountRecord> snapshots, SQLException batchFailure) {
+        List<AccountRecord> failed = new ArrayList<>();
+        for (AccountRecord snapshot : snapshots) {
             try {
-                repository.upsertBatch(snapshots);
-                return true;
-            } catch (SQLException e) {
-                log.severe("Auto-save failed: " + e.getMessage());
-                // Re-mark dirty so next cycle retries
-                for (AccountRecord snap : snapshots) {
-                    AccountRecord live = accountRegistry.getLiveRecord(snap.getId());
-                    if (live != null) live.markDirty();
-                }
-                return false;
+                repository.upsertBatch(List.of(snapshot));
+                blockedAccounts.remove(snapshot.getId());
+            } catch (SQLException single) {
+                failed.add(snapshot);
+                reportBlockedAccount(snapshot, single, batchFailure);
             }
+        }
+        return failed;
+    }
+
+    private void reportBlockedAccount(AccountRecord snapshot, SQLException cause, SQLException batchFailure) {
+        if (!blockedAccounts.add(snapshot.getId())) return;
+        log.severe("Economy account " + snapshot.getId() + " ('" + snapshot.getLastKnownName()
+                + "') cannot be written to storage and will be retried on every autosave cycle.");
+        log.severe("  cause       : " + cause.getMessage());
+        log.severe("  batch cause : " + batchFailure.getMessage());
+        log.severe("  remedy      : /eco set " + snapshot.getLastKnownName()
+                + " <amount> to bring the value back into the supported range.");
+    }
+
+    private void markDirty(List<AccountRecord> snapshots) {
+        for (AccountRecord snapshot : snapshots) {
+            AccountRecord live = accountRegistry.getLiveRecord(snapshot.getId());
+            if (live != null) live.markDirty();
         }
     }
 
     /**
      * Immediately flushes a single account to the database.
      * Intended for cross-server use: call async before the player disconnects.
+     *
+     * <p>The result is meaningful and must not be swallowed by callers. A cross-server
+     * handshake that reports success after a failed flush tells the destination server to
+     * read a stale balance, silently rolling the player back to whatever was last persisted.
+     *
+     * @return true when the balance reached storage
      */
-    public void flushAccount(UUID id) {
+    public boolean flushAccount(UUID id) {
         try {
             flushAccountOrThrow(id);
+            return true;
         } catch (OpenEcoApiException error) {
             log.warning("Cross-server flush failed for " + id + ": " + error.getMessage());
+            return false;
         }
     }
 

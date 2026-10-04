@@ -48,7 +48,12 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Build project and addons
-        run: ./gradlew --no-daemon build :api:build :enhancements-addon:build :proxy-addon:build
+        run: >-
+          ./gradlew --no-daemon build
+          :api:build
+          :enhancements-addon:build
+          :proxy-addon:build
+          :migrator-addon:build
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
@@ -60,4 +65,5 @@ jobs:
             build/libs/OpenEco-*.jar
             enhancements-addon/build/libs/OpenEcoEnhancements-*.jar
             proxy-addon/build/libs/proxy-addon-*.jar
+            migrator-addon/build/libs/OpenEcoMigrator-*.jar
           fail_on_unmatched_files: true

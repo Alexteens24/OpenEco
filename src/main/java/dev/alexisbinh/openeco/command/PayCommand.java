@@ -79,21 +79,12 @@ public class PayCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        BigDecimal amount;
-        try {
-            amount = new BigDecimal(args[1]);
-            if (amount.precision() > 30 || Math.abs(amount.scale()) > 18) {
-                messages.send(payer, "invalid-amount");
-                return true;
-            }
-        } catch (NumberFormatException e) {
-            messages.send(payer, "invalid-amount");
+        AmountArgument.AmountParse parsed = AmountArgument.parse(args[1], false);
+        if (!parsed.accepted()) {
+            messages.send(payer, parsed.messageKey(), Placeholder.unparsed("reason", parsed.reason()));
             return true;
         }
-        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
-            messages.send(payer, "negative-amount");
-            return true;
-        }
+        BigDecimal amount = parsed.amount();
 
         String currencyId = service.getCurrencyId();
         if (args.length == 3) {

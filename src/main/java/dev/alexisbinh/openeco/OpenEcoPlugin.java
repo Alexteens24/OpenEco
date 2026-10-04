@@ -45,6 +45,7 @@ import java.io.InputStreamReader;
 import java.sql.SQLException;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 public class OpenEcoPlugin extends JavaPlugin {
@@ -244,7 +245,6 @@ public class OpenEcoPlugin extends JavaPlugin {
     private void migrateConfig() {
         File configFile = new File(getDataFolder(), "config.yml");
         YamlConfiguration currentConfig = YamlConfiguration.loadConfiguration(configFile);
-        String originalYaml = currentConfig.saveToString();
         try (InputStream defaultConfigStream = getResource("config.yml")) {
             if (defaultConfigStream == null) {
                 getLogger().warning("Could not load bundled config.yml for migration; skipping config migration.");
@@ -253,9 +253,16 @@ public class OpenEcoPlugin extends JavaPlugin {
 
             YamlConfiguration defaultConfig = YamlConfiguration.loadConfiguration(
                     new InputStreamReader(defaultConfigStream, StandardCharsets.UTF_8));
-            YamlConfiguration migratedConfig = ConfigMigrator.rewrite(currentConfig, defaultConfig);
-            if (!migratedConfig.saveToString().equals(originalYaml)) {
-                migratedConfig.save(configFile);
+
+            Set<String> before = ConfigMigrator.keyPaths(currentConfig);
+            ConfigMigrator.rewrite(currentConfig, defaultConfig);
+
+            // The migrator works in place and only ever adds keys, so a key-set difference means
+            // an upgrade introduced settings this file was missing. Comparing serialised text
+            // instead would fire on cosmetic value changes such as 0.00 becoming 0.0 and rewrite
+            // the file, discarding the licence header and the operator's own comments.
+            if (!ConfigMigrator.keyPaths(currentConfig).equals(before)) {
+                currentConfig.save(configFile);
                 getLogger().info("Migrated OpenEco config to the latest schema.");
             }
         } catch (IOException e) {

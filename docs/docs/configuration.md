@@ -2,6 +2,8 @@
 
 The `config.yml` file lives in `plugins/OpenEco/`. OpenEco auto-migrates legacy `currency.*` keys into `currencies.*`, `autosave-interval` into `persistence.autosave-interval-seconds`, and `baltop.cache-ttl-seconds` into `baltop.refresh-interval-seconds` on startup and `/eco reload`.
 
+Migration edits your file **in place**: it only retires the settings it replaces and adds the keys an upgrade introduced. Your own ordering, custom keys and comments are never rewritten, and the file is not saved at all when no key was added. A key named `currency` below the top level belongs to another plugin and is left alone — only the root `currency` section is migrated.
+
 Click any option below to view additional information.
 
 ::: tip Apply most changes without a restart

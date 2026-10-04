@@ -77,6 +77,8 @@ perm-cap:
 # ── Currency Exchange ─────────────────────────────────────────────────────────
 exchange:
   # Set to true to enable the /exchange command.
+  # Each conversion is atomic: both currency legs are applied together or not at all, so a
+  # refused conversion never leaves the source debited without the target credited.
   enabled: false
 
   # Optional flat fee percentage deducted from the received amount (0 = no fee).
@@ -104,5 +106,5 @@ exchange:
     balance-limit: "<red>Exchange would exceed your balance limit."
     frozen: "<red>Your account is frozen."
     invalid-amount: "<red>Invalid amount."
+    cancelled: "<red>Another plugin blocked this exchange."
     failed: "<red>Exchange failed."
-    rollback-failed: "<red>Exchange failed and automatic rollback could not be completed. Contact an administrator."

@@ -17,6 +17,7 @@
 package dev.alexisbinh.openeco.service;
 
 import dev.alexisbinh.openeco.api.BalanceCheckResult;
+import dev.alexisbinh.openeco.api.ExchangeResult;
 import dev.alexisbinh.openeco.api.TransferCheckResult;
 import dev.alexisbinh.openeco.api.TransferPreviewResult;
 import dev.alexisbinh.openeco.event.BalanceChangeEvent;
@@ -875,5 +876,123 @@ final class EconomyOperations {
 
     private static EconomyOperationResponse failure(BigDecimal amount, BigDecimal balance, String message) {
         return new EconomyOperationResponse(amount, balance, EconomyOperationResponse.ResponseType.FAILURE, message);
+    }
+
+    /**
+     * Converts {@code debited} of one currency into {@code credited} of another on a single
+     * account, applying both legs together or not at all.
+     *
+     * <p>This exists because composing {@code withdraw} and {@code deposit} is not equivalent:
+     * between the two calls a plugin can veto the deposit, and compensating with a second
+     * deposit is itself a deposit that the same listener may reject — at which point the
+     * withdrawn amount is gone for good. Holding the account lock across both mutations removes
+     * the intermediate state entirely.
+     *
+     * <p>The caller decides the rate; this method only guarantees that whatever numbers it is
+     * given are applied atomically or not at all.
+     *
+     * @param credited amount that will land in the target currency, already computed by the
+     *                 caller from its own rate and fee configuration
+     */
+    ExchangeResult convertCurrency(UUID id, String fromCurrencyId, String toCurrencyId,
+                                   BigDecimal rawDebited, BigDecimal rawCredited) {
+        EconomyConfigSnapshot currentConfig = configSupplier.get();
+        CurrencyDefinition from = resolveCurrency(currentConfig, fromCurrencyId);
+        CurrencyDefinition to = resolveCurrency(currentConfig, toCurrencyId);
+        if (from == null || to == null) {
+            return ExchangeResult.failed(ExchangeResult.Status.UNKNOWN_CURRENCY, BigDecimal.ZERO, BigDecimal.ZERO);
+        }
+        if (from.id().equalsIgnoreCase(to.id())) {
+            return ExchangeResult.failed(ExchangeResult.Status.SAME_CURRENCY, BigDecimal.ZERO, BigDecimal.ZERO);
+        }
+
+        BigDecimal debited = scale(rawDebited, from);
+        BigDecimal credited = scale(rawCredited, to);
+        if (debited.compareTo(BigDecimal.ZERO) <= 0 || credited.compareTo(BigDecimal.ZERO) <= 0) {
+            return ExchangeResult.failed(ExchangeResult.Status.INVALID_AMOUNT, debited, credited);
+        }
+
+        try (AccountLease lease = requireLease(id)) {
+            if (lease == null) {
+                return ExchangeResult.failed(ExchangeResult.Status.ACCOUNT_NOT_FOUND, debited, credited);
+            }
+            AccountRecord record = lease.record();
+
+            // Both pre-events are dispatched before anything is written, so a listener that
+            // vetoes either leg leaves the account untouched.
+            BigDecimal fromBefore;
+            BigDecimal toBefore;
+            synchronized (record) {
+                if (!accountRegistry.isLive(id, record)) {
+                    return ExchangeResult.failed(ExchangeResult.Status.ACCOUNT_NOT_FOUND, debited, credited);
+                }
+                if (record.isFrozen()) {
+                    return ExchangeResult.failed(ExchangeResult.Status.FROZEN, debited, credited);
+                }
+                fromBefore = record.getBalance(from.id());
+                toBefore = record.getBalance(to.id());
+            }
+
+            BalanceChangeEvent debitEvent = new BalanceChangeEvent(
+                    id, fromBefore, fromBefore.subtract(debited), BalanceChangeEvent.Reason.EXCHANGE_OUT, from.id());
+            eventDispatcher.dispatch(debitEvent);
+            if (debitEvent.isCancelled()) {
+                return ExchangeResult.failed(ExchangeResult.Status.CANCELLED, debited, credited);
+            }
+
+            BalanceChangeEvent creditEvent = new BalanceChangeEvent(
+                    id, toBefore, toBefore.add(credited), BalanceChangeEvent.Reason.EXCHANGE_IN, to.id());
+            eventDispatcher.dispatch(creditEvent);
+            if (creditEvent.isCancelled()) {
+                return ExchangeResult.failed(ExchangeResult.Status.CANCELLED, debited, credited);
+            }
+
+            synchronized (record) {
+                if (!accountRegistry.isLive(id, record)) {
+                    return ExchangeResult.failed(ExchangeResult.Status.ACCOUNT_NOT_FOUND, debited, credited);
+                }
+                if (record.isFrozen()) {
+                    return ExchangeResult.failed(ExchangeResult.Status.FROZEN, debited, credited);
+                }
+
+                // Re-read under the lock: a listener may have changed the balance while we were
+                // dispatching the pre-events.
+                fromBefore = record.getBalance(from.id());
+                toBefore = record.getBalance(to.id());
+                if (fromBefore.compareTo(debited) < 0) {
+                    return ExchangeResult.failed(ExchangeResult.Status.INSUFFICIENT_FUNDS, debited, credited);
+                }
+                BigDecimal toAfter = toBefore.add(credited);
+                if (to.maxBalance() != null && toAfter.compareTo(to.maxBalance()) > 0) {
+                    return ExchangeResult.failed(ExchangeResult.Status.BALANCE_LIMIT, debited, credited);
+                }
+
+                BigDecimal fromAfter = fromBefore.subtract(debited);
+                record.setBalance(from.id(), fromAfter);
+                record.setBalance(to.id(), toAfter);
+
+                long now = System.currentTimeMillis();
+                transactionLogger.accept(new TransactionEntry(
+                        TransactionType.EXCHANGE_OUT, null, id, debited, fromBefore, fromAfter, now,
+                        null, "to " + to.id(), from.id()));
+                transactionLogger.accept(new TransactionEntry(
+                        TransactionType.EXCHANGE_IN, null, id, credited, toBefore, toAfter, now,
+                        null, "from " + from.id(), to.id()));
+            }
+
+            leaderboardDirtyMarker.accept(from.id());
+            leaderboardDirtyMarker.accept(to.id());
+
+            synchronized (record) {
+                eventDispatcher.dispatch(new BalanceChangedEvent(
+                        id, fromBefore, record.getBalance(from.id()),
+                        BalanceChangeEvent.Reason.EXCHANGE_OUT, from.id()));
+                eventDispatcher.dispatch(new BalanceChangedEvent(
+                        id, toBefore, record.getBalance(to.id()),
+                        BalanceChangeEvent.Reason.EXCHANGE_IN, to.id()));
+                return ExchangeResult.success(debited, credited,
+                        record.getBalance(from.id()), record.getBalance(to.id()));
+            }
+        }
     }
 }
