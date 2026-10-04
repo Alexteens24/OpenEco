@@ -1,0 +1,206 @@
+# Copyright 2026 alexisbinh
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+currencies:
+  # Preferred multi-currency config. OpenEco will migrate legacy currency.*
+  # keys into this layout on startup/reload and remove the old section.
+  default: openeco
+  definitions:
+    openeco:
+      name-singular: "Dollar"
+      name-plural: "Dollars"
+      # Number of decimal places (0-8)
+      decimal-digits: 2
+      # Balance given to new accounts
+      starting-balance: 0.00
+      # Maximum balance a player can hold (-1 = unlimited)
+      max-balance: -1
+      # Available placeholders: <amount>, <name>, <currency>. <amount> is required.
+      format: "<amount> <name>"
+      grouping: false
+      # Separators must each be exactly one different character.
+      decimal-separator: "."
+      grouping-separator: ","
+
+storage:
+  # Backend to use: sqlite, h2, mysql, mariadb, or postgresql
+  # Changing backend or file name does not move data by itself; use /openecomigrate sqlitetomysql (see docs/migration.md).
+  type: sqlite
+  sqlite:
+    file: economy.db
+  h2:
+    # File name (without extension); H2 appends .mv.db automatically
+    file: economy
+  mysql:
+    host: localhost
+    port: 3306
+    database: openeco
+    username: root
+    password: ""
+    # Number of concurrent database connections (remote backends only)
+    pool-size: 10
+    connection-timeout-seconds: 10
+    # preferred, disabled, required, verify-ca, or verify-full
+    ssl-mode: preferred
+    # Optional full JDBC URL override. When set, host/port/database/ssl-mode are ignored.
+    jdbc-url: ""
+  mariadb:
+    host: localhost
+    port: 3306
+    database: openeco
+    username: root
+    password: ""
+    pool-size: 10
+    connection-timeout-seconds: 10
+    # disabled, trust, verify-ca, or verify-full
+    ssl-mode: disabled
+    jdbc-url: ""
+  postgresql:
+    host: localhost
+    port: 5432
+    database: openeco
+    username: postgres
+    password: ""
+    pool-size: 10
+    connection-timeout-seconds: 10
+    # disable, allow, prefer, require, verify-ca, or verify-full
+    ssl-mode: prefer
+    jdbc-url: ""
+  migration:
+    # Optional local backup source when the server already runs on a remote backend.
+    # Leave source-folder and source-file empty to migrate from the active local database.
+    source-type: sqlite
+    source-folder: ""
+    source-file: ""
+
+persistence:
+  # Seconds between automatic background saves. Must be greater than 0.
+  # Lower values reduce worst-case data loss after a crash but increase write pressure.
+  autosave-interval-seconds: 30
+
+# Account loading policy. Changing mode or lazy cache retention requires a restart.
+account-loading:
+  # eager loads every account at startup; lazy loads accounts on demand.
+  mode: eager
+  lazy:
+    cache:
+      # Retain clean offline accounts for reuse. Online and in-flight accounts are always retained.
+      enabled: true
+      # Retain at most this many inactive clean accounts when possible.
+      maximum-size: 50000
+      # Evict inactive clean accounts after this many idle minutes.
+      expire-after-access-minutes: 30
+
+pay:
+  # Cooldown between /pay uses in seconds (0 = disabled)
+  cooldown-seconds: 0
+  # Percentage of the sent amount deducted as tax (0.0 = disabled)
+  tax-percent: 0.0
+  # Minimum amount a player can pay in one transaction (0 = no minimum)
+  # Raising this helps suppress spammy micro-transfers on live servers.
+  min-amount: 0.01
+
+baltop:
+  # Must be greater than 0
+  page-size: 10
+  # Seconds between background refreshes of dirty leaderboard snapshots
+  refresh-interval-seconds: 30
+
+history:
+  # Must be greater than 0
+  page-size: 10
+  # Number of days to keep transaction history (<= 0 = keep forever, no pruning)
+  # Transactions older than this will be deleted automatically once per day.
+  retention-days: -1
+
+cross-server:
+  # Enable proxy-assisted account handoff sync for networks running multiple backend servers
+  # behind a Velocity or BungeeCord proxy that share the same remote database
+  # (MySQL / MariaDB / PostgreSQL only).
+  #
+  # When enabled:
+  #   - Each player's account is flushed to the shared database when they leave a backend.
+  #   - Each player's account is re-read from the shared database before they finish joining.
+  #   - The openeco:sync plugin messaging channel is registered so the optional
+  #     openeco-proxy Velocity addon can trigger targeted flush/refresh requests.
+  #
+  # This is a handoff sync, not a real-time distributed ledger:
+  #   - balances are not broadcast live to every backend
+  #   - simultaneous writes to the same account from multiple live servers are still unsafe
+  #   - SQLite and H2 are not supported for this mode
+  #
+  # Requires a restart to take effect after toggling.
+  # Do NOT enable this on single-server setups — it adds unnecessary DB round-trips.
+  enabled: false
+
+messages:
+  no-permission: "<red>You don't have permission to do that."
+  console-player-only: "<red>Console must specify a player name."
+  account-not-found: "<red>No account found for: <yellow><player>"
+  account-sync-failed: "<red>Your economy account could not be synchronized. Contact an administrator if economy features do not work."
+  login-storage-error: "<red>Your economy account could not be loaded. Please try joining again later."
+  storage-error: "<red>Economy storage is temporarily unavailable. Please try again."
+  account-name-conflict: "<red>Your economy account could not use the name <yellow><player><red> because it is already linked to another account. Contact an administrator."
+  self-pay: "<red>You cannot pay yourself."
+  insufficient-funds: "<red>Insufficient funds."
+  unknown-currency: "<red>The selected currency is not available right now."
+  pay-balance-limit: "<red><player> has reached the maximum balance and cannot receive more money."
+  pay-too-low: "<red>Minimum payment amount is <yellow><min><red>."
+  pay-cancelled: "<red>The payment was cancelled by a plugin."
+  invalid-amount: "<red>Invalid amount."
+  negative-amount: "<red>Amount must be greater than zero."
+
+  balance-self: "<green>Your balance: <yellow><balance>"
+  balance-other: "<green><player>'s balance: <yellow><balance>"
+
+  pay-sent: "<green>You paid <yellow><player> <green><amount>."
+  pay-tax: "<gray>(Tax deducted: <yellow><tax><gray>)"
+  pay-received: "<green>You received <yellow><amount> <green>from <yellow><player><green>."
+  pay-cooldown: "<red>Please wait <yellow><seconds>s <red>before paying again."
+
+  eco-give: "<green>Gave <yellow><amount> <green>to <yellow><player><green>. New balance: <yellow><balance>"
+  eco-give-failed: "<red>Failed to give money to <yellow><player><red>."
+  eco-take: "<green>Took <yellow><amount> <green>from <yellow><player><green>. New balance: <yellow><balance>"
+  eco-take-failed: "<red>Failed to take money from <yellow><player><red>. They may not have enough funds."
+  eco-set: "<green>Set <yellow><player><green>'s balance to <yellow><balance><green>."
+  eco-set-failed: "<red>Failed to set balance for <yellow><player><red>."
+  eco-balance-limit: "<red><player> would exceed the maximum balance of <yellow><limit><red>."
+  eco-delete: "<green>Deleted <yellow><player><green>'s account."
+  eco-delete-failed: "<red>Failed to delete <yellow><player><red>'s account."
+  eco-freeze: "<green>Frozen <yellow><player><green>'s account."
+  eco-unfreeze: "<green>Unfrozen <yellow><player><green>'s account."
+  eco-freeze-failed: "<red>Failed to freeze <yellow><player><red>'s account."
+  eco-unfreeze-failed: "<red>Failed to unfreeze <yellow><player><red>'s account."
+  account-frozen: "<red>This account is frozen and cannot perform transactions."
+  eco-reset: "<green>Reset <yellow><player><green>'s balance to <yellow><balance><green>."
+  eco-reload: "<green>openeco configuration reloaded."
+  eco-reload-failed: "<red>Configuration reload failed. Check the server console for the invalid option."
+  eco-rename: "<green>Renamed <yellow><old_name><green>'s account to <yellow><new_name><green>."
+  eco-rename-name-in-use: "<red>The name <yellow><new_name><red> is already taken."
+  eco-rename-invalid: "<red>Invalid name: <yellow><new_name><red>."
+  eco-rename-failed: "<red>Failed to rename <yellow><player><red>'s account."
+
+  baltop-header: "<gold><bold>--- Balance Top (page <page>/<total>) ---</bold></gold>"
+  baltop-entry: "<yellow>#<rank> <green><player><gray>: <yellow><balance>"
+
+  history-header: "<gold><bold>--- <player>'s History (page <page>/<total>) ---</bold></gold>"
+  history-empty: "<gray>No transactions found."
+  history-error: "<red>Failed to load transaction history. Please try again later."
+  history-give: "<dark_gray>[<date>] <green>+<amount> <gray>(given by admin)"
+  history-take: "<dark_gray>[<date>] <red>-<amount> <gray>(taken by admin)"
+  history-set: "<dark_gray>[<date>] <yellow>set <gray>to <yellow><balance> <gray>(admin)"
+  history-reset: "<dark_gray>[<date>] <yellow>reset <gray>to <yellow><balance> <gray>(reset)"
+  history-pay-sent: "<dark_gray>[<date>] <red>-<amount> <gray>(paid to <white><counterpart><gray>)"
+  history-pay-received: "<dark_gray>[<date>] <green>+<amount> <gray>(from <white><counterpart><gray>)"
+  history-custom: "<dark_gray>[<date>] <aqua><kind> <yellow><amount> <gray>(<details>)"
