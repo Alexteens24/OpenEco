@@ -24,7 +24,7 @@ repositories {
 }
 
 dependencies {
-    compileOnly("com.github.Alexteens24:OpenEco:v1.4.7")
+    compileOnly("com.github.Alexteens24:OpenEco:v1.6.1")
 }
 ```
 
