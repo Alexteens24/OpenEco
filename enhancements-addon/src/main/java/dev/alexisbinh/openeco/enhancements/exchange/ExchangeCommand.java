@@ -16,9 +16,9 @@
 
 package dev.alexisbinh.openeco.enhancements.exchange;
 
-import dev.alexisbinh.openeco.api.BalanceChangeResult;
 import dev.alexisbinh.openeco.api.BalanceCheckResult;
 import dev.alexisbinh.openeco.api.CurrencyInfo;
+import dev.alexisbinh.openeco.api.ExchangeResult;
 import dev.alexisbinh.openeco.api.OpenEcoApi;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
@@ -156,51 +156,39 @@ public class ExchangeCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        // Execute: withdraw first, then deposit. Rollback deposit-side amount if deposit fails.
-        BalanceChangeResult withdrawResult = api.withdraw(player.getUniqueId(), fromId, scaledAmount);
-        if (!withdrawResult.isSuccess()) {
-            String msg = switch (withdrawResult.status()) {
+        // Execute: a single atomic conversion. Both currency legs are applied together or not
+        // at all, so there is no window in which the source balance is debited while the target
+        // has not been credited, and no compensating deposit that another listener could reject.
+        ExchangeResult result = api.convertCurrency(
+                player.getUniqueId(), fromId, toId, scaledAmount, toAmount);
+        if (!result.isSuccess()) {
+            String msg = switch (result.status()) {
+                case UNKNOWN_CURRENCY -> config.getString("exchange.messages.unknown-currency",
+                        "<red>Unknown currency: <yellow><currency>");
+                case SAME_CURRENCY -> config.getString("exchange.messages.same-currency",
+                        "<red>Cannot exchange a currency for itself.");
+                case INVALID_AMOUNT -> config.getString("exchange.messages.invalid-amount", "<red>Invalid amount.");
                 case INSUFFICIENT_FUNDS -> config.getString("exchange.messages.insufficient-funds",
                         "<red>Insufficient funds.");
-                case FROZEN -> config.getString("exchange.messages.frozen",
-                        "<red>Your account is frozen.");
-                default -> config.getString("exchange.messages.failed", "<red>Exchange failed.");
-            };
-            player.sendMessage(mm.deserialize(msg));
-            return true;
-        }
-
-        BalanceChangeResult depositResult = api.deposit(player.getUniqueId(), toId, toAmount);
-        if (!depositResult.isSuccess()) {
-            // Rollback the withdraw
-            BalanceChangeResult rollbackResult = api.deposit(player.getUniqueId(), fromId, scaledAmount);
-            if (!rollbackResult.isSuccess()) {
-            plugin.getLogger().severe("Exchange rollback failed for player " + player.getUniqueId()
-                + " (" + player.getName() + "): withdrew " + scaledAmount.toPlainString() + " " + fromId
-                + ", target deposit failed with status " + depositResult.status()
-                + ", rollback failed with status " + rollbackResult.status() + ".");
-            String msg = config.getString("exchange.messages.rollback-failed",
-                "<red>Exchange failed and automatic rollback could not be completed. Contact an administrator.");
-            player.sendMessage(mm.deserialize(msg));
-            return true;
-            }
-            String msg = switch (depositResult.status()) {
                 case BALANCE_LIMIT -> config.getString("exchange.messages.balance-limit",
                         "<red>Exchange would exceed your balance limit.");
                 case FROZEN -> config.getString("exchange.messages.frozen",
                         "<red>Your account is frozen.");
-                default -> config.getString("exchange.messages.failed", "<red>Exchange failed.");
+                case CANCELLED -> config.getString("exchange.messages.cancelled",
+                        "<red>Another plugin blocked this exchange.");
+                case ACCOUNT_NOT_FOUND, SUCCESS -> config.getString("exchange.messages.failed",
+                        "<red>Exchange failed.");
             };
-            player.sendMessage(mm.deserialize(msg));
+            player.sendMessage(mm.deserialize(msg, Placeholder.unparsed("currency", fromId)));
             return true;
         }
 
         String successMsg = config.getString("exchange.messages.success",
                 "<green>Exchanged <yellow><from_amount> <from_currency></yellow> for <yellow><to_amount> <to_currency></yellow>.");
         player.sendMessage(mm.deserialize(successMsg,
-                Placeholder.unparsed("from_amount", api.format(scaledAmount, fromId)),
+                Placeholder.unparsed("from_amount", api.format(result.debited(), fromId)),
                 Placeholder.unparsed("from_currency", fromCurrency.pluralName()),
-                Placeholder.unparsed("to_amount", api.format(toAmount, toId)),
+                Placeholder.unparsed("to_amount", api.format(result.credited(), toId)),
                 Placeholder.unparsed("to_currency", toCurrency.pluralName())));
         return true;
     }

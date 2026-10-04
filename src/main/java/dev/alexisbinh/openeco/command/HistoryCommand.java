@@ -278,18 +278,21 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
             case RESET -> "history-reset";
             case PAY_SENT -> "history-pay-sent";
             case PAY_RECEIVED -> "history-pay-received";
+            case EXCHANGE_OUT -> "history-exchange-out";
+            case EXCHANGE_IN -> "history-exchange-in";
         };
         return messages.get(key,
                 Placeholder.unparsed("date", date),
                 Placeholder.unparsed("amount", amount),
                 Placeholder.unparsed("balance", balance),
-                Placeholder.unparsed("counterpart", counterpart));
+                Placeholder.unparsed("counterpart", counterpart),
+                Placeholder.unparsed("note", entry.getNote() != null ? entry.getNote() : ""));
     }
 
     private static String signedAmount(TransactionEntry entry, String formattedAmount) {
         return switch (entry.getType()) {
-            case GIVE, PAY_RECEIVED -> "+" + formattedAmount;
-            case TAKE, PAY_SENT -> "-" + formattedAmount;
+            case GIVE, PAY_RECEIVED, EXCHANGE_IN -> "+" + formattedAmount;
+            case TAKE, PAY_SENT, EXCHANGE_OUT -> "-" + formattedAmount;
             case SET, RESET -> formattedAmount;
         };
     }

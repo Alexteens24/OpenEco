@@ -16,9 +16,9 @@
 
 package dev.alexisbinh.openeco.enhancements.exchange;
 
-import dev.alexisbinh.openeco.api.BalanceChangeResult;
 import dev.alexisbinh.openeco.api.BalanceCheckResult;
 import dev.alexisbinh.openeco.api.CurrencyInfo;
+import dev.alexisbinh.openeco.api.ExchangeResult;
 import dev.alexisbinh.openeco.api.OpenEcoApi;
 import net.kyori.adventure.text.Component;
 import org.bukkit.command.Command;
@@ -101,16 +101,20 @@ class ExchangeCommandTest {
                 .thenReturn(allowed());
         when(api.canDeposit(eq(playerId), eq("gems"), eq(new BigDecimal("100"))))
                 .thenReturn(allowed());
-        when(api.withdraw(eq(playerId), eq("openeco"), eq(new BigDecimal("10.00"))))
-                .thenReturn(success(new BigDecimal("10.00")));
-        when(api.deposit(eq(playerId), eq("gems"), eq(new BigDecimal("100"))))
-                .thenReturn(success(new BigDecimal("100")));
         when(api.format(any(), any())).thenReturn("10.00");
+
+        when(api.convertCurrency(eq(playerId), eq("openeco"), eq("gems"),
+                eq(new BigDecimal("10.00")), eq(new BigDecimal("100"))))
+                .thenReturn(ExchangeResult.success(new BigDecimal("10.00"), new BigDecimal("100"),
+                        new BigDecimal("90.00"), new BigDecimal("100")));
 
         subject.onCommand(player, command, "exchange", new String[]{"10", "openeco", "gems"});
 
-        verify(api).withdraw(playerId, "openeco", new BigDecimal("10.00"));
-        verify(api).deposit(playerId, "gems", new BigDecimal("100"));
+        // One atomic call, not a withdraw followed by a deposit.
+        verify(api).convertCurrency(playerId, "openeco", "gems",
+                new BigDecimal("10.00"), new BigDecimal("100"));
+        verify(api, never()).withdraw(any(UUID.class), any(String.class), any(BigDecimal.class));
+        verify(api, never()).deposit(any(UUID.class), any(String.class), any(BigDecimal.class));
         verify(player).sendMessage(any(Component.class));
     }
 
@@ -123,15 +127,17 @@ class ExchangeCommandTest {
                 .thenReturn(allowed());
         when(api.canDeposit(eq(playerId), eq("gems"), eq(new BigDecimal("90"))))
                 .thenReturn(allowed());
-        when(api.withdraw(eq(playerId), eq("openeco"), eq(new BigDecimal("10.00"))))
-                .thenReturn(success(new BigDecimal("10.00")));
-        when(api.deposit(eq(playerId), eq("gems"), eq(new BigDecimal("90"))))
-                .thenReturn(success(new BigDecimal("90")));
         when(api.format(any(), any())).thenReturn("10.00");
+
+        when(api.convertCurrency(eq(playerId), eq("openeco"), eq("gems"),
+                eq(new BigDecimal("10.00")), eq(new BigDecimal("90"))))
+                .thenReturn(ExchangeResult.success(new BigDecimal("10.00"), new BigDecimal("90"),
+                        new BigDecimal("90.00"), new BigDecimal("90")));
 
         subject.onCommand(player, command, "exchange", new String[]{"10", "openeco", "gems"});
 
-        verify(api).deposit(playerId, "gems", new BigDecimal("90"));
+        verify(api).convertCurrency(playerId, "openeco", "gems",
+                new BigDecimal("10.00"), new BigDecimal("90"));
     }
 
     // ── argument / validation errors ─────────────────────────────────────────
@@ -231,61 +237,59 @@ class ExchangeCommandTest {
     // ── runtime failures after precheck ──────────────────────────────────────
 
     @Test
-    void withdrawFailsAtRuntime_sendsError_noDeposit() {
+    void conversionFailsAtRuntime_sendsError_andTouchesNothingElse() {
         setUpBasicCurrencies();
         when(api.canWithdraw(eq(playerId), eq("openeco"), any())).thenReturn(allowed());
         when(api.canDeposit(eq(playerId), eq("gems"), any())).thenReturn(allowed());
-        when(api.withdraw(eq(playerId), eq("openeco"), any())).thenReturn(
-                new BalanceChangeResult(BalanceChangeResult.Status.INSUFFICIENT_FUNDS,
-                        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO));
+        when(api.convertCurrency(eq(playerId), eq("openeco"), eq("gems"), any(), any())).thenReturn(
+                ExchangeResult.failed(ExchangeResult.Status.INSUFFICIENT_FUNDS,
+                        BigDecimal.ZERO, BigDecimal.ZERO));
 
         subject.onCommand(player, command, "exchange", new String[]{"10", "openeco", "gems"});
 
-        verify(api, never()).deposit(eq(playerId), eq("gems"), any(BigDecimal.class));
+        // The command has no compensation path any more: there is nothing to roll back
+        // because the single conversion call either applied both legs or neither.
+        verify(api, never()).withdraw(any(UUID.class), any(String.class), any(BigDecimal.class));
+        verify(api, never()).deposit(any(UUID.class), any(String.class), any(BigDecimal.class));
         verify(player).sendMessage(any(Component.class));
     }
 
+    /**
+     * The regression this command used to have: when the credit leg was refused, the command
+     * compensated with a deposit, which is itself a credit and could be refused as well. The
+     * withdrawn amount was then destroyed and only a log line recorded it. There is now no
+     * compensation to fail.
+     */
     @Test
-    void depositFailsAtRuntime_rollsBackWithdraw() {
+    void balanceLimitAtRuntime_needsNoRollback() {
         setUpBasicCurrencies();
         when(api.canWithdraw(eq(playerId), eq("openeco"), eq(new BigDecimal("10.00"))))
                 .thenReturn(allowed());
         when(api.canDeposit(eq(playerId), eq("gems"), eq(new BigDecimal("100"))))
                 .thenReturn(allowed());
-        when(api.withdraw(eq(playerId), eq("openeco"), eq(new BigDecimal("10.00"))))
-                .thenReturn(success(new BigDecimal("10.00")));
-        when(api.deposit(eq(playerId), eq("gems"), eq(new BigDecimal("100"))))
-                .thenReturn(new BalanceChangeResult(BalanceChangeResult.Status.BALANCE_LIMIT,
-                        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO));
-        when(api.deposit(eq(playerId), eq("openeco"), eq(new BigDecimal("10.00"))))
-            .thenReturn(success(new BigDecimal("10.00")));
+        when(api.convertCurrency(eq(playerId), eq("openeco"), eq("gems"),
+                eq(new BigDecimal("10.00")), eq(new BigDecimal("100"))))
+                .thenReturn(ExchangeResult.failed(ExchangeResult.Status.BALANCE_LIMIT,
+                        new BigDecimal("10.00"), BigDecimal.ZERO));
 
         subject.onCommand(player, command, "exchange", new String[]{"10", "openeco", "gems"});
 
-        // rollback: re-deposit the withdrawn amount to openeco
-        verify(api).deposit(playerId, "openeco", new BigDecimal("10.00"));
+        verify(api, never()).deposit(playerId, "openeco", new BigDecimal("10.00"));
+        verify(api, never()).withdraw(any(UUID.class), any(String.class), any(BigDecimal.class));
         verify(player).sendMessage(any(Component.class));
     }
 
     @Test
-    void rollbackFailureIsLoggedAndReportedToPlayer() {
+    void vetoedConversionReportsCancelled() {
         setUpBasicCurrencies();
-        when(api.canWithdraw(eq(playerId), eq("openeco"), eq(new BigDecimal("10.00"))))
-                .thenReturn(allowed());
-        when(api.canDeposit(eq(playerId), eq("gems"), eq(new BigDecimal("100"))))
-                .thenReturn(allowed());
-        when(api.withdraw(eq(playerId), eq("openeco"), eq(new BigDecimal("10.00"))))
-                .thenReturn(success(new BigDecimal("10.00")));
-        when(api.deposit(eq(playerId), eq("gems"), eq(new BigDecimal("100"))))
-                .thenReturn(new BalanceChangeResult(BalanceChangeResult.Status.BALANCE_LIMIT,
-                        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO));
-        when(api.deposit(eq(playerId), eq("openeco"), eq(new BigDecimal("10.00"))))
-                .thenReturn(new BalanceChangeResult(BalanceChangeResult.Status.FROZEN,
-                        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO));
+        when(api.canWithdraw(eq(playerId), eq("openeco"), any())).thenReturn(allowed());
+        when(api.canDeposit(eq(playerId), eq("gems"), any())).thenReturn(allowed());
+        when(api.convertCurrency(eq(playerId), eq("openeco"), eq("gems"), any(), any())).thenReturn(
+                ExchangeResult.failed(ExchangeResult.Status.CANCELLED, BigDecimal.ZERO, BigDecimal.ZERO));
 
         subject.onCommand(player, command, "exchange", new String[]{"10", "openeco", "gems"});
 
-        verify(logger).severe(contains("Exchange rollback failed for player"));
+        verify(api, never()).withdraw(any(UUID.class), any(String.class), any(BigDecimal.class));
         verify(player).sendMessage(any(Component.class));
     }
 
@@ -307,8 +311,4 @@ class ExchangeCommandTest {
                 BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
     }
 
-    private static BalanceChangeResult success(BigDecimal amount) {
-        return new BalanceChangeResult(BalanceChangeResult.Status.SUCCESS,
-                amount, BigDecimal.ZERO, BigDecimal.ZERO);
-    }
 }

@@ -207,4 +207,24 @@ public interface OpenEcoApi {
     String format(BigDecimal amount);
 
     String format(BigDecimal amount, String currencyId);
+
+    /**
+     * Converts an amount of one currency into another on a single account.
+     *
+     * <p>Both legs are applied together or not at all. Composing {@link #withdraw} and
+     * {@link #deposit} is <em>not</em> equivalent: a plugin can veto the deposit in between, and
+     * compensating with a second deposit is itself a deposit that the same listener may reject,
+     * at which point the withdrawn amount is lost. This call has no such intermediate state.
+     *
+     * <p>The caller owns the rate and any fee: this method only applies the two amounts it is
+     * given, atomically. A conversion that would break the target currency's configured maximum
+     * balance is rejected outright.
+     *
+     * @param debited amount to remove from {@code fromCurrencyId}; must be positive
+     * @param credited amount to add to {@code toCurrencyId}; must be positive
+     * @return the outcome; inspect {@link ExchangeResult#status()} before using the balances
+     * @throws OpenEcoApiException if the account does not exist
+     */
+    ExchangeResult convertCurrency(UUID accountId, String fromCurrencyId, String toCurrencyId,
+                                   BigDecimal debited, BigDecimal credited);
 }

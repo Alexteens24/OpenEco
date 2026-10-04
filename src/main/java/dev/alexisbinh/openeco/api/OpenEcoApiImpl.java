@@ -21,6 +21,7 @@ import dev.alexisbinh.openeco.model.PayResult;
 import dev.alexisbinh.openeco.model.TransactionEntry;
 import dev.alexisbinh.openeco.model.TransactionType;
 import dev.alexisbinh.openeco.service.AccountService;
+import dev.alexisbinh.openeco.service.AmountBounds;
 import dev.alexisbinh.openeco.service.LeaderboardEntry;
 import dev.alexisbinh.openeco.service.LeaderboardView;
 import dev.alexisbinh.openeco.service.EconomyOperationResponse;
@@ -196,6 +197,21 @@ public final class OpenEcoApiImpl implements OpenEcoApi {
     @Override
     public BalanceChangeResult setBalance(UUID accountId, BigDecimal amount) {
         return applyBalanceChange(requireAccountId(accountId), requireAmount(amount), service::set);
+    }
+
+    @Override
+    public ExchangeResult convertCurrency(UUID accountId, String fromCurrencyId, String toCurrencyId,
+                                          BigDecimal debited, BigDecimal credited) {
+        UUID validatedId = requireAccountId(accountId);
+        String validatedFrom = requireKnownCurrency(fromCurrencyId);
+        String validatedTo = requireKnownCurrency(toCurrencyId);
+        BigDecimal validatedDebited = requireAmount(debited);
+        BigDecimal validatedCredited = requireAmount(credited);
+        if (!service.hasAccount(validatedId)) {
+            throw new OpenEcoApiException("Account not found: " + validatedId);
+        }
+        return service.convertCurrency(validatedId, validatedFrom, validatedTo,
+                validatedDebited, validatedCredited);
     }
 
     @Override
@@ -665,6 +681,8 @@ public final class OpenEcoApiImpl implements OpenEcoApi {
             case RESET -> TransactionKind.RESET;
             case PAY_SENT -> TransactionKind.PAY_SENT;
             case PAY_RECEIVED -> TransactionKind.PAY_RECEIVED;
+            case EXCHANGE_OUT -> TransactionKind.EXCHANGE_OUT;
+            case EXCHANGE_IN -> TransactionKind.EXCHANGE_IN;
         };
     }
 
@@ -676,6 +694,8 @@ public final class OpenEcoApiImpl implements OpenEcoApi {
             case RESET -> TransactionType.RESET;
             case PAY_SENT -> TransactionType.PAY_SENT;
             case PAY_RECEIVED -> TransactionType.PAY_RECEIVED;
+            case EXCHANGE_OUT -> TransactionType.EXCHANGE_OUT;
+            case EXCHANGE_IN -> TransactionType.EXCHANGE_IN;
         };
     }
 
@@ -720,7 +740,7 @@ public final class OpenEcoApiImpl implements OpenEcoApi {
         if (amount.precision() > 30 || Math.abs(amount.scale()) > 18) {
             throw new IllegalArgumentException("amount scale or precision is out of supported range");
         }
-        return amount;
+        return AmountBounds.requirePersistable(amount);
     }
 
     private String requireKnownCurrency(String currencyId) {

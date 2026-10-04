@@ -47,4 +47,52 @@ class FlushAckTrackerTest {
         assertEquals(FlushAckTracker.FlushOutcome.TIMED_OUT, future.get(500, TimeUnit.MILLISECONDS));
         assertEquals(0, tracker.pendingCount());
     }
+
+    /**
+     * A backend that reports a failed flush must resolve the wait as a failure, not as an
+     * acknowledgement, so the server switch is denied instead of loading a stale balance.
+     */
+    @Test
+    void reportFailureCompletesAsFlushFailed() throws Exception {
+        FlushAckTracker tracker = new FlushAckTracker(2_000);
+        UUID accountId = UUID.randomUUID();
+
+        var future = tracker.register(accountId);
+        tracker.reportFailure(accountId);
+
+        assertEquals(FlushAckTracker.FlushOutcome.FLUSH_FAILED, future.get(200, TimeUnit.MILLISECONDS));
+        assertEquals(0, tracker.pendingCount());
+    }
+
+    /**
+     * Registering twice for the same player resolves the first wait immediately. Left alone it
+     * would sit until its own timeout and then deny a switch that had already been replaced,
+     * showing the player an error while they are already on the new server.
+     */
+    @Test
+    void reRegisteringSupersedesTheEarlierWait() throws Exception {
+        FlushAckTracker tracker = new FlushAckTracker(5_000);
+        UUID accountId = UUID.randomUUID();
+
+        var first = tracker.register(accountId);
+        var second = tracker.register(accountId);
+
+        assertEquals(FlushAckTracker.FlushOutcome.SUPERSEDED, first.get(200, TimeUnit.MILLISECONDS));
+
+        tracker.acknowledge(accountId);
+        assertEquals(FlushAckTracker.FlushOutcome.ACKNOWLEDGED, second.get(200, TimeUnit.MILLISECONDS));
+        assertEquals(0, tracker.pendingCount());
+    }
+
+    @Test
+    void unknownAckIsIgnored() throws Exception {
+        FlushAckTracker tracker = new FlushAckTracker(25);
+        UUID accountId = UUID.randomUUID();
+        var future = tracker.register(accountId);
+
+        tracker.acknowledge(UUID.randomUUID());
+        tracker.reportFailure(UUID.randomUUID());
+
+        assertEquals(FlushAckTracker.FlushOutcome.TIMED_OUT, future.get(500, TimeUnit.MILLISECONDS));
+    }
 }

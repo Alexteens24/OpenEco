@@ -74,15 +74,24 @@ public class PlayerServerSwitchListener {
 
         ServerConnection currentServer = current.get();
         UUID uuid = event.getPlayer().getUniqueId();
+        String originServer = currentServer.getServerInfo().getName();
         java.util.concurrent.CompletableFuture<Void> flushDone = flushAckTracker.register(uuid)
                 .thenAccept(outcome -> {
+                // Only ACKNOWLEDGED means the balance is durable. Anything else must not let the
+                // player through, because the destination server would load a stale balance.
+                // SUPERSEDED is the exception: that flush was replaced by a newer one, so the
+                // event it belonged to is already finished and must not be touched.
+                if (outcome == FlushAckTracker.FlushOutcome.SUPERSEDED) {
+                    return;
+                }
                 if (outcome == FlushAckTracker.FlushOutcome.TIMED_OUT) {
                     logger.warn("Timed out waiting for flush ack from {} for player {}. Cancelling server switch to prevent stale data.",
-                            currentServer.getServerInfo().getName(), uuid);
-                    event.setResult(ServerPreConnectEvent.ServerResult.denied());
-                    event.getPlayer().sendMessage(Component.text(
-                            "Failed to save your economy data in time. Please try switching servers again.",
-                            NamedTextColor.RED));
+                            originServer, uuid);
+                    deny(event, "Failed to save your economy data in time. Please try switching servers again.");
+                } else if (outcome == FlushAckTracker.FlushOutcome.FLUSH_FAILED) {
+                    logger.error("Server {} reported a failed balance flush for player {}. Cancelling server switch.",
+                            originServer, uuid);
+                    deny(event, "Your balance could not be saved right now, so the server switch was cancelled. Please try again.");
                 }
             });
         currentServer.sendPluginMessage(CHANNEL, encode("flush " + uuid));
@@ -106,8 +115,9 @@ public class PlayerServerSwitchListener {
     }
 
     /**
-     * Receive {@code flushed <uuid>} acknowledgements from backend servers and
-     * complete the corresponding pending future so the server-switch can proceed.
+     * Receive {@code flushed <uuid>} and {@code flushfailed <uuid>} acknowledgements from
+     * backend servers and complete the corresponding pending future so the server-switch can
+     * proceed or be denied.
      */
     @Subscribe
     public void onPluginMessage(PluginMessageEvent event) {
@@ -115,18 +125,29 @@ public class PlayerServerSwitchListener {
         // Block all messages on this channel regardless of source — prevents a modded
         // client from injecting flush/refresh commands directly to the backend.
         event.setResult(PluginMessageEvent.ForwardResult.handled());
-        if (!(event.getSource() instanceof ServerConnection)) return;
+        if (!(event.getSource() instanceof ServerConnection source)) return;
 
         String msg = new String(event.getData(), StandardCharsets.UTF_8).trim();
-        if (msg.startsWith("flushed ")) {
-            try {
-                UUID uuid = UUID.fromString(msg.substring(8).trim());
+        boolean failed = msg.startsWith("flushfailed ");
+        if (!failed && !msg.startsWith("flushed ")) return;
+
+        try {
+            UUID uuid = UUID.fromString(msg.substring(failed ? "flushfailed ".length() : "flushed ".length()).trim());
+            if (failed) {
+                flushAckTracker.reportFailure(uuid);
+                logger.debug("Received flush failure from backend {} for player {}", source.getServerInfo().getName(), uuid);
+            } else {
                 flushAckTracker.acknowledge(uuid);
-                logger.debug("Received flush ack from backend for player {}", uuid);
-            } catch (IllegalArgumentException ignored) {
-                // Malformed UUID from backend — ignore safely.
+                logger.debug("Received flush ack from backend {} for player {}", source.getServerInfo().getName(), uuid);
             }
+        } catch (IllegalArgumentException ignored) {
+            // Malformed UUID from backend — ignore safely.
         }
+    }
+
+    private static void deny(ServerPreConnectEvent event, String reason) {
+        event.setResult(ServerPreConnectEvent.ServerResult.denied());
+        event.getPlayer().sendMessage(Component.text(reason, NamedTextColor.RED));
     }
 
     /**
