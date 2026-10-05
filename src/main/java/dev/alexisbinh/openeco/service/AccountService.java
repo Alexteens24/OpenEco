@@ -109,6 +109,13 @@ public class AccountService {
     private final Object persistenceLock = new Object();
 
     /**
+     * Serialises flushes. A flush clears the dirty flag before writing, so without this a
+     * concurrent flush sees the record as clean and reports success while the first write is
+     * still in flight (or about to fail). Lock order: flushLock, then persistenceLock.
+     */
+    private final Object flushLock = new Object();
+
+    /**
      * Accounts whose balance cannot be written to storage, used to report each offender once
      * instead of flooding the console on every autosave cycle.
      */
@@ -1006,21 +1013,23 @@ public class AccountService {
      * @return true when every dirty record reached storage
      */
     public boolean flushDirty() {
-        List<AccountRecord> snapshots = collectDirtySnapshots();
-        if (snapshots.isEmpty()) return true;
+        synchronized (flushLock) {
+            List<AccountRecord> snapshots = collectDirtySnapshots();
+            if (snapshots.isEmpty()) return true;
 
-        if (!transactionHistoryService.waitForDrain()) {
-            log.warning("Skipping balance flush because pending transaction writes did not drain in time.");
-            markDirty(snapshots);
-            return false;
-        }
+            if (!transactionHistoryService.waitForDrain()) {
+                log.warning("Skipping balance flush because pending transaction writes did not drain in time.");
+                markDirty(snapshots);
+                return false;
+            }
 
-        List<AccountRecord> failed = persist(snapshots);
-        if (!failed.isEmpty()) {
-            markDirty(failed);
-            return false;
+            List<AccountRecord> failed = persist(snapshots);
+            if (!failed.isEmpty()) {
+                markDirty(failed);
+                return false;
+            }
+            return true;
         }
-        return true;
     }
 
     /** Snapshots every dirty record and clears its flag. Safe: no JDBC under the lock. */
@@ -1127,6 +1136,14 @@ public class AccountService {
     }
 
     private void flushAccountOrThrow(UUID id) {
+        // Waits for any in-flight flush: a clean flag may only mean another thread is still
+        // writing this record, so "not dirty" is not proof that it reached storage.
+        synchronized (flushLock) {
+            flushAccountLocked(id);
+        }
+    }
+
+    private void flushAccountLocked(UUID id) {
         synchronized (persistenceLock) {
             AccountRecord live = accountRegistry.getLiveRecord(id);
             if (live == null) return;

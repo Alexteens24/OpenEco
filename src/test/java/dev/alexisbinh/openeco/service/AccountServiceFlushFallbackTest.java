@@ -29,12 +29,21 @@ import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.sql.SQLException;
+import java.util.Collection;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -132,6 +141,58 @@ class AccountServiceFlushFallbackTest {
 
             service.shutdown();
         } finally {
+            repository.close();
+        }
+    }
+
+    /**
+     * A flush clears the dirty flag before it writes. A cross-server flush that ran meanwhile
+     * saw a clean record and acked success although the autosave write had not landed yet.
+     */
+    @Test
+    void singleAccountFlushWaitsForAnInFlightBulkFlush() throws Exception {
+        CountDownLatch writeStarted = new CountDownLatch(1);
+        CountDownLatch releaseWrite = new CountDownLatch(1);
+        AtomicBoolean armed = new AtomicBoolean();
+        JdbcAccountRepository repository = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "flush-concurrent") {
+            @Override
+            public void upsertBatch(Collection<AccountRecord> records) throws SQLException {
+                if (armed.compareAndSet(true, false)) {
+                    writeStarted.countDown();
+                    try {
+                        releaseWrite.await(10, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                super.upsertBatch(records);
+            }
+        };
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            AccountService service = newService(repository);
+            UUID id = UUID.randomUUID();
+            assertTrue(service.createAccount(id, "Player"));
+            service.flushDirty();
+
+            setBalance(service, id, HEALTHY);
+            armed.set(true);
+            Future<Boolean> bulk = pool.submit(service::flushDirty);
+            assertTrue(writeStarted.await(5, TimeUnit.SECONDS));
+
+            Future<Boolean> single = pool.submit(() -> service.flushAccount(id));
+            assertThrows(TimeoutException.class, () -> single.get(300, TimeUnit.MILLISECONDS),
+                    "the single flush must wait while the bulk write is still in flight");
+
+            releaseWrite.countDown();
+            assertTrue(bulk.get(5, TimeUnit.SECONDS));
+            assertTrue(single.get(5, TimeUnit.SECONDS));
+            assertEquals(0, HEALTHY.compareTo(persistedBalance(repository, id).orElseThrow()));
+
+            service.shutdown();
+        } finally {
+            releaseWrite.countDown();
+            pool.shutdownNow();
             repository.close();
         }
     }
