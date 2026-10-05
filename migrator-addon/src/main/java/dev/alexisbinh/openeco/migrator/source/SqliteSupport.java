@@ -20,6 +20,7 @@ import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -27,6 +28,7 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Properties;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Stream;
@@ -36,16 +38,46 @@ final class SqliteSupport {
     private SqliteSupport() {
     }
 
+    /**
+     * Opens another plugin's database strictly read-only.
+     *
+     * <p>The migrator has no business writing here, but a plain read-write connection is not
+     * merely unused: SQLite may run journal or WAL recovery on open, and it upgrades a
+     * journal-mode database to WAL. Opening the file this way can therefore modify an
+     * installation that has the server running, even for a scan that reads nothing.
+     *
+     * @param databaseFile the foreign database, which is never created by this call
+     */
     static Connection open(Path databaseFile) throws SQLException {
-        return DriverManager.getConnection("jdbc:sqlite:" + databaseFile.toAbsolutePath());
+        Properties properties = new Properties();
+        // SQLITE_OPEN_READONLY
+        properties.setProperty("open_mode", "1");
+        // Do not block for minutes when the owning server holds a write lock.
+        properties.setProperty("busy_timeout", "5000");
+
+        Connection connection = DriverManager.getConnection(
+                "jdbc:sqlite:" + databaseFile.toAbsolutePath(), properties);
+        try (Statement statement = connection.createStatement()) {
+            // Belt and braces: even if open_mode were ignored by the driver, this refuses writes.
+            statement.execute("PRAGMA query_only=1");
+        } catch (SQLException error) {
+            connection.close();
+            throw error;
+        }
+        return connection;
     }
 
+    /**
+     * @param tableName identifier to look for; passed as a bound parameter so a caller-supplied
+     *                  name can never alter the query
+     */
     static boolean tableExists(Connection conn, String tableName) throws SQLException {
-        try (Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery(
-                     "SELECT name FROM sqlite_master WHERE type='table' AND lower(name)='"
-                             + tableName.toLowerCase(Locale.ROOT) + "'")) {
-            return rs.next();
+        try (PreparedStatement stmt = conn.prepareStatement(
+                "SELECT name FROM sqlite_master WHERE type='table' AND lower(name)=?")) {
+            stmt.setString(1, tableName.toLowerCase(Locale.ROOT));
+            try (ResultSet rs = stmt.executeQuery()) {
+                return rs.next();
+            }
         }
     }
 

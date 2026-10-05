@@ -66,7 +66,9 @@ perm-cap:
 
   # List of permission → cap pairs.
   # All matching permissions are considered and the highest matching tier is used.
-  # The effective limit is still bounded by OpenEco's own per-currency max-balance.
+  # A tier can only tighten the limit: the effective cap is the SMALLER of the matching tier
+  # and OpenEco's own per-currency max-balance. A tier above the core cap therefore has no
+  # additional effect, while a tier below it lowers what that player may hold.
   # Players without any matching permission fall back to OpenEco's per-currency max-balance.
   tiers:
     - permission: openeco.cap.vip

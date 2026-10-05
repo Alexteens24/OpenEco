@@ -99,18 +99,23 @@ public final class StorageMigrator {
             boolean overwrite) throws SQLException {
         StorageMigrationReport report = new StorageMigrationReport(targetDialect, dryRun);
 
+        String sourceIdentity = source.databaseIdentity();
+        String targetIdentity = target.databaseIdentity();
+        if (sourceIdentity != null && sourceIdentity.equals(targetIdentity)) {
+            report.addError("Source and target are the same database (" + sourceIdentity
+                    + "). Copying a database onto itself would erase it, so the migration was"
+                    + " cancelled. Point storage.migration.source-* at a copy or a different backend.");
+            return report;
+        }
+
         StorageMigrationStats sourceStats = scan(source);
         StorageMigrationStats targetStats = scan(target);
-        if (targetStats.accounts() > 0 || targetStats.transactions() > 0) {
-            if (!overwrite) {
-                report.addError("Target already has "
-                        + targetStats.accounts() + " account(s) and "
-                        + targetStats.transactions() + " transaction(s). Use --overwrite to replace them.");
-                return report;
-            }
-            if (!dryRun) {
-                target.clearAllData();
-            }
+        boolean targetHasData = targetStats.accounts() > 0 || targetStats.transactions() > 0;
+        if (targetHasData && !overwrite) {
+            report.addError("Target already has "
+                    + targetStats.accounts() + " account(s) and "
+                    + targetStats.transactions() + " transaction(s). Use --overwrite to replace them.");
+            return report;
         }
 
         if (dryRun) {
@@ -119,7 +124,12 @@ public final class StorageMigrator {
             return report;
         }
 
+        // Read the source before wiping the target. Clearing first meant that any failure while
+        // reading the source left the operator with an empty target and no copy to restore from.
         List<AccountRecord> accounts = source.loadAll();
+        if (targetHasData) {
+            target.clearAllData();
+        }
         for (int offset = 0; offset < accounts.size(); offset += ACCOUNT_BATCH_SIZE) {
             int end = Math.min(offset + ACCOUNT_BATCH_SIZE, accounts.size());
             target.upsertBatch(accounts.subList(offset, end));

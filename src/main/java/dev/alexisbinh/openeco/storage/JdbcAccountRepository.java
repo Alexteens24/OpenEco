@@ -696,6 +696,16 @@ public class JdbcAccountRepository implements AccountRepository {
         dataSource.close();
     }
 
+    /**
+     * Stable identifier for the database this repository is attached to, used to refuse
+     * operations that would read and write the same store at once.
+     *
+     * @return the JDBC URL, or {@code null} when the pool does not expose one
+     */
+    public String databaseIdentity() {
+        return dataSource.getJdbcUrl();
+    }
+
     public DatabaseDialect dialect() {
         return dialect;
     }

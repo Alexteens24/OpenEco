@@ -120,9 +120,11 @@ public class PermCapListener implements Listener {
             : api.getRules().currency().maxBalance();
 
         if (bestTierCap != null) {
-            // Use whichever is higher: tier cap or global cap
+            // A tier can only tighten the limit, never lift it. Taking the maximum here made
+            // every tier cap silently inert whenever the operator also configured
+            // `currencies.*.max-balance`, because that value is almost always the larger one.
             if (globalCap == null) return bestTierCap;
-            return bestTierCap.compareTo(globalCap) > 0 ? bestTierCap : globalCap;
+            return bestTierCap.compareTo(globalCap) < 0 ? bestTierCap : globalCap;
         }
         return globalCap; // may be null
     }

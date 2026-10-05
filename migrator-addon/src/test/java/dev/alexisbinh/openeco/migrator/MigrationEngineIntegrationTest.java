@@ -98,10 +98,20 @@ class MigrationEngineIntegrationTest {
                     MigrationTestSupport.context(plugins),
                     "openeco");
 
-            MigrationReport report = engine.migrate(MigrationSource.LITECO, true, false);
-            assertEquals(1, report.scanned());
-            assertEquals(0, report.created());
-            assertFalse(api.hasAccount(id));
+            MigrationReport preview = engine.migrate(MigrationSource.LITECO, true, false);
+            assertEquals(1, preview.scanned());
+            // A preview has to evaluate what a real run would do. It used to report zero for
+            // every counter, so "scan, dry-run, then run" told the operator nothing.
+            assertEquals(1, preview.created(), "the preview must predict the real outcome");
+            assertEquals(0, preview.failed());
+            assertFalse(api.hasAccount(id), "a preview must not create anything");
+
+            // The strongest guarantee: the counters of a preview and of the real run agree.
+            MigrationReport actual = engine.migrate(MigrationSource.LITECO, false, false);
+            assertEquals(preview.scanned(), actual.scanned());
+            assertEquals(preview.created(), actual.created());
+            assertEquals(preview.failed(), actual.failed());
+            assertTrue(api.hasAccount(id), "the real run creates the account");
 
             service.shutdown();
         } finally {

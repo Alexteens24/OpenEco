@@ -738,12 +738,6 @@ final class EconomyOperations {
         BigDecimal tax = computeTax(scaled, currentConfig, currency);
         BigDecimal received = scaled.subtract(tax);
 
-        PayEvent event = new PayEvent(fromId, toId, scaled, tax, received, currency.id());
-        eventDispatcher.dispatch(event);
-        if (event.isCancelled()) {
-            return PayResult.cancelled();
-        }
-
         boolean fromFirst = fromId.compareTo(toId) < 0;
         AccountRecord first = fromFirst ? fromRecord : toRecord;
         AccountRecord second = fromFirst ? toRecord : fromRecord;
@@ -755,6 +749,21 @@ final class EconomyOperations {
                     return PayResult.accountNotFound();
                 }
 
+                if (fromRecord.isFrozen() || toRecord.isFrozen()) {
+                    return PayResult.frozen();
+                }
+
+                // Dispatched while both account locks are held. Two concurrent payments to the
+                // same recipient therefore cannot both observe a balance that satisfies a veto
+                // check, which is what happened when this ran before the lock.
+                PayEvent event = new PayEvent(fromId, toId, scaled, tax, received, currency.id());
+                eventDispatcher.dispatch(event);
+                if (event.isCancelled()) {
+                    return PayResult.cancelled();
+                }
+
+                // Re-checked after the event: a listener is allowed to freeze the account or
+                // change the balance while it runs, and both must still be honoured.
                 if (fromRecord.isFrozen() || toRecord.isFrozen()) {
                     return PayResult.frozen();
                 }
