@@ -158,8 +158,8 @@ messages:
   pay-balance-limit: "<red><player> has reached the maximum balance and cannot receive more money."
   pay-too-low: "<red>Minimum payment amount is <yellow><min><red>."
   pay-cancelled: "<red>The payment was cancelled by a plugin."
-  invalid-amount: "<red>Invalid amount."
-  negative-amount: "<red>Amount must be greater than zero."
+  invalid-amount: "<red>Invalid amount. <gray><reason>"
+  negative-amount: "<red>Amount must be greater than zero. <gray><reason>"
 
   balance-self: "<green>Your balance: <yellow><balance>"
   balance-other: "<green><player>'s balance: <yellow><balance>"
@@ -203,4 +203,6 @@ messages:
   history-reset: "<dark_gray>[<date>] <yellow>reset <gray>to <yellow><balance> <gray>(reset)"
   history-pay-sent: "<dark_gray>[<date>] <red>-<amount> <gray>(paid to <white><counterpart><gray>)"
   history-pay-received: "<dark_gray>[<date>] <green>+<amount> <gray>(from <white><counterpart><gray>)"
+  history-exchange-out: "<dark_gray>[<date>] <red>-<amount> <gray>(converted) <gray><note>"
+  history-exchange-in: "<dark_gray>[<date>] <green>+<amount> <gray>(converted) <gray><note>"
   history-custom: "<dark_gray>[<date>] <aqua><kind> <yellow><amount> <gray>(<details>)"

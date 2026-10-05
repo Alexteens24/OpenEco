@@ -88,12 +88,15 @@ public class CrossServerMessenger implements PluginMessageListener {
             case "flush" -> {
                 UUID id = playerId;
                 plugin.getServer().getAsyncScheduler().runNow(plugin, task -> {
-                    service.flushAccount(id);
-                    // Notify proxy that flush is done
+                    // The ack has to reflect what actually happened. Reporting success after a
+                    // failed flush makes the destination server load a stale balance, silently
+                    // rolling the player back to whatever was last persisted.
+                    boolean flushed = service.flushAccount(id);
+                    // Notify proxy whether the flush actually reached storage
                     Player online = plugin.getServer().getPlayer(id);
                     if (online != null && online.isOnline()) {
                         online.sendPluginMessage(plugin, CHANNEL,
-                                ("flushed " + id).getBytes(StandardCharsets.UTF_8));
+                                ((flushed ? "flushed " : "flushfailed ") + id).getBytes(StandardCharsets.UTF_8));
                     }
                 });
             }

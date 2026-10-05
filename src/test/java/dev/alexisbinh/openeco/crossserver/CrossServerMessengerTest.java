@@ -84,6 +84,7 @@ class CrossServerMessengerTest {
         when(player.getUniqueId()).thenReturn(playerId);
         when(server.getPlayer(playerId)).thenReturn(player);
         when(player.isOnline()).thenReturn(true);
+        when(service.flushAccount(playerId)).thenReturn(true);
 
         messenger.onPluginMessageReceived(
                 CrossServerMessenger.CHANNEL,
@@ -95,6 +96,30 @@ class CrossServerMessengerTest {
         ArgumentCaptor<byte[]> payload = ArgumentCaptor.forClass(byte[].class);
         verify(player).sendPluginMessage(eq(plugin), eq(CrossServerMessenger.CHANNEL), payload.capture());
         assertEquals("flushed " + playerId, new String(payload.getValue(), StandardCharsets.UTF_8));
+    }
+
+    /**
+     * A failed flush must never be acknowledged as success. Reporting success makes the
+     * destination server load the last persisted balance, silently rolling the player back.
+     */
+    @Test
+    void flushReportsFailureInsteadOfAcknowledgingSuccess() {
+        UUID playerId = UUID.randomUUID();
+        when(player.getUniqueId()).thenReturn(playerId);
+        when(server.getPlayer(playerId)).thenReturn(player);
+        when(player.isOnline()).thenReturn(true);
+        when(service.flushAccount(playerId)).thenReturn(false);
+
+        messenger.onPluginMessageReceived(
+                CrossServerMessenger.CHANNEL,
+                player,
+                ("flush " + playerId).getBytes(StandardCharsets.UTF_8));
+
+        verify(service).flushAccount(playerId);
+
+        ArgumentCaptor<byte[]> payload = ArgumentCaptor.forClass(byte[].class);
+        verify(player).sendPluginMessage(eq(plugin), eq(CrossServerMessenger.CHANNEL), payload.capture());
+        assertEquals("flushfailed " + playerId, new String(payload.getValue(), StandardCharsets.UTF_8));
     }
 
     @Test

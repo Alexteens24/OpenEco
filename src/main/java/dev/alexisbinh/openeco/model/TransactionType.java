@@ -28,5 +28,9 @@ public enum TransactionType {
     /** Money was sent by a player (their perspective). */
     PAY_SENT,
     /** Money was received by a player (their perspective). */
-    PAY_RECEIVED
+    PAY_RECEIVED,
+    /** Currency converted out of a player's balance. */
+    EXCHANGE_OUT,
+    /** Currency converted into a player's balance. */
+    EXCHANGE_IN
 }

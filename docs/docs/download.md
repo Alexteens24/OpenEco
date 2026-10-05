@@ -56,7 +56,7 @@ Paper exposes VaultUnlocked under the plugin name `Vault`. OpenEco's `depend: [V
 Published on [JitPack](https://jitpack.io/#Alexteens24/OpenEco):
 
 ```kotlin
-compileOnly("com.github.Alexteens24:OpenEco:v1.4.7")
+compileOnly("com.github.Alexteens24:OpenEco:v1.6.1")
 ```
 
 See [Addon API](/docs/api) for integration details.

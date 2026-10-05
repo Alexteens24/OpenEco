@@ -25,6 +25,7 @@ import dev.alexisbinh.openeco.migrator.model.MigrationSource;
 import dev.alexisbinh.openeco.migrator.source.EconomySourceReader;
 import dev.alexisbinh.openeco.migrator.source.MigrationContext;
 import dev.alexisbinh.openeco.migrator.source.MigrationReaders;
+import dev.alexisbinh.openeco.service.AmountBounds;
 
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -32,6 +33,9 @@ import java.util.List;
 import java.util.Optional;
 
 public final class MigrationEngine {
+
+    /** Mirrors AccountRecord.MAX_NAME_LENGTH, the column limit for account names. */
+    private static final int MAX_NAME_LENGTH = 16;
 
     private final OpenEcoApi api;
     private final MigrationContext context;
@@ -68,6 +72,9 @@ public final class MigrationEngine {
         for (ForeignAccount foreign : accounts) {
             report.addSourceTotal(foreign.balance());
             if (dryRun) {
+                // A preview still has to run the checks, otherwise --dry-run reports zero for
+                // every source and tells the operator nothing about whether the run would work.
+                evaluateAccount(report, foreign, overwrite);
                 continue;
             }
             applyAccount(report, foreign, overwrite);
@@ -76,6 +83,80 @@ public final class MigrationEngine {
     }
 
     private void applyAccount(MigrationReport report, ForeignAccount foreign, boolean overwrite) {
+        // One account must never end the whole migration. Foreign sources are outside our
+        // control: a name longer than the 16 character limit, or a balance too large for the
+        // column, throws out of the API and previously aborted every remaining account.
+        try {
+            applyAccountUnguarded(report, foreign, overwrite);
+        } catch (RuntimeException error) {
+            report.incrementFailed();
+            report.addError(foreign.name() + ": " + describe(error));
+        }
+    }
+
+    /**
+     * Dry run: perform every check and count exactly what a real run would do, but change
+     * nothing.
+     */
+    private void evaluateAccount(MigrationReport report, ForeignAccount foreign, boolean overwrite) {
+        if (foreign.balance().compareTo(BigDecimal.ZERO) < 0) {
+            report.incrementFailed();
+            report.addError(foreign.name() + ": negative balance " + foreign.balance());
+            return;
+        }
+
+        String name = clampName(foreign.name());
+        if (!name.equals(foreign.name())) {
+            report.addError(foreign.name() + ": name is longer than " + MAX_NAME_LENGTH
+                    + " characters and would be truncated to '" + name + "'");
+        }
+
+        try {
+            if (!AmountBounds.fitsColumn(foreign.balance())) {
+                report.incrementFailed();
+                report.addError(foreign.name() + ": balance " + foreign.balance()
+                        + " does not fit the balance column and could not be stored");
+                return;
+            }
+        } catch (RuntimeException error) {
+            report.incrementFailed();
+            report.addError(foreign.name() + ": " + describe(error));
+            return;
+        }
+
+        if (api.hasAccount(foreign.id()) && !overwrite) {
+            report.incrementSkipped();
+        } else {
+            report.incrementCreated();
+        }
+    }
+
+    /**
+     * Trims a foreign name to what OpenEco can store.
+     *
+     * <p>Truncation happens on code points, not chars, so a name ending in an emoji cannot be
+     * cut in half and produce an unpaired surrogate that renders as a replacement character.
+     * Four readers in this addon did their own {@code substring(0, 16)}, which is what made a
+     * long foreign name reach the API at all.
+     */
+    private static String clampName(String name) {
+        if (name == null || name.isEmpty()) {
+            return "Unknown";
+        }
+        int codePoints = name.codePointCount(0, name.length());
+        if (codePoints <= MAX_NAME_LENGTH) {
+            return name;
+        }
+        int endIndex = name.offsetByCodePoints(0, MAX_NAME_LENGTH);
+        return name.substring(0, endIndex);
+    }
+
+    private static String describe(Throwable error) {
+        String message = error.getMessage();
+        return error.getClass().getSimpleName() + (message == null ? "" : ": " + message);
+    }
+
+    private void applyAccountUnguarded(MigrationReport report, ForeignAccount foreign, boolean overwrite) {
         if (foreign.balance().compareTo(BigDecimal.ZERO) < 0) {
             report.incrementFailed();
             report.addError(foreign.name() + ": negative balance " + foreign.balance());
@@ -88,7 +169,7 @@ public final class MigrationEngine {
             return;
         }
 
-        AccountOperationResult ensure = api.ensureAccount(foreign.id(), foreign.name());
+        AccountOperationResult ensure = api.ensureAccount(foreign.id(), clampName(foreign.name()));
         if (ensure.status() == AccountOperationResult.Status.FAILED
                 || ensure.status() == AccountOperationResult.Status.NAME_IN_USE) {
             report.incrementFailed();

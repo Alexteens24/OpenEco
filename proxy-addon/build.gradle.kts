@@ -48,11 +48,36 @@ tasks.withType<JavaCompile> {
     options.compilerArgs.add("-parameters")
 }
 
+// Velocity's annotation processor writes velocity-plugin.json into the main source set's
+// CLASS_OUTPUT rather than a resources directory. If it ever stops doing so the jar builds
+// green and then Velocity refuses to load it, so fail the build instead of shipping that.
+val generatedDescriptor = layout.buildDirectory.file("classes/java/main/velocity-plugin.json")
+
+val assertVelocityDescriptor = tasks.register("assertVelocityDescriptor") {
+    description = "Fails when the Velocity plugin descriptor was not generated."
+    group = "verification"
+    dependsOn(tasks.named("classes"))
+    doLast {
+        if (!generatedDescriptor.get().asFile.isFile) {
+            throw GradleException(
+                "velocity-plugin.json was not generated into ${generatedDescriptor.get().asFile}. " +
+                    "The jar would be unloadable by Velocity. Check that " +
+                    "annotationProcessor(\"com.velocitypowered:velocity-api\") is still configured."
+            )
+        }
+    }
+}
+
 tasks.jar {
+    dependsOn(assertVelocityDescriptor)
     // Replace @version@ placeholder in the compiled plugin descriptor
     filesMatching("velocity-plugin.json") {
         filter { line -> line.replace("@version@", version.toString()) }
     }
+}
+
+tasks.named("build") {
+    dependsOn(assertVelocityDescriptor)
 }
 
 tasks.test {

@@ -62,7 +62,12 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Build project and addons
-        run: ./gradlew --no-daemon build :api:build :enhancements-addon:build :proxy-addon:build
+        run: >-
+          ./gradlew --no-daemon build
+          :api:build
+          :enhancements-addon:build
+          :proxy-addon:build
+          :migrator-addon:build
 
       - name: Upload plugin jars
         if: success()
@@ -73,6 +78,7 @@ jobs:
             build/libs/*.jar
             enhancements-addon/build/libs/*.jar
             proxy-addon/build/libs/*.jar
+            migrator-addon/build/libs/*.jar
           if-no-files-found: error
 
       - name: Upload test reports
@@ -87,6 +93,8 @@ jobs:
             enhancements-addon/build/test-results/test/**
             proxy-addon/build/reports/tests/test/**
             proxy-addon/build/test-results/test/**
+            migrator-addon/build/reports/tests/test/**
+            migrator-addon/build/test-results/test/**
           if-no-files-found: warn
 
   remote-storage:

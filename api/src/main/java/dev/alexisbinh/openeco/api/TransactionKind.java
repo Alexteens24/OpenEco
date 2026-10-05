@@ -22,5 +22,7 @@ public enum TransactionKind {
     SET,
     RESET,
     PAY_SENT,
-    PAY_RECEIVED
+    PAY_RECEIVED,
+    EXCHANGE_OUT,
+    EXCHANGE_IN
 }

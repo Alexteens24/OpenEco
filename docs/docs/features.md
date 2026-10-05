@@ -54,7 +54,7 @@ Imports balances from EssentialsX, CMI, LiteEco, XConomy, BOSEconomy, TheNewEcon
 
 ### OpenEcoEnhancements
 
-Adds interest payouts, pay limits, permission-based balance caps, and `/exchange` for currency conversion.
+Adds interest payouts, pay limits, permission-based balance caps, and `/exchange` for currency conversion. A conversion is atomic — both currency legs are applied together or not at all, so a conversion refused by another plugin never leaves the source balance debited.
 
 ### OpenEco Proxy (Velocity)
 

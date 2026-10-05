@@ -155,10 +155,17 @@ class ConfigMigratorTest {
         assertTrue(openecoIndex >= 0, yaml);
         assertTrue(gemsIndex >= 0, yaml);
         assertTrue(storageIndex >= 0, yaml);
-        assertTrue(openecoIndex < gemsIndex,
-            () -> "openeco=" + openecoIndex + " gems=" + gemsIndex + "\n" + yaml);
+        // The rewrite works in place, so the operator's own layout wins: gems was written first
+        // and stays first, and the bundled openeco definition is appended inside that section
+        // rather than reordering a file the operator has been maintaining by hand.
+        assertTrue(gemsIndex < openecoIndex,
+            () -> "gems=" + gemsIndex + " openeco=" + openecoIndex + "\n" + yaml);
         assertTrue(gemsIndex < storageIndex,
             () -> "gems=" + gemsIndex + " storage=" + storageIndex + "\n" + yaml);
+        // An upgrade must bring over the whole bundled definition, not just its name.
+        assertTrue(migrated.contains("currencies.definitions.openeco.decimal-digits"), yaml);
+        assertTrue(migrated.contains("currencies.definitions.openeco.starting-balance"), yaml);
+        assertTrue(migrated.contains("currencies.definitions.openeco.max-balance"), yaml);
         assertTrue(migrated.getBoolean("custom.feature.enabled"));
         assertTrue(yaml.contains("custom:"), yaml);
     }
