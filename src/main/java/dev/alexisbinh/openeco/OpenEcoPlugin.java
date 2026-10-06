@@ -163,6 +163,8 @@ public class OpenEcoPlugin extends JavaPlugin {
         MigrateCommand migrate = new MigrateCommand(this, service);
         getCommand("openecomigrate").setExecutor(migrate);
         getCommand("openecomigrate").setTabCompleter(migrate);
+        // Must come after the lookups above: getCommand() resolves by name, which a rename changes.
+        CommandConfigurator.apply(this);
 
         // ── Listener ──────────────────────────────────────────────────────────
         getServer().getPluginManager().registerEvents(

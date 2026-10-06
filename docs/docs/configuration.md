@@ -7,7 +7,7 @@ Migration edits your file **in place**: it only retires the settings it replaces
 Click any option below to view additional information.
 
 ::: tip Apply most changes without a restart
-After editing `config.yml`, run `/eco reload` to apply messages and most runtime rules. Storage backends, `cross-server.enabled`, `account-loading.mode`, and `account-loading.lazy.cache.enabled` still require a restart.
+After editing `config.yml`, run `/eco reload` to apply messages and most runtime rules. Storage backends, the `commands` section, `cross-server.enabled`, `account-loading.mode`, and `account-loading.lazy.cache.enabled` still require a restart.
 :::
 
 <ConfigGroup name="currencies">
@@ -211,6 +211,28 @@ Number of entries per `/history` page.
 <ConfigProperty name="retention-days" value="-1" type="number">
 Days to keep transaction history. `≤ 0` keeps all history with no pruning.
 </ConfigProperty>
+
+</ConfigGroup>
+
+<ConfigGroup name="commands">
+
+<ConfigProperty name="fallback-prefix" value="openeco" type="string">
+Namespace for the always-available long form of every command, for example `/openeco:pay`. It keeps working when another plugin has taken the short name. **Restart required.**
+</ConfigProperty>
+
+<ConfigProperty name="<command>.enabled" value="true" type="boolean">
+Set to `false` to remove a command completely, aliases included. `<command>` is one of `balance`, `baltop`, `pay`, `eco`, `history`, `openecomigrate`. Disabling `eco` also removes `/eco reload`, so later config changes need a restart. **Restart required.**
+</ConfigProperty>
+
+<ConfigProperty name="<command>.name" value="(the command's own name)" type="string">
+The main command, without the slash. Letters, digits, `_` and `-` only; anything else is ignored with a warning. Permissions keep their original nodes, and usage hints show the new name. **Restart required.**
+</ConfigProperty>
+
+<ConfigProperty name="<command>.aliases" value="(see config.yml)" type="list">
+Extra names for the command. Use `[]` for none. If the key is omitted the built-in aliases are kept. **Restart required.**
+</ConfigProperty>
+
+If a name is already used by another plugin, OpenEco logs a warning and the command stays reachable through `/<fallback-prefix>:<name>`.
 
 </ConfigGroup>
 

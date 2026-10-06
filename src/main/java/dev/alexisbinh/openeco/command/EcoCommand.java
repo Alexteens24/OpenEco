@@ -48,7 +48,7 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command,
                              @NotNull String label, @NotNull String[] args) {
         if (args.length == 0) {
-            sender.sendMessage("§cUsage: /eco <give|take|set|reset|delete|freeze|unfreeze|rename|reload> <player> [amount] [currency]");
+            sender.sendMessage("§cUsage: /" + command.getName() + " <give|take|set|reset|delete|freeze|unfreeze|rename|reload> <player> [amount] [currency]");
             return true;
         }
 
@@ -81,7 +81,7 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
                 return true;
             }
             if (args.length < 2) {
-                sender.sendMessage("§cUsage: /eco delete <player>");
+                sender.sendMessage("§cUsage: /" + command.getName() + " delete <player>");
                 return true;
             }
             var optTarget = service.findByName(args[1]);
@@ -107,7 +107,7 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
                 return true;
             }
             if (args.length < 2) {
-                sender.sendMessage("§cUsage: /eco freeze <player>");
+                sender.sendMessage("§cUsage: /" + command.getName() + " freeze <player>");
                 return true;
             }
             var optTarget = service.findByName(args[1]);
@@ -132,7 +132,7 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
                 return true;
             }
             if (args.length < 2) {
-                sender.sendMessage("§cUsage: /eco unfreeze <player>");
+                sender.sendMessage("§cUsage: /" + command.getName() + " unfreeze <player>");
                 return true;
             }
             var optTarget = service.findByName(args[1]);
@@ -158,7 +158,7 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
                 return true;
             }
             if (args.length < 3) {
-                sender.sendMessage("§cUsage: /eco rename <player> <newname>");
+                sender.sendMessage("§cUsage: /" + command.getName() + " rename <player> <newname>");
                 return true;
             }
             var optTarget = service.findByName(args[1]);
@@ -189,7 +189,7 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
                 return true;
             }
             if (args.length < 2 || args.length > 3) {
-                sender.sendMessage("§cUsage: /eco reset <player> [currency]");
+                sender.sendMessage("§cUsage: /" + command.getName() + " reset <player> [currency]");
                 return true;
             }
             var optTarget = service.findByName(args[1]);
@@ -216,7 +216,7 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
 
         // give / take / set require <player> <amount>
         if (args.length < 3 || args.length > 4) {
-            sender.sendMessage("§cUsage: /eco " + sub + " <player> <amount> [currency]");
+            sender.sendMessage("§cUsage: /" + command.getName() + " " + sub + " <player> <amount> [currency]");
             return true;
         }
 
