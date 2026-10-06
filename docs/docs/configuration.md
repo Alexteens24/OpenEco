@@ -298,6 +298,8 @@ baltop:
 
 history:
   page-size: 10
+  retention-days: -1
+
 commands:
   fallback-prefix: openeco
   balance:
