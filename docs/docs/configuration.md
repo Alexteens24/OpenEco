@@ -220,17 +220,21 @@ Days to keep transaction history. `≤ 0` keeps all history with no pruning.
 Namespace for the always-available long form of every command, for example `/openeco:pay`. It keeps working when another plugin has taken the short name. **Restart required.**
 </ConfigProperty>
 
-<ConfigProperty name="[command].enabled" value="true" type="boolean">
-Set to `false` to remove a command completely, aliases included. `[command]` is one of `balance`, `baltop`, `pay`, `eco`, `history`, `openecomigrate`. Disabling `eco` also removes `/eco reload`, so later config changes need a restart. **Restart required.**
+<ConfigGroup name="&lt;command&gt;">
+
+<ConfigProperty name="enabled" value="true" type="boolean">
+Set to `false` to remove a command completely, aliases included. `&lt;command&gt;` is one of `balance`, `baltop`, `pay`, `eco`, `history`, `openecomigrate`. Disabling `eco` also removes `/eco reload`, so later config changes need a restart. **Restart required.**
 </ConfigProperty>
 
-<ConfigProperty name="[command].name" value="(the command's own name)" type="string">
+<ConfigProperty name="name" value="&lt;command&gt;" type="string">
 The main command, without the slash. Letters, digits, `_` and `-` only; anything else is ignored with a warning. Permissions keep their original nodes, and usage hints show the new name. **Restart required.**
 </ConfigProperty>
 
-<ConfigProperty name="[command].aliases" value="(see config.yml)" type="list">
-Extra names for the command. Use `[]` for none. If the key is omitted the built-in aliases are kept. **Restart required.**
+<ConfigProperty name="aliases" value="[]" type="string">
+Extra names for the command (e.g. `[bal, money]`). Use `[]` for none. If the key is omitted the built-in aliases are kept. **Restart required.**
 </ConfigProperty>
+
+</ConfigGroup>
 
 If a name is already used by another plugin, OpenEco logs a warning and the command stays reachable through its namespaced form, for example `/openeco:pay`.
 
@@ -294,7 +298,32 @@ baltop:
 
 history:
   page-size: 10
-  retention-days: -1
+commands:
+  fallback-prefix: openeco
+  balance:
+    enabled: true
+    name: balance
+    aliases: [bal, money]
+  baltop:
+    enabled: true
+    name: baltop
+    aliases: [balancetop, moneytop]
+  pay:
+    enabled: true
+    name: pay
+    aliases: []
+  eco:
+    enabled: true
+    name: eco
+    aliases: [economy]
+  history:
+    enabled: true
+    name: history
+    aliases: [txhistory, ecohistory]
+  openecomigrate:
+    enabled: true
+    name: openecomigrate
+    aliases: []
 
 cross-server:
   enabled: false
