@@ -1,6 +1,6 @@
 # Commands
 
-All core commands are registered in `plugin.yml`. Tab-completion suggests subcommands and arguments you have permission for.
+All core commands are declared in `plugin.yml`; the `commands` section of `config.yml` can disable any of them or change its name and aliases (restart required, see [Configuration](/docs/configuration)). The names below are the defaults. Tab-completion suggests subcommands and arguments you have permission for.
 
 ## Player commands
 

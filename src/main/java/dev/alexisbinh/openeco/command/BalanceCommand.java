@@ -50,7 +50,7 @@ public class BalanceCommand implements CommandExecutor, TabCompleter {
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command,
                              @NotNull String label, @NotNull String[] args) {
         if (args.length > 2) {
-            sender.sendMessage("§cUsage: /balance [player] [currency]");
+            sender.sendMessage("§cUsage: /" + command.getName() + " [player] [currency]");
             return true;
         }
 

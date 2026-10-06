@@ -124,6 +124,46 @@ history:
   # Transactions older than this will be deleted automatically once per day.
   retention-days: -1
 
+commands:
+  # Turn commands off or rename them. The defaults below match what OpenEco ships with.
+  # Requires a restart to take effect: /eco reload does not re-register commands.
+  #
+  # Per command:
+  #   enabled: false removes the command completely (including its aliases).
+  #   name:    the main command, without the slash (letters, digits, '_' and '-').
+  #   aliases: extra names for the same command; [] for none.
+  # Disabling "eco" also removes /eco reload, so changing this file then needs a restart.
+  # Permissions are not affected by renaming.
+
+  # Namespace for the always-available long form, e.g. /openeco:pay. Handy when another plugin
+  # has already taken /pay: the long form keeps working either way.
+  fallback-prefix: openeco
+
+  balance:
+    enabled: true
+    name: balance
+    aliases: [bal, money]
+  baltop:
+    enabled: true
+    name: baltop
+    aliases: [balancetop, moneytop]
+  pay:
+    enabled: true
+    name: pay
+    aliases: []
+  eco:
+    enabled: true
+    name: eco
+    aliases: [economy]
+  history:
+    enabled: true
+    name: history
+    aliases: [txhistory, ecohistory]
+  openecomigrate:
+    enabled: true
+    name: openecomigrate
+    aliases: []
+
 cross-server:
   # Enable proxy-assisted account handoff sync for networks running multiple backend servers
   # behind a Velocity or BungeeCord proxy that share the same remote database
