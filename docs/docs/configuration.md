@@ -220,19 +220,19 @@ Days to keep transaction history. `≤ 0` keeps all history with no pruning.
 Namespace for the always-available long form of every command, for example `/openeco:pay`. It keeps working when another plugin has taken the short name. **Restart required.**
 </ConfigProperty>
 
-<ConfigProperty name="<command>.enabled" value="true" type="boolean">
-Set to `false` to remove a command completely, aliases included. `<command>` is one of `balance`, `baltop`, `pay`, `eco`, `history`, `openecomigrate`. Disabling `eco` also removes `/eco reload`, so later config changes need a restart. **Restart required.**
+<ConfigProperty name="[command].enabled" value="true" type="boolean">
+Set to `false` to remove a command completely, aliases included. `[command]` is one of `balance`, `baltop`, `pay`, `eco`, `history`, `openecomigrate`. Disabling `eco` also removes `/eco reload`, so later config changes need a restart. **Restart required.**
 </ConfigProperty>
 
-<ConfigProperty name="<command>.name" value="(the command's own name)" type="string">
+<ConfigProperty name="[command].name" value="(the command's own name)" type="string">
 The main command, without the slash. Letters, digits, `_` and `-` only; anything else is ignored with a warning. Permissions keep their original nodes, and usage hints show the new name. **Restart required.**
 </ConfigProperty>
 
-<ConfigProperty name="<command>.aliases" value="(see config.yml)" type="list">
+<ConfigProperty name="[command].aliases" value="(see config.yml)" type="list">
 Extra names for the command. Use `[]` for none. If the key is omitted the built-in aliases are kept. **Restart required.**
 </ConfigProperty>
 
-If a name is already used by another plugin, OpenEco logs a warning and the command stays reachable through `/<fallback-prefix>:<name>`.
+If a name is already used by another plugin, OpenEco logs a warning and the command stays reachable through its namespaced form, for example `/openeco:pay`.
 
 </ConfigGroup>
 
