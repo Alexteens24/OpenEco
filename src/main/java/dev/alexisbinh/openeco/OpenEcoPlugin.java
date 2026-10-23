@@ -54,6 +54,7 @@ public class OpenEcoPlugin extends JavaPlugin {
 
     private AccountRepository repository;
     private AccountService service;
+    private DatabaseDialect dialect;
     private Messages messages;
     private OpenEcoApi api;
     private ScheduledTask autoSaveTask;
@@ -63,14 +64,13 @@ public class OpenEcoPlugin extends JavaPlugin {
     private BukkitContext fastStatsContext;
 
     @Override
-    public void onEnable() {
+    public void onLoad() {
         saveDefaultConfig();
         migrateConfig();
         reloadConfig();
 
         // ── Storage ──────────────────────────────────────────────────────────
         String dialectStr = getConfig().getString("storage.type", "sqlite");
-        DatabaseDialect dialect;
         try {
             dialect = DatabaseDialect.fromConfig(dialectStr);
         } catch (IllegalArgumentException e) {
@@ -129,6 +129,15 @@ public class OpenEcoPlugin extends JavaPlugin {
             return;
         }
 
+        // ── VaultUnlocked registration (optional) ─────────────────────────────
+        registerVaultUnlockedEconomy(service);
+
+        // ── Legacy Vault v1 registration (for ShopGUI+, SmartSpawner, etc.) ───
+        registerLegacyEconomy(service);
+    }
+
+    @Override
+    public void onEnable() {
         // ── Messages ──────────────────────────────────────────────────────────
         messages = new Messages(getConfig());
 
@@ -137,12 +146,6 @@ public class OpenEcoPlugin extends JavaPlugin {
         getServer().getServicesManager().register(
             OpenEcoApi.class, api, this, ServicePriority.Normal);
         getLogger().info("Registered openeco addon API service.");
-
-        // ── VaultUnlocked registration (optional) ─────────────────────────────
-        registerVaultUnlockedEconomy(service);
-
-        // ── Legacy Vault v1 registration (for ShopGUI+, SmartSpawner, etc.) ───
-        registerLegacyEconomy(service);
 
         // ── Commands ──────────────────────────────────────────────────────────
         BalanceCommand balance = new BalanceCommand(this, service, messages);
@@ -203,7 +206,7 @@ public class OpenEcoPlugin extends JavaPlugin {
         // ── FastStats (optional) ─────────────────────────────────────────────
         startFastStats(dialect);
 
-        getLogger().info("openeco enabled. Backend: " + dialect.name().toLowerCase());
+        getLogger().info("openeco enabled. Backend: " + dialect.name().toLowerCase(Locale.ROOT));
     }
 
     public boolean reloadSettings() {
