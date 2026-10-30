@@ -623,10 +623,12 @@ public class AccountService {
                 accountIdentityVersion.incrementAndGet();
             }
             markAllLeaderboardsDirty();
-            AccountDeletedEvent deletedEvent = new AccountDeletedEvent(id, event.getPlayerName(), event.getBalance());
-            eventDispatcher.dispatch(deletedEvent);
-            return DeleteAccountStatus.DELETED;
         }
+        // Dispatched outside persistenceLock: an off-main dispatch blocks for the primary
+        // thread, and holding the lock while doing so can stall every login and account
+        // creation behind it.
+        eventDispatcher.dispatch(new AccountDeletedEvent(id, event.getPlayerName(), event.getBalance()));
+        return DeleteAccountStatus.DELETED;
     }
 
     public Map<UUID, String> getUUIDNameMap() {
@@ -715,7 +717,19 @@ public class AccountService {
     }
 
     public EconomyOperationResponse deposit(UUID id, String currencyId, BigDecimal amount) {
-        return economyOperations.deposit(id, currencyId, amount);
+        return deposit(id, currencyId, amount, null);
+    }
+
+    /**
+     * @param source optional tag recorded on the transaction entry (for example {@code interest})
+     */
+    public EconomyOperationResponse deposit(UUID id, String currencyId, BigDecimal amount,
+                                            @Nullable String source) {
+        // Balance mutations dispatch Bukkit events, so they must run on the dispatch thread:
+        // acquiring the account monitors here and then blocking for that thread would invert
+        // the lock order and freeze the server (see EventDispatcher#runOnDispatchThread).
+        return eventDispatcher.runOnDispatchThread(
+                () -> economyOperations.deposit(id, currencyId, amount, source));
     }
 
     /**
@@ -724,7 +738,8 @@ public class AccountService {
      */
     public ExchangeResult convertCurrency(UUID id, String fromCurrencyId, String toCurrencyId,
                                           BigDecimal debited, BigDecimal credited) {
-        return economyOperations.convertCurrency(id, fromCurrencyId, toCurrencyId, debited, credited);
+        return eventDispatcher.runOnDispatchThread(
+                () -> economyOperations.convertCurrency(id, fromCurrencyId, toCurrencyId, debited, credited));
     }
 
     public EconomyOperationResponse withdraw(UUID id, BigDecimal amount) {
@@ -732,7 +747,7 @@ public class AccountService {
     }
 
     public EconomyOperationResponse withdraw(UUID id, String currencyId, BigDecimal amount) {
-        return economyOperations.withdraw(id, currencyId, amount);
+        return eventDispatcher.runOnDispatchThread(() -> economyOperations.withdraw(id, currencyId, amount));
     }
 
     public EconomyOperationResponse set(UUID id, BigDecimal amount) {
@@ -740,7 +755,7 @@ public class AccountService {
     }
 
     public EconomyOperationResponse set(UUID id, String currencyId, BigDecimal amount) {
-        return economyOperations.set(id, currencyId, amount);
+        return eventDispatcher.runOnDispatchThread(() -> economyOperations.set(id, currencyId, amount));
     }
 
     public EconomyOperationResponse reset(UUID id) {
@@ -748,7 +763,7 @@ public class AccountService {
     }
 
     public EconomyOperationResponse reset(UUID id, String currencyId) {
-        return economyOperations.reset(id, currencyId);
+        return eventDispatcher.runOnDispatchThread(() -> economyOperations.reset(id, currencyId));
     }
 
     /**
@@ -760,7 +775,8 @@ public class AccountService {
     }
 
     public PayResult pay(UUID fromId, UUID toId, String currencyId, BigDecimal rawAmount) {
-        return economyOperations.pay(fromId, toId, currencyId, rawAmount);
+        return eventDispatcher.runOnDispatchThread(
+                () -> economyOperations.pay(fromId, toId, currencyId, rawAmount));
     }
 
     /** Atomic peer transfer without pay cooldown, tax, or cancellable pay events. */
@@ -769,7 +785,8 @@ public class AccountService {
     }
 
     public DirectTransferResult directTransfer(UUID fromId, UUID toId, String currencyId, BigDecimal rawAmount) {
-        return economyOperations.directTransfer(fromId, toId, currencyId, rawAmount);
+        return eventDispatcher.runOnDispatchThread(
+                () -> economyOperations.directTransfer(fromId, toId, currencyId, rawAmount));
     }
 
     public TransferCheckResult canTransfer(UUID fromId, UUID toId, BigDecimal amount) {
@@ -1190,6 +1207,17 @@ public class AccountService {
     }
 
     private RefreshStatus refreshAccountOrThrow(UUID id) {
+        // The DB read and the apply must be serialized with flushes: a flush clears the dirty
+        // flag before it writes, so a refresh that read the pre-flush value would pass the
+        // dirty check and silently overwrite the newer balance. flushLock gives the same
+        // guarantee flushAccountOrThrow already relies on ("a clean flag is not proof that the
+        // write reached storage").
+        synchronized (flushLock) {
+            return refreshAccountLocked(id);
+        }
+    }
+
+    private RefreshStatus refreshAccountLocked(UUID id) {
         try {
             while (true) {
                 long observedIdentityVersion = accountIdentityVersion.get();

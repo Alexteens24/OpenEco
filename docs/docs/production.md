@@ -154,10 +154,13 @@ only when the balance is durable, and `flushfailed` when the write did not happe
 cancels the switch and tells the player to retry, rather than letting the destination server
 load a stale balance and silently roll the amount back.
 
-If no answer arrives within two seconds the switch is cancelled as well. Keep in mind the proxy
-addon must be updated alongside the core plugin: an older backend that only ever sends `flushed`
-is indistinguishable from a successful one, so update every backend before relying on the failure
-path.
+If no answer arrives within two seconds the switch is cancelled as well. Flush requests carry a
+per-attempt token that the backend echoes back, and an acknowledgement for a superseded attempt
+is ignored, so a late reply can never satisfy a newer flush.
+
+The proxy addon must be updated alongside the core plugin. An older backend cannot parse the
+tokenized flush request at all, so it never acknowledges and every switch is denied (fail-closed)
+until that backend is updated. Update the proxy first, then the backends.
 
 ## Rollout advice
 

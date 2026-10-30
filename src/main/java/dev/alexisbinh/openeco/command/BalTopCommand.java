@@ -57,7 +57,9 @@ public class BalTopCommand implements CommandExecutor, TabCompleter {
         }
 
         if (args.length > 2) {
-            sender.sendMessage("§cUsage: /" + command.getName() + " [page] [currency]");
+            messages.sendOrDefault(sender, "baltop-usage",
+                    "<red>Usage: /<command> [page] [currency]",
+                    Placeholder.unparsed("command", command.getName()));
             return true;
         }
 
@@ -79,7 +81,9 @@ public class BalTopCommand implements CommandExecutor, TabCompleter {
         }
 
         if (args.length == 2 && !isPageNumber(args[0])) {
-            sender.sendMessage("§cUsage: /" + command.getName() + " [page] [currency]");
+            messages.sendOrDefault(sender, "baltop-usage",
+                    "<red>Usage: /<command> [page] [currency]",
+                    Placeholder.unparsed("command", command.getName()));
             return true;
         }
 

@@ -29,6 +29,7 @@ import dev.alexisbinh.openeco.model.DirectTransferResult;
 import dev.alexisbinh.openeco.model.PayResult;
 import dev.alexisbinh.openeco.model.TransactionEntry;
 import dev.alexisbinh.openeco.model.TransactionType;
+import dev.alexisbinh.openeco.service.EconomyOperationResponse.FailureReason;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -145,20 +146,24 @@ final class EconomyOperations {
     }
 
     EconomyOperationResponse deposit(UUID id, String currencyId, BigDecimal amount) {
+        return deposit(id, currencyId, amount, null);
+    }
+
+    EconomyOperationResponse deposit(UUID id, String currencyId, BigDecimal amount, String source) {
         EconomyConfigSnapshot currentConfig = configSupplier.get();
         CurrencyDefinition currency = resolveCurrency(currentConfig, currencyId);
         if (currency == null) {
-            return failure(BigDecimal.ZERO, BigDecimal.ZERO, "Unknown currency");
+            return failure(FailureReason.UNKNOWN_CURRENCY, BigDecimal.ZERO, BigDecimal.ZERO, "Unknown currency");
         }
 
         BigDecimal scaled = scale(amount, currency);
         if (scaled.compareTo(BigDecimal.ZERO) <= 0) {
-            return failure(scaled, BigDecimal.ZERO, "Amount must be positive");
+            return failure(FailureReason.INVALID_AMOUNT, scaled, BigDecimal.ZERO, "Amount must be positive");
         }
 
         try (AccountLease lease = requireLease(id)) {
             if (lease == null) {
-                return failure(scaled, BigDecimal.ZERO, "Account not found");
+                return failure(FailureReason.ACCOUNT_NOT_FOUND, scaled, BigDecimal.ZERO, "Account not found");
             }
             AccountRecord record = lease.record();
 
@@ -167,17 +172,17 @@ final class EconomyOperations {
 
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) {
-                return failure(scaled, BigDecimal.ZERO, "Account not found");
+                return failure(FailureReason.ACCOUNT_NOT_FOUND, scaled, BigDecimal.ZERO, "Account not found");
             }
             BigDecimal before = record.getBalance(currency.id());
             if (record.isFrozen()) {
-                return failure(scaled, before, "Account is frozen");
+                return failure(FailureReason.FROZEN, scaled, before, "Account is frozen");
             }
 
             previewBalance = before;
             BigDecimal newBalance = before.add(scaled);
             if (currency.maxBalance() != null && newBalance.compareTo(currency.maxBalance()) > 0) {
-                return failure(scaled, before, "Balance limit reached");
+                return failure(FailureReason.BALANCE_LIMIT, scaled, before, "Balance limit reached");
             }
 
             event = new BalanceChangeEvent(id, before, newBalance, BalanceChangeEvent.Reason.GIVE, currency.id());
@@ -185,27 +190,28 @@ final class EconomyOperations {
 
         eventDispatcher.dispatch(event);
         if (event.isCancelled()) {
-            return failure(scaled, previewBalance, "Cancelled by plugin");
+            return failure(FailureReason.CANCELLED, scaled, previewBalance, "Cancelled by plugin");
         }
 
         BalanceChangedEvent completedEvent;
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) {
-                return failure(scaled, BigDecimal.ZERO, "Account not found");
+                return failure(FailureReason.ACCOUNT_NOT_FOUND, scaled, BigDecimal.ZERO, "Account not found");
             }
 
             BigDecimal before = record.getBalance(currency.id());
             if (record.isFrozen()) {
-                return failure(scaled, before, "Account is frozen");
+                return failure(FailureReason.FROZEN, scaled, before, "Account is frozen");
             }
             BigDecimal newBalance = before.add(scaled);
             if (currency.maxBalance() != null && newBalance.compareTo(currency.maxBalance()) > 0) {
-                return failure(scaled, before, "Balance limit reached");
+                return failure(FailureReason.BALANCE_LIMIT, scaled, before, "Balance limit reached");
             }
 
             record.setBalance(currency.id(), newBalance);
             transactionLogger.accept(new TransactionEntry(
-                    TransactionType.GIVE, null, id, scaled, before, newBalance, System.currentTimeMillis(), null, null, currency.id()));
+                    TransactionType.GIVE, null, id, scaled, before, newBalance, System.currentTimeMillis(),
+                    source, null, currency.id()));
             completedEvent = new BalanceChangedEvent(id, before, newBalance, BalanceChangeEvent.Reason.GIVE, currency.id());
         }
             eventDispatcher.dispatch(completedEvent);
@@ -222,17 +228,17 @@ final class EconomyOperations {
         EconomyConfigSnapshot currentConfig = configSupplier.get();
         CurrencyDefinition currency = resolveCurrency(currentConfig, currencyId);
         if (currency == null) {
-            return failure(BigDecimal.ZERO, BigDecimal.ZERO, "Unknown currency");
+            return failure(FailureReason.UNKNOWN_CURRENCY, BigDecimal.ZERO, BigDecimal.ZERO, "Unknown currency");
         }
 
         BigDecimal scaled = scale(amount, currency);
         if (scaled.compareTo(BigDecimal.ZERO) <= 0) {
-            return failure(scaled, BigDecimal.ZERO, "Amount must be positive");
+            return failure(FailureReason.INVALID_AMOUNT, scaled, BigDecimal.ZERO, "Amount must be positive");
         }
 
         try (AccountLease lease = requireLease(id)) {
             if (lease == null) {
-                return failure(scaled, BigDecimal.ZERO, "Account not found");
+                return failure(FailureReason.ACCOUNT_NOT_FOUND, scaled, BigDecimal.ZERO, "Account not found");
             }
             AccountRecord record = lease.record();
 
@@ -241,15 +247,15 @@ final class EconomyOperations {
 
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) {
-                return failure(scaled, BigDecimal.ZERO, "Account not found");
+                return failure(FailureReason.ACCOUNT_NOT_FOUND, scaled, BigDecimal.ZERO, "Account not found");
             }
             BigDecimal before = record.getBalance(currency.id());
             if (record.isFrozen()) {
-                return failure(scaled, before, "Account is frozen");
+                return failure(FailureReason.FROZEN, scaled, before, "Account is frozen");
             }
             previewBalance = before;
             if (before.compareTo(scaled) < 0) {
-                return failure(scaled, before, "Insufficient funds");
+                return failure(FailureReason.INSUFFICIENT_FUNDS, scaled, before, "Insufficient funds");
             }
 
             BigDecimal newBalance = before.subtract(scaled);
@@ -258,20 +264,20 @@ final class EconomyOperations {
 
         eventDispatcher.dispatch(event);
         if (event.isCancelled()) {
-            return failure(scaled, previewBalance, "Cancelled by plugin");
+            return failure(FailureReason.CANCELLED, scaled, previewBalance, "Cancelled by plugin");
         }
 
         BalanceChangedEvent completedEvent;
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) {
-                return failure(scaled, BigDecimal.ZERO, "Account not found");
+                return failure(FailureReason.ACCOUNT_NOT_FOUND, scaled, BigDecimal.ZERO, "Account not found");
             }
             BigDecimal before = record.getBalance(currency.id());
             if (record.isFrozen()) {
-                return failure(scaled, before, "Account is frozen");
+                return failure(FailureReason.FROZEN, scaled, before, "Account is frozen");
             }
             if (before.compareTo(scaled) < 0) {
-                return failure(scaled, before, "Insufficient funds");
+                return failure(FailureReason.INSUFFICIENT_FUNDS, scaled, before, "Insufficient funds");
             }
 
             BigDecimal newBalance = before.subtract(scaled);
@@ -293,18 +299,18 @@ final class EconomyOperations {
 
     EconomyOperationResponse set(UUID id, String currencyId, BigDecimal amount) {
         if (amount.compareTo(BigDecimal.ZERO) < 0) {
-            return failure(amount, BigDecimal.ZERO, "Amount cannot be negative");
+            return failure(FailureReason.INVALID_AMOUNT, amount, BigDecimal.ZERO, "Amount cannot be negative");
         }
 
         EconomyConfigSnapshot currentConfig = configSupplier.get();
         CurrencyDefinition currency = resolveCurrency(currentConfig, currencyId);
         if (currency == null) {
-            return failure(BigDecimal.ZERO, BigDecimal.ZERO, "Unknown currency");
+            return failure(FailureReason.UNKNOWN_CURRENCY, BigDecimal.ZERO, BigDecimal.ZERO, "Unknown currency");
         }
 
         try (AccountLease lease = requireLease(id)) {
             if (lease == null) {
-                return failure(amount, BigDecimal.ZERO, "Account not found");
+                return failure(FailureReason.ACCOUNT_NOT_FOUND, amount, BigDecimal.ZERO, "Account not found");
             }
             AccountRecord record = lease.record();
 
@@ -314,16 +320,16 @@ final class EconomyOperations {
 
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) {
-                return failure(scaled, BigDecimal.ZERO, "Account not found");
+                return failure(FailureReason.ACCOUNT_NOT_FOUND, scaled, BigDecimal.ZERO, "Account not found");
             }
 
             BigDecimal before = record.getBalance(currency.id());
             previewBalance = before;
             if (record.isFrozen()) {
-                return failure(scaled, before, "Account is frozen");
+                return failure(FailureReason.FROZEN, scaled, before, "Account is frozen");
             }
             if (currency.maxBalance() != null && scaled.compareTo(currency.maxBalance()) > 0) {
-                return failure(scaled, before, "Balance limit reached");
+                return failure(FailureReason.BALANCE_LIMIT, scaled, before, "Balance limit reached");
             }
 
             event = new BalanceChangeEvent(id, before, scaled, BalanceChangeEvent.Reason.SET, currency.id());
@@ -331,21 +337,21 @@ final class EconomyOperations {
 
         eventDispatcher.dispatch(event);
         if (event.isCancelled()) {
-            return failure(scaled, previewBalance, "Cancelled by plugin");
+            return failure(FailureReason.CANCELLED, scaled, previewBalance, "Cancelled by plugin");
         }
 
         BalanceChangedEvent completedEvent;
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) {
-                return failure(scaled, BigDecimal.ZERO, "Account not found");
+                return failure(FailureReason.ACCOUNT_NOT_FOUND, scaled, BigDecimal.ZERO, "Account not found");
             }
 
             BigDecimal before = record.getBalance(currency.id());
             if (record.isFrozen()) {
-                return failure(scaled, before, "Account is frozen");
+                return failure(FailureReason.FROZEN, scaled, before, "Account is frozen");
             }
             if (currency.maxBalance() != null && scaled.compareTo(currency.maxBalance()) > 0) {
-                return failure(scaled, before, "Balance limit reached");
+                return failure(FailureReason.BALANCE_LIMIT, scaled, before, "Balance limit reached");
             }
 
             record.setBalance(currency.id(), scaled);
@@ -367,12 +373,12 @@ final class EconomyOperations {
         EconomyConfigSnapshot currentConfig = configSupplier.get();
         CurrencyDefinition currency = resolveCurrency(currentConfig, currencyId);
         if (currency == null) {
-            return failure(BigDecimal.ZERO, BigDecimal.ZERO, "Unknown currency");
+            return failure(FailureReason.UNKNOWN_CURRENCY, BigDecimal.ZERO, BigDecimal.ZERO, "Unknown currency");
         }
 
         try (AccountLease lease = requireLease(id)) {
             if (lease == null) {
-                return failure(BigDecimal.ZERO, BigDecimal.ZERO, "Account not found");
+                return failure(FailureReason.ACCOUNT_NOT_FOUND, BigDecimal.ZERO, BigDecimal.ZERO, "Account not found");
             }
             AccountRecord record = lease.record();
 
@@ -382,31 +388,31 @@ final class EconomyOperations {
 
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) {
-                return failure(BigDecimal.ZERO, BigDecimal.ZERO, "Account not found");
+                return failure(FailureReason.ACCOUNT_NOT_FOUND, BigDecimal.ZERO, BigDecimal.ZERO, "Account not found");
             }
 
             BigDecimal before = record.getBalance(currency.id());
             previewBalance = before;
             if (record.isFrozen()) {
-                return failure(BigDecimal.ZERO, before, "Account is frozen");
+                return failure(FailureReason.FROZEN, BigDecimal.ZERO, before, "Account is frozen");
             }
             event = new BalanceChangeEvent(id, before, startingBalance, BalanceChangeEvent.Reason.RESET, currency.id());
         }
 
         eventDispatcher.dispatch(event);
         if (event.isCancelled()) {
-            return failure(BigDecimal.ZERO, previewBalance, "Cancelled by plugin");
+            return failure(FailureReason.CANCELLED, BigDecimal.ZERO, previewBalance, "Cancelled by plugin");
         }
 
         BalanceChangedEvent completedEvent;
         synchronized (record) {
             if (!accountRegistry.isLive(id, record)) {
-                return failure(BigDecimal.ZERO, BigDecimal.ZERO, "Account not found");
+                return failure(FailureReason.ACCOUNT_NOT_FOUND, BigDecimal.ZERO, BigDecimal.ZERO, "Account not found");
             }
 
             BigDecimal before = record.getBalance(currency.id());
             if (record.isFrozen()) {
-                return failure(BigDecimal.ZERO, before, "Account is frozen");
+                return failure(FailureReason.FROZEN, BigDecimal.ZERO, before, "Account is frozen");
             }
             record.setBalance(currency.id(), startingBalance);
             transactionLogger.accept(new TransactionEntry(
@@ -661,9 +667,37 @@ final class EconomyOperations {
                     return DirectTransferResult.failure(DirectTransferResult.Status.INSUFFICIENT_FUNDS, scaled, "Insufficient funds");
                 }
 
-                BigDecimal fromAfter = fromBefore.subtract(scaled);
                 BigDecimal toBefore = toRecord.getBalance(currency.id());
                 BigDecimal toAfter = toBefore.add(scaled);
+                if (currency.maxBalance() != null && toAfter.compareTo(currency.maxBalance()) > 0) {
+                    return DirectTransferResult.failure(DirectTransferResult.Status.BALANCE_LIMIT, scaled, "Balance limit reached");
+                }
+
+                // Vault/API transfers must respect the same cancellable veto as the commands.
+                // Without these pre-events, any plugin moving money through the API bypassed
+                // listeners such as the perm-cap enhancement.
+                BalanceChangeEvent fromEvent = new BalanceChangeEvent(fromId, fromBefore, fromBefore.subtract(scaled),
+                        BalanceChangeEvent.Reason.PAY_SENT, currency.id());
+                BalanceChangeEvent toEvent = new BalanceChangeEvent(toId, toBefore, toAfter,
+                        BalanceChangeEvent.Reason.PAY_RECEIVED, currency.id());
+                eventDispatcher.dispatch(fromEvent);
+                eventDispatcher.dispatch(toEvent);
+                if (fromEvent.isCancelled() || toEvent.isCancelled()) {
+                    return DirectTransferResult.failure(DirectTransferResult.Status.CANCELLED, scaled, "Cancelled by plugin");
+                }
+
+                // Re-checked after the events: a listener may freeze an account or change
+                // balances while it runs, and both must still be honoured.
+                if (fromRecord.isFrozen() || toRecord.isFrozen()) {
+                    return DirectTransferResult.failure(DirectTransferResult.Status.FROZEN, scaled, "Account is frozen");
+                }
+                fromBefore = fromRecord.getBalance(currency.id());
+                if (fromBefore.compareTo(scaled) < 0) {
+                    return DirectTransferResult.failure(DirectTransferResult.Status.INSUFFICIENT_FUNDS, scaled, "Insufficient funds");
+                }
+                BigDecimal fromAfter = fromBefore.subtract(scaled);
+                toBefore = toRecord.getBalance(currency.id());
+                toAfter = toBefore.add(scaled);
                 if (currency.maxBalance() != null && toAfter.compareTo(currency.maxBalance()) > 0) {
                     return DirectTransferResult.failure(DirectTransferResult.Status.BALANCE_LIMIT, scaled, "Balance limit reached");
                 }
@@ -880,11 +914,14 @@ final class EconomyOperations {
     }
 
     private static EconomyOperationResponse success(BigDecimal amount, BigDecimal balance) {
-        return new EconomyOperationResponse(amount, balance, EconomyOperationResponse.ResponseType.SUCCESS, "");
+        return new EconomyOperationResponse(amount, balance, EconomyOperationResponse.ResponseType.SUCCESS,
+                FailureReason.NONE, "");
     }
 
-    private static EconomyOperationResponse failure(BigDecimal amount, BigDecimal balance, String message) {
-        return new EconomyOperationResponse(amount, balance, EconomyOperationResponse.ResponseType.FAILURE, message);
+    private static EconomyOperationResponse failure(FailureReason reason, BigDecimal amount, BigDecimal balance,
+                                                    String message) {
+        return new EconomyOperationResponse(amount, balance, EconomyOperationResponse.ResponseType.FAILURE,
+                reason, message);
     }
 
     /**

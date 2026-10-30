@@ -21,6 +21,8 @@ import dev.alexisbinh.openeco.model.TransactionEntry;
 import org.bukkit.configuration.file.FileConfiguration;
 
 import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
@@ -55,7 +57,29 @@ public final class StorageMigrator {
                     ? config.getString("storage.sqlite.file", "economy.db")
                     : configuredFile;
         };
+        if (!folder.isEmpty() || !configuredFile.isEmpty()) {
+            requireExistingSourceFile(dialect, dataPath, filename);
+        }
         return new JdbcAccountRepository(dialect, dataPath, filename, defaultCurrencyId);
+    }
+
+    /**
+     * SQLite and H2 happily create a brand-new empty database on first connect, so a typo'd
+     * source path silently becomes an empty migration source. Check the configured file first
+     * and refuse before anything is created or cleared.
+     */
+    private static void requireExistingSourceFile(DatabaseDialect dialect, String dataPath, String filename) {
+        Path file = Path.of(dataPath, filename);
+        boolean exists = switch (dialect) {
+            case H2 -> Files.isRegularFile(file)
+                    || Files.isRegularFile(Path.of(dataPath, filename + ".mv.db"))
+                    || Files.isRegularFile(Path.of(dataPath, filename + ".h2.db"));
+            default -> Files.isRegularFile(file);
+        };
+        if (!exists) {
+            throw new IllegalArgumentException("storage.migration.source-file does not exist: " + file
+                    + ". Point it at the backup copy you want to import from.");
+        }
     }
 
     public static JdbcAccountRepository openRemoteTarget(
@@ -118,6 +142,15 @@ public final class StorageMigrator {
             return report;
         }
 
+        // An empty source with --overwrite used to clear the target and report a clean success.
+        // That is never what the operator meant, so refuse before anything is destroyed.
+        if (targetHasData && sourceStats.accounts() == 0 && sourceStats.transactions() == 0) {
+            report.addError("Source has no accounts or transactions, so migrating would only erase the"
+                    + " target. Check storage.migration.source-* points at the intended backup file"
+                    + " before running again.");
+            return report;
+        }
+
         if (dryRun) {
             report.addAccountsCopied(sourceStats.accounts());
             report.addTransactionsCopied(sourceStats.transactions());
@@ -130,21 +163,32 @@ public final class StorageMigrator {
         if (targetHasData) {
             target.clearAllData();
         }
-        for (int offset = 0; offset < accounts.size(); offset += ACCOUNT_BATCH_SIZE) {
-            int end = Math.min(offset + ACCOUNT_BATCH_SIZE, accounts.size());
-            target.upsertBatch(accounts.subList(offset, end));
-            report.addAccountsCopied(end - offset);
-        }
-
-        long txOffset = 0;
-        while (true) {
-            List<TransactionEntry> batch = source.loadTransactions(TRANSACTION_BATCH_SIZE, txOffset);
-            if (batch.isEmpty()) {
-                break;
+        try {
+            for (int offset = 0; offset < accounts.size(); offset += ACCOUNT_BATCH_SIZE) {
+                int end = Math.min(offset + ACCOUNT_BATCH_SIZE, accounts.size());
+                target.upsertBatch(accounts.subList(offset, end));
+                report.addAccountsCopied(end - offset);
             }
-            target.insertTransactionsBatch(batch);
-            report.addTransactionsCopied(batch.size());
-            txOffset += batch.size();
+
+            long txOffset = 0;
+            while (true) {
+                List<TransactionEntry> batch = source.loadTransactions(TRANSACTION_BATCH_SIZE, txOffset);
+                if (batch.isEmpty()) {
+                    break;
+                }
+                target.insertTransactionsBatch(batch);
+                report.addTransactionsCopied(batch.size());
+                txOffset += batch.size();
+            }
+        } catch (SQLException | RuntimeException error) {
+            // A half-migrated target is more dangerous than an empty one: missing accounts read
+            // as zero. Clear it best-effort so the operator can safely re-run the migration.
+            try {
+                target.clearAllData();
+            } catch (SQLException cleanupFailure) {
+                error.addSuppressed(cleanupFailure);
+            }
+            throw error;
         }
 
         return report;

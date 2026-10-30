@@ -16,6 +16,7 @@
 
 package dev.alexisbinh.openeco.command;
 
+import dev.alexisbinh.openeco.Messages;
 import dev.alexisbinh.openeco.OpenEcoPlugin;
 import dev.alexisbinh.openeco.service.AccountService;
 import dev.alexisbinh.openeco.storage.DatabaseDialect;
@@ -23,6 +24,9 @@ import dev.alexisbinh.openeco.storage.JdbcAccountRepository;
 import dev.alexisbinh.openeco.storage.StorageMigrationReport;
 import dev.alexisbinh.openeco.storage.StorageMigrationStats;
 import dev.alexisbinh.openeco.storage.StorageMigrator;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.minimessage.MiniMessage;
+import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -39,17 +43,30 @@ import java.util.stream.Collectors;
 
 public final class MigrateCommand implements CommandExecutor, TabCompleter {
 
+    private static final MiniMessage MM = MiniMessage.miniMessage();
     private static final String SQLITE_TO_MYSQL = "sqlitetomysql";
+    /**
+     * Dynamic text (exception messages, migration errors, command labels) is inserted with
+     * {@link Placeholder#unparsed}: concatenating it into the template would let legacy
+     * formatting codes crash the parse and tags in imported data render as components.
+     */
+    private static final String UNKNOWN_ERROR = "unknown error";
     private static final String MYSQL_TO_SQLITE = "mysqltosqlite";
     private static final List<String> STORAGE_SOURCES = List.of(SQLITE_TO_MYSQL, MYSQL_TO_SQLITE);
     private static final List<String> FLAGS = List.of("--scan", "--dry-run", "--overwrite");
 
     private final OpenEcoPlugin plugin;
     private final AccountService service;
+    private final Messages messages;
 
     public MigrateCommand(OpenEcoPlugin plugin, AccountService service) {
+        this(plugin, service, plugin != null ? plugin.getMessages() : null);
+    }
+
+    public MigrateCommand(OpenEcoPlugin plugin, AccountService service, Messages messages) {
         this.plugin = plugin;
         this.service = service;
+        this.messages = messages;
     }
 
     @Override
@@ -57,7 +74,11 @@ public final class MigrateCommand implements CommandExecutor, TabCompleter {
                                @NotNull String label, @NotNull String[] args) {
         if (!sender.hasPermission("openeco.migrator.admin")
                 && !sender.hasPermission("openeco.command.storage")) {
-            sender.sendMessage("§cYou do not have permission to use this command.");
+            if (messages != null) {
+                messages.send(sender, "no-permission");
+            } else {
+                sender.sendMessage(MM.deserialize("<red>You don't have permission to do that."));
+            }
             return true;
         }
 
@@ -72,7 +93,7 @@ public final class MigrateCommand implements CommandExecutor, TabCompleter {
         boolean overwrite = hasFlag(args, "--overwrite");
 
         if (unknownFlag(args)) {
-            sender.sendMessage("§cUnknown flag. Use: --scan, --dry-run, --overwrite");
+            sender.sendMessage(MM.deserialize("<red>Unknown flag. Use: --scan, --dry-run, --overwrite"));
             return true;
         }
 
@@ -81,8 +102,10 @@ public final class MigrateCommand implements CommandExecutor, TabCompleter {
         }
 
         if (!EconomyMigrationInvoker.isAvailable()) {
-            sender.sendMessage("§cEconomy plugin import requires the §fOpenEcoMigrator §caddon.");
-            sender.sendMessage("§7Storage migration: §f/" + label + " sqlitetomysql §7or §f/" + label + " mysqltosqlite");
+            sender.sendMessage(MM.deserialize("<red>Economy plugin import requires the <white>OpenEcoMigrator <red>addon."));
+            sender.sendMessage(MM.deserialize(
+                    "<gray>Storage migration: <white>/<label> sqlitetomysql <gray>or <white>/<label> mysqltosqlite",
+                    Placeholder.unparsed("label", label)));
             return true;
         }
 
@@ -93,7 +116,7 @@ public final class MigrateCommand implements CommandExecutor, TabCompleter {
                 EconomyMigrationInvoker.migrate(sender, source, dryRun, overwrite);
             }
         } catch (ReflectiveOperationException e) {
-            sender.sendMessage("§cMigration failed: " + rootMessage(e));
+            sender.sendMessage(migrationFailed(rootMessage(e)));
             plugin.getLogger().warning("Economy migration failed: " + rootMessage(e));
         }
         return true;
@@ -107,7 +130,7 @@ public final class MigrateCommand implements CommandExecutor, TabCompleter {
             }
             return handleMysqlToSqlite(sender, scan, dryRun, overwrite);
         } catch (Exception e) {
-            sender.sendMessage("§cMigration failed: " + e.getMessage());
+            sender.sendMessage(migrationFailed(e.getMessage()));
             plugin.getLogger().severe("Storage migration failed: " + e.getMessage());
             return true;
         }
@@ -117,11 +140,13 @@ public final class MigrateCommand implements CommandExecutor, TabCompleter {
                                         boolean dryRun, boolean overwrite) throws Exception {
         DatabaseDialect active = activeDialect();
         if (!active.isLocal() && !usesBackupSource()) {
-            sender.sendMessage("§cActive storage is already remote. Configure storage.migration.source-* for a local backup file.");
+            sender.sendMessage(MM.deserialize(
+                    "<red>Active storage is already remote. Configure storage.migration.source-* for a local backup file."));
             return true;
         }
         if (active == DatabaseDialect.MYSQL && !usesBackupSource()) {
-            sender.sendMessage("§cAlready using MySQL. Use §f/openecomigrate mysqltosqlite §cto export locally.");
+            sender.sendMessage(MM.deserialize(
+                    "<red>Already using MySQL. Use <white>/openecomigrate mysqltosqlite <red>to export locally."));
             return true;
         }
 
@@ -140,7 +165,8 @@ public final class MigrateCommand implements CommandExecutor, TabCompleter {
                                           boolean dryRun, boolean overwrite) throws Exception {
         DatabaseDialect active = activeDialect();
         if (active.isLocal() && !usesBackupSource()) {
-            sender.sendMessage("§cActive storage is already local. Use §f/openecomigrate sqlitetomysql §cto upload to MySQL.");
+            sender.sendMessage(MM.deserialize(
+                    "<red>Active storage is already local. Use <white>/openecomigrate sqlitetomysql <red>to upload to MySQL."));
             return true;
         }
 
@@ -166,26 +192,26 @@ public final class MigrateCommand implements CommandExecutor, TabCompleter {
                                           boolean overwrite) throws Exception {
         StorageMigrationStats sourceStats = StorageMigrator.scan(source);
         if (scan) {
-            sender.sendMessage("§6Source §7(" + source.dialect().name().toLowerCase(Locale.ROOT) + "§7): §f"
-                    + sourceStats.accounts() + " §7account(s), §f"
-                    + sourceStats.transactions() + " §7transaction(s)");
+            sender.sendMessage(MM.deserialize("<gold>Source <gray>(" + source.dialect().name().toLowerCase(Locale.ROOT) + "<gray>): <white>"
+                    + sourceStats.accounts() + " <gray>account(s), <white>"
+                    + sourceStats.transactions() + " <gray>transaction(s)"));
             StorageMigrationStats targetStats = StorageMigrator.scan(target);
-            sender.sendMessage("§6Target §7(" + targetDialect.name().toLowerCase(Locale.ROOT) + "§7): §f"
-                    + targetStats.accounts() + " §7account(s), §f"
-                    + targetStats.transactions() + " §7transaction(s)");
+            sender.sendMessage(MM.deserialize("<gold>Target <gray>(" + targetDialect.name().toLowerCase(Locale.ROOT) + "<gray>): <white>"
+                    + targetStats.accounts() + " <gray>account(s), <white>"
+                    + targetStats.transactions() + " <gray>transaction(s)"));
             return true;
         }
 
         service.flushDirty();
         StorageMigrationReport report = StorageMigrator.migrate(source, target, targetDialect, dryRun, overwrite);
-        String mode = dryRun ? "§e(dry-run)" : "§a(completed)";
-        sender.sendMessage("§6Storage migration " + mode);
-        sender.sendMessage("§7Accounts: §f" + report.accountsCopied());
-        sender.sendMessage("§7Transactions: §f" + report.transactionsCopied());
+        String mode = dryRun ? "<yellow>(dry-run)" : "<green>(completed)";
+        sender.sendMessage(MM.deserialize("<gold>Storage migration " + mode));
+        sender.sendMessage(MM.deserialize("<gray>Accounts: <white>" + report.accountsCopied()));
+        sender.sendMessage(MM.deserialize("<gray>Transactions: <white>" + report.transactionsCopied()));
         if (!report.errors().isEmpty()) {
-            sender.sendMessage("§cErrors:");
+            sender.sendMessage(MM.deserialize("<red>Errors:"));
             for (String error : report.errors()) {
-                sender.sendMessage("§c- " + error);
+                sender.sendMessage(migrationErrorLine(error));
             }
             return true;
         }
@@ -193,7 +219,7 @@ public final class MigrateCommand implements CommandExecutor, TabCompleter {
             String hint = targetDialect == DatabaseDialect.MYSQL
                     ? "storage.type: mysql"
                     : "storage.type: sqlite";
-            sender.sendMessage("§aMigration finished. Set §f" + hint + " §ain config.yml, then restart.");
+            sender.sendMessage(MM.deserialize("<green>Migration finished. Set <white>" + hint + " <green>in config.yml, then restart."));
         }
         return true;
     }
@@ -242,6 +268,16 @@ public final class MigrateCommand implements CommandExecutor, TabCompleter {
         return cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage();
     }
 
+    static Component migrationFailed(String reason) {
+        return MM.deserialize("<red>Migration failed: <gray><reason>",
+                Placeholder.unparsed("reason", reason == null ? UNKNOWN_ERROR : reason));
+    }
+
+    static Component migrationErrorLine(String error) {
+        return MM.deserialize("<red>- <error>",
+                Placeholder.unparsed("error", error == null ? UNKNOWN_ERROR : error));
+    }
+
     private static boolean hasFlag(String[] args, String flag) {
         return Arrays.stream(args).anyMatch(arg -> arg.equalsIgnoreCase(flag));
     }
@@ -257,17 +293,18 @@ public final class MigrateCommand implements CommandExecutor, TabCompleter {
     }
 
     private void sendUsage(CommandSender sender, String label) {
-        sender.sendMessage("§6/" + label + " <source> [flags]");
-        sender.sendMessage("§7Flags: §f--scan §7preview, §f--dry-run §7preview import, §f--overwrite §7replace target data");
-        sender.sendMessage("§7Storage: §fsqlitetomysql§7, §fmysqltosqlite");
+        sender.sendMessage(MM.deserialize("<gold>/<label> <source> [flags]",
+                Placeholder.unparsed("label", label)));
+        sender.sendMessage(MM.deserialize("<gray>Flags: <white>--scan <gray>preview, <white>--dry-run <gray>preview import, <white>--overwrite <gray>replace target data"));
+        sender.sendMessage(MM.deserialize("<gray>Storage: <white>sqlitetomysql<gray>, <white>mysqltosqlite"));
         if (EconomyMigrationInvoker.isAvailable()) {
             try {
                 EconomyMigrationInvoker.sendSourceList(sender);
             } catch (ReflectiveOperationException ignored) {
-                sender.sendMessage("§7Economy sources: §8(OpenEcoMigrator failed to list sources)");
+                sender.sendMessage(MM.deserialize("<gray>Economy sources: <dark_gray>(OpenEcoMigrator failed to list sources)"));
             }
         } else {
-            sender.sendMessage("§7Economy sources: §8(install OpenEcoMigrator addon)");
+            sender.sendMessage(MM.deserialize("<gray>Economy sources: <dark_gray>(install OpenEcoMigrator addon)"));
         }
     }
 

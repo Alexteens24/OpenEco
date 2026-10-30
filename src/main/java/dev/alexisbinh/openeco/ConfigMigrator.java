@@ -131,6 +131,8 @@ final class ConfigMigrator {
         migrateRenamedSetting(currentConfig, targetConfig,
                 "baltop.cache-ttl-seconds", "baltop.refresh-interval-seconds");
         migrateRenamedSetting(currentConfig, targetConfig,
+                "accounts.load-strategy", "account-loading.mode");
+        migrateRenamedSetting(currentConfig, targetConfig,
                 "account-cache.mode", "account-loading.mode");
         migrateRenamedSetting(currentConfig, targetConfig,
                 "account-cache.enabled", "account-loading.lazy.cache.enabled");

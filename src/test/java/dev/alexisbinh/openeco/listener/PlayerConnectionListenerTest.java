@@ -20,9 +20,17 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
 
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -91,6 +99,60 @@ class PlayerConnectionListenerTest {
 
         verify(player).sendMessage(any(Component.class));
         verify(prepared).close();
+    }
+
+    /**
+     * Two concurrent pre-logins for the same UUID (double client, rejoin spam) must not leak a
+     * pin. The displaced pin used to be overwritten without being closed, keeping a lease
+     * forever and permanently failing cross-server refreshes for the account.
+     */
+    @Test
+    void concurrentPreLoginsCloseEveryPinExactlyOnce() throws Exception {
+        UUID accountId = UUID.randomUUID();
+        AccountService.PreparedLoginAccount firstPin = mock(AccountService.PreparedLoginAccount.class);
+        AccountService.PreparedLoginAccount secondPin = mock(AccountService.PreparedLoginAccount.class);
+        AsyncPlayerPreLoginEvent firstEvent = mock(AsyncPlayerPreLoginEvent.class);
+        AsyncPlayerPreLoginEvent secondEvent = mock(AsyncPlayerPreLoginEvent.class);
+        when(firstEvent.getUniqueId()).thenReturn(accountId);
+        when(firstEvent.getName()).thenReturn("Alice");
+        when(secondEvent.getUniqueId()).thenReturn(accountId);
+        when(secondEvent.getName()).thenReturn("Alice");
+
+        CountDownLatch firstEntered = new CountDownLatch(1);
+        CountDownLatch releaseFirst = new CountDownLatch(1);
+        AtomicInteger calls = new AtomicInteger();
+        when(service.prepareLoginAccount(accountId, "Alice")).thenAnswer(invocation -> {
+            if (calls.incrementAndGet() == 1) {
+                firstEntered.countDown();
+                releaseFirst.await(5, TimeUnit.SECONDS);
+                return firstPin;
+            }
+            return secondPin;
+        });
+        when(joinEvent.getPlayer()).thenReturn(player);
+        when(player.getUniqueId()).thenReturn(accountId);
+        when(firstPin.status()).thenReturn(AccountService.LoginAccountStatus.READY);
+
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<?> blockedLogin = executor.submit(() -> listener.onPreLogin(firstEvent));
+            assertTrue(firstEntered.await(5, TimeUnit.SECONDS), "first pre-login must be blocked in prepare");
+
+            // Second pre-login wins the map; the first one is still inside prepareLoginAccount.
+            listener.onPreLogin(secondEvent);
+            releaseFirst.countDown();
+            blockedLogin.get(5, TimeUnit.SECONDS);
+
+            // Whichever pin ends up in the map, the joined player releases it...
+            listener.onJoin(joinEvent);
+
+            // ...and the displaced pin must have been closed by the overwrite.
+            verify(firstPin).close();
+            verify(secondPin).close();
+        } finally {
+            releaseFirst.countDown();
+            executor.shutdownNow();
+        }
     }
 
     private static YamlConfiguration testConfig() {

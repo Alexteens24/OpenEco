@@ -38,11 +38,11 @@ import java.util.UUID;
  *
  * <p>Flow when a player switches from Server A → Server B:
  * <ol>
- *   <li>{@link ServerPreConnectEvent}: proxy sends {@code flush <uuid>} to Server A
+ *   <li>{@link ServerPreConnectEvent}: proxy sends {@code flush <uuid> <token>} to Server A
  *       and <em>suspends the event</em> until Server A replies with
- *       {@code flushed <uuid>} (or the ${@value FlushAckTracker#DEFAULT_TIMEOUT_MS} ms
- *       timeout elapses). If the timeout is hit, the switch still proceeds and the
- *       refresh on the destination server becomes best-effort rather than guaranteed.</li>
+ *       {@code flushed <uuid> <token>} (or the {@link FlushAckTracker} timeout elapses).
+ *       On timeout, a reported flush failure, or a dead origin connection the switch is
+ *       <em>denied</em>, so the destination can never load a stale balance.</li>
  *   <li>{@link ServerConnectedEvent}: proxy sends {@code refresh <uuid>} to Server B
  *       so it discards its cached balance and reads the authoritative value from DB.</li>
  * </ol>
@@ -75,7 +75,8 @@ public class PlayerServerSwitchListener {
         ServerConnection currentServer = current.get();
         UUID uuid = event.getPlayer().getUniqueId();
         String originServer = currentServer.getServerInfo().getName();
-        java.util.concurrent.CompletableFuture<Void> flushDone = flushAckTracker.register(uuid)
+        FlushAckTracker.PendingFlush pendingFlush = flushAckTracker.register(uuid);
+        java.util.concurrent.CompletableFuture<Void> flushDone = pendingFlush.future()
                 .thenAccept(outcome -> {
                 // Only ACKNOWLEDGED means the balance is durable. Anything else must not let the
                 // player through, because the destination server would load a stale balance.
@@ -94,7 +95,17 @@ public class PlayerServerSwitchListener {
                     deny(event, "Your balance could not be saved right now, so the server switch was cancelled. Please try again.");
                 }
             });
-        currentServer.sendPluginMessage(CHANNEL, encode("flush " + uuid));
+        try {
+            currentServer.sendPluginMessage(CHANNEL, encode("flush " + uuid + " " + pendingFlush.token()));
+        } catch (RuntimeException error) {
+            // The connection to the origin server is already dead. Fail closed: without a flush
+            // the destination would load a stale balance. reportFailure also resolves the
+            // pending wait, which denies the switch through the handler above.
+            logger.error("Failed to send flush to {} for player {}: {}",
+                    originServer, uuid, error.getMessage());
+            flushAckTracker.reportFailure(uuid, pendingFlush.token());
+            return null;
+        }
         logger.debug("Sent flush to {} for player {} — waiting for ack",
                 currentServer.getServerInfo().getName(), uuid);
 
@@ -131,17 +142,33 @@ public class PlayerServerSwitchListener {
         boolean failed = msg.startsWith("flushfailed ");
         if (!failed && !msg.startsWith("flushed ")) return;
 
+        String[] parts = msg.substring(failed ? "flushfailed ".length() : "flushed ".length())
+                .trim().split("\\s+", 2);
         try {
-            UUID uuid = UUID.fromString(msg.substring(failed ? "flushfailed ".length() : "flushed ".length()).trim());
-            if (failed) {
+            UUID uuid = UUID.fromString(parts[0]);
+            if (parts.length >= 2) {
+                long token = Long.parseLong(parts[1]);
+                if (failed) {
+                    flushAckTracker.reportFailure(uuid, token);
+                    logger.debug("Received flush failure from backend {} for player {} (token {})",
+                            source.getServerInfo().getName(), uuid, token);
+                } else {
+                    flushAckTracker.acknowledge(uuid, token);
+                    logger.debug("Received flush ack from backend {} for player {} (token {})",
+                            source.getServerInfo().getName(), uuid, token);
+                }
+            } else if (failed) {
+                // Tokenless ack from an older backend: keep compatibility, accept it.
                 flushAckTracker.reportFailure(uuid);
-                logger.debug("Received flush failure from backend {} for player {}", source.getServerInfo().getName(), uuid);
+                logger.debug("Received tokenless flush failure from backend {} for player {}",
+                        source.getServerInfo().getName(), uuid);
             } else {
                 flushAckTracker.acknowledge(uuid);
-                logger.debug("Received flush ack from backend {} for player {}", source.getServerInfo().getName(), uuid);
+                logger.debug("Received tokenless flush ack from backend {} for player {}",
+                        source.getServerInfo().getName(), uuid);
             }
         } catch (IllegalArgumentException ignored) {
-            // Malformed UUID from backend — ignore safely.
+            // Malformed UUID or token from backend — ignore safely.
         }
     }
 

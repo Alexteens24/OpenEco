@@ -29,6 +29,7 @@ import dev.alexisbinh.openeco.storage.AccountRepository;
 import dev.alexisbinh.openeco.storage.DatabaseDialect;
 import dev.alexisbinh.openeco.storage.JdbcAccountRepository;
 import dev.alexisbinh.openeco.storage.RemoteStorageDataSource;
+import com.zaxxer.hikari.pool.HikariPool;
 import dev.faststats.bukkit.BukkitContext;
 import dev.faststats.data.Metric;
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
@@ -112,7 +113,10 @@ public class OpenEcoPlugin extends JavaPlugin {
                         dialect,
                         resolveDefaultCurrencyId());
             }
-        } catch (SQLException | IllegalArgumentException e) {
+        } catch (SQLException | IllegalArgumentException | HikariPool.PoolInitializationException e) {
+            // Hikari performs a fail-fast connection attempt, so an unreachable database throws
+            // an unchecked PoolInitializationException instead of a SQLException. Without this
+            // the plugin showed a raw stack trace instead of the usual controlled disable.
             getLogger().severe("Failed to open database: " + e.getMessage());
             getServer().getPluginManager().disablePlugin(this);
             return;
@@ -160,7 +164,7 @@ public class OpenEcoPlugin extends JavaPlugin {
         HistoryCommand history = new HistoryCommand(service, this, messages);
         getCommand("history").setExecutor(history);
         getCommand("history").setTabCompleter(history);
-        MigrateCommand migrate = new MigrateCommand(this, service);
+        MigrateCommand migrate = new MigrateCommand(this, service, messages);
         getCommand("openecomigrate").setExecutor(migrate);
         getCommand("openecomigrate").setTabCompleter(migrate);
         // Must come after the lookups above: getCommand() resolves by name, which a rename changes.
@@ -376,6 +380,8 @@ public class OpenEcoPlugin extends JavaPlugin {
 
     /** Returns the public addon API. Prefer ServicesManager when integrating from other plugins. */
     public OpenEcoApi getApi() { return api; }
+
+    public Messages getMessages() { return messages; }
 
     @SuppressWarnings("deprecation")
     private void registerLegacyEconomy(AccountService accountService) {

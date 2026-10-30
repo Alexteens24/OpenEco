@@ -31,17 +31,36 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ConfigMigratorTest {
 
+    /**
+     * {@code accounts.load-strategy} predates {@code account-loading.mode} and uses the same
+     * eager/lazy vocabulary. Deleting it instead of migrating the value silently reverted
+     * operators who chose lazy mode back to eager after an upgrade.
+     */
     @Test
-    void removesLegacyAccountLoadStrategyWithoutLeavingEmptySection() {
+    void migratesLegacyAccountLoadStrategyValue() {
         YamlConfiguration current = new YamlConfiguration();
         current.set("accounts.load-strategy", "lazy");
         current.set("pay.cooldown-seconds", 12);
 
         YamlConfiguration migrated = ConfigMigrator.rewrite(current, loadBundledDefaultConfig());
 
+        assertEquals("lazy", migrated.getString("account-loading.mode"));
         assertFalse(migrated.contains("accounts.load-strategy"));
         assertFalse(migrated.isConfigurationSection("accounts"));
         assertEquals(12, migrated.getInt("pay.cooldown-seconds"));
+    }
+
+    /** A value already present in the new key must win over the legacy one. */
+    @Test
+    void existingAccountLoadingModeIsNotOverwrittenByLegacyStrategy() {
+        YamlConfiguration current = new YamlConfiguration();
+        current.set("accounts.load-strategy", "lazy");
+        current.set("account-loading.mode", "eager");
+
+        YamlConfiguration migrated = ConfigMigrator.rewrite(current, loadBundledDefaultConfig());
+
+        assertEquals("eager", migrated.getString("account-loading.mode"));
+        assertFalse(migrated.contains("accounts.load-strategy"));
     }
 
     @Test

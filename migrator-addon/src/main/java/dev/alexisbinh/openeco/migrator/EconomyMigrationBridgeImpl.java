@@ -23,6 +23,9 @@ import dev.alexisbinh.openeco.migrator.model.MigrationSource;
 import dev.alexisbinh.openeco.migrator.source.EconomySourceReader;
 import dev.alexisbinh.openeco.migrator.source.MigrationContext;
 import dev.alexisbinh.openeco.migrator.source.MigrationReaders;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.minimessage.MiniMessage;
+import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.command.CommandSender;
 
 import java.util.ArrayList;
@@ -31,6 +34,8 @@ import java.util.Locale;
 import java.util.Optional;
 
 public final class EconomyMigrationBridgeImpl implements EconomyMigrationBridge {
+
+    private static final MiniMessage MM = MiniMessage.miniMessage();
 
     private final OpenEcoApi api;
     private final MigrationEngine engine;
@@ -53,14 +58,14 @@ public final class EconomyMigrationBridgeImpl implements EconomyMigrationBridge 
 
     @Override
     public void sendSourceList(CommandSender sender) {
-        sender.sendMessage("§7Economy plugins:");
+        sender.sendMessage(MM.deserialize("<gray>Economy plugins:"));
         for (EconomySourceReader reader : MigrationReaders.all()) {
             MigrationSource source = reader.source();
             boolean available = reader.isAvailable(context);
-            sender.sendMessage((available ? "§a" : "§7") + "• " + source.name().toLowerCase(Locale.ROOT)
-                    + " §8(" + source.displayName() + "§8)");
+            sender.sendMessage(MM.deserialize((available ? "<green>" : "<gray>") + "• " + source.name().toLowerCase(Locale.ROOT)
+                    + " <dark_gray>(" + source.displayName() + "<dark_gray>)"));
         }
-        sender.sendMessage("§7Vault import needs the old economy plugin as the active provider.");
+        sender.sendMessage(MM.deserialize("<gray>Vault import needs the old economy plugin as the active provider."));
     }
 
     @Override
@@ -71,33 +76,48 @@ public final class EconomyMigrationBridgeImpl implements EconomyMigrationBridge 
             throw new IllegalStateException("Source not available: " + source.displayName());
         }
         MigrationEngine.ScanResult scan = result.get();
-        sender.sendMessage("§6Scan §7" + scan.source().displayName());
-        sender.sendMessage("§7Location: §f" + scan.location());
-        sender.sendMessage("§7Accounts: §f" + scan.accounts());
-        sender.sendMessage("§7Total balance: §f" + api.format(scan.totalBalance()));
+        sender.sendMessage(MM.deserialize("<gold>Scan <gray><source>",
+                Placeholder.unparsed("source", scan.source().displayName())));
+        sender.sendMessage(MM.deserialize("<gray>Location: <white><location>",
+                Placeholder.unparsed("location", scan.location())));
+        sender.sendMessage(MM.deserialize("<gray>Accounts: <white>" + scan.accounts()));
+        sender.sendMessage(MM.deserialize("<gray>Total balance: <white><total>",
+                Placeholder.unparsed("total", api.format(scan.totalBalance()))));
     }
 
     @Override
     public void migrate(CommandSender sender, String sourceId, boolean dryRun, boolean overwrite) throws Exception {
         MigrationSource source = requireSource(sourceId);
-        sender.sendMessage("§6Migrating from §f" + source.displayName()
-                + (dryRun ? " §7(dry-run)" : "")
-                + (overwrite ? " §7(overwrite)" : "") + "§6...");
+        sender.sendMessage(MM.deserialize("<gold>Migrating from <white><source>"
+                        + (dryRun ? " <gray>(dry-run)" : "")
+                        + (overwrite ? " <gray>(overwrite)" : "") + "<gold>...",
+                Placeholder.unparsed("source", source.displayName())));
 
         MigrationReport report = engine.migrate(source, dryRun, overwrite);
-        sender.sendMessage("§aMigration " + (dryRun ? "preview" : "finished") + ":");
-        sender.sendMessage("§7Scanned: §f" + report.scanned()
-                + " §7| Created: §f" + report.created()
-                + " §7| Updated: §f" + report.updated()
-                + " §7| Skipped: §f" + report.skipped()
-                + " §7| Failed: §f" + report.failed());
-        sender.sendMessage("§7Source total: §f" + api.format(report.sourceTotal()));
+        sender.sendMessage(MM.deserialize("<green>Migration " + (dryRun ? "preview" : "finished") + ":"));
+        sender.sendMessage(MM.deserialize("<gray>Scanned: <white>" + report.scanned()
+                + " <gray>| Created: <white>" + report.created()
+                + " <gray>| Updated: <white>" + report.updated()
+                + " <gray>| Skipped: <white>" + report.skipped()
+                + " <gray>| Failed: <white>" + report.failed()));
+        sender.sendMessage(MM.deserialize("<gray>Source total: <white><total>",
+                Placeholder.unparsed("total", api.format(report.sourceTotal()))));
         for (String error : report.errors()) {
-            sender.sendMessage("§c- " + error);
+            sender.sendMessage(errorLine(error));
         }
         if (!dryRun && report.migratedOrWouldMigrate() > 0) {
-            sender.sendMessage("§7Check §f/balance §7for a few players to verify.");
+            sender.sendMessage(MM.deserialize("<gray>Check <white>/balance <gray>for a few players to verify."));
         }
+    }
+
+    /**
+     * Imported error text can contain legacy formatting codes or MiniMessage tags, so it is
+     * inserted unparsed; concatenating it into the template would crash the parse or render
+     * foreign data as components.
+     */
+    static Component errorLine(String error) {
+        return MM.deserialize("<red>- <error>",
+                Placeholder.unparsed("error", error == null ? "unknown error" : error));
     }
 
     private static MigrationSource requireSource(String sourceId) {

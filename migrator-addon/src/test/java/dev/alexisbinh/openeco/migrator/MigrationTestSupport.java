@@ -213,7 +213,21 @@ public final class MigrationTestSupport {
             Object noOpDispatcher = java.lang.reflect.Proxy.newProxyInstance(
                     AccountService.class.getClassLoader(),
                     new Class<?>[] {dispatcherClass},
-                    (proxy, method, args) -> null);
+                    (proxy, method, args) -> {
+                        // Returning null for runOnDispatchThread would silently skip the operation.
+                        // The interface is package-private, so its default body cannot be reached
+                        // reflectively from here; run the submitted task inline instead.
+                        if ("runOnDispatchThread".equals(method.getName())) {
+                            try {
+                                return ((java.util.concurrent.Callable<?>) args[0]).call();
+                            } catch (RuntimeException | Error error) {
+                                throw error;
+                            } catch (Exception error) {
+                                throw new IllegalStateException("dispatcher task failed", error);
+                            }
+                        }
+                        return null;
+                    });
             Constructor<AccountService> ctor = AccountService.class.getDeclaredConstructor(
                     AccountRepository.class,
                     Logger.class,

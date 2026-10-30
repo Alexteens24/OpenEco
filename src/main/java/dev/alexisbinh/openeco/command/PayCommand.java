@@ -60,7 +60,9 @@ public class PayCommand implements CommandExecutor, TabCompleter {
             return true;
         }
         if (args.length < 2 || args.length > 3) {
-            payer.sendMessage("§cUsage: /" + command.getName() + " <player> <amount> [currency]");
+            messages.sendOrDefault(payer, "pay-usage",
+                    "<red>Usage: /<command> <player> <amount> [currency]",
+                    Placeholder.unparsed("command", command.getName()));
             return true;
         }
 

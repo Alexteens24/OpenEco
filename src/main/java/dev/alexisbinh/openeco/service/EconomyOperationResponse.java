@@ -22,10 +22,14 @@ import java.util.Objects;
 /**
  * Internal response object for core economy mutations.
  * This keeps BigDecimal precision in core logic and adapters can convert at the boundary.
+ *
+ * <p>{@link #failureReason()} is the machine-readable failure classification; adapters must
+ * switch on it instead of matching {@link #errorMessage()} text, which is display-only.
  */
 public record EconomyOperationResponse(BigDecimal amount,
                                        BigDecimal balance,
                                        ResponseType type,
+                                       FailureReason failureReason,
                                        String errorMessage) {
 
     public enum ResponseType {
@@ -34,10 +38,22 @@ public record EconomyOperationResponse(BigDecimal amount,
         NOT_IMPLEMENTED
     }
 
+    public enum FailureReason {
+        NONE,
+        UNKNOWN_CURRENCY,
+        ACCOUNT_NOT_FOUND,
+        INVALID_AMOUNT,
+        INSUFFICIENT_FUNDS,
+        BALANCE_LIMIT,
+        FROZEN,
+        CANCELLED
+    }
+
     public EconomyOperationResponse {
         Objects.requireNonNull(amount, "amount");
         Objects.requireNonNull(balance, "balance");
         Objects.requireNonNull(type, "type");
+        Objects.requireNonNull(failureReason, "failureReason");
         errorMessage = errorMessage == null ? "" : errorMessage;
     }
 

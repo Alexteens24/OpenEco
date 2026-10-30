@@ -31,8 +31,10 @@ import java.util.logging.Logger;
  *
  * <p>Supported incoming messages (UTF-8 text, sent by the proxy addon):
  * <ul>
- *   <li>{@code flush <uuid>} — immediately write this account to the database and
- *       reply with {@code flushed <uuid>} through the same player's connection.</li>
+ *   <li>{@code flush <uuid> [token]} — immediately write this account to the database and
+ *       reply with {@code flushed <uuid> [token]} (or {@code flushfailed <uuid> [token]})
+ *       through the same player's connection. The token is echoed verbatim so the proxy can
+ *       ignore a late ack for a flush it already gave up on; older proxies omit it.</li>
  *   <li>{@code refresh <uuid>} — re-read this account from the database so the
  *       server has the latest balances after a cross-server transfer.</li>
  * </ul>
@@ -61,21 +63,21 @@ public class CrossServerMessenger implements PluginMessageListener {
     public void onPluginMessageReceived(String channel, Player player, byte[] message) {
         if (!CHANNEL.equals(channel)) return;
         String msg = new String(message, StandardCharsets.UTF_8).trim();
-        int space = msg.indexOf(' ');
-        if (space < 0) return;
+        String[] parts = msg.split("\\s+", 3);
+        if (parts.length < 2) return;
 
-        String cmd = msg.substring(0, space);
+        String cmd = parts[0];
         if (!"flush".equals(cmd) && !"refresh".equals(cmd)) {
             return;
         }
 
-        String uuidStr = msg.substring(space + 1).trim();
         UUID uuid;
         try {
-            uuid = UUID.fromString(uuidStr);
+            uuid = UUID.fromString(parts[1]);
         } catch (IllegalArgumentException e) {
             return; // malformed UUID — ignore
         }
+        String token = parts.length == 3 && parts[2].matches("\\d{1,19}") ? " " + parts[2] : "";
 
         UUID playerId = player.getUniqueId();
         if (!playerId.equals(uuid)) {
@@ -92,11 +94,13 @@ public class CrossServerMessenger implements PluginMessageListener {
                     // failed flush makes the destination server load a stale balance, silently
                     // rolling the player back to whatever was last persisted.
                     boolean flushed = service.flushAccount(id);
-                    // Notify proxy whether the flush actually reached storage
+                    // Notify proxy whether the flush actually reached storage, echoing its token
+                    // so a late ack can never satisfy a newer wait on the proxy.
                     Player online = plugin.getServer().getPlayer(id);
                     if (online != null && online.isOnline()) {
                         online.sendPluginMessage(plugin, CHANNEL,
-                                ((flushed ? "flushed " : "flushfailed ") + id).getBytes(StandardCharsets.UTF_8));
+                                ((flushed ? "flushed " : "flushfailed ") + id + token)
+                                        .getBytes(StandardCharsets.UTF_8));
                     }
                 });
             }

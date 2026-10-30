@@ -24,8 +24,15 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 final class CurrencyRegistry {
+
+    /**
+     * Currency ids become schema values and config paths, so they are restricted to characters
+     * that are safe in DDL, YAML paths and JDBC parameters.
+     */
+    private static final Pattern VALID_CURRENCY_ID = Pattern.compile("[A-Za-z0-9_-]{1,32}");
 
     private final String defaultCurrencyId;
     private final Map<String, CurrencyDefinition> definitionsByNormalizedId;
@@ -45,6 +52,10 @@ final class CurrencyRegistry {
 
         LinkedHashMap<String, CurrencyDefinition> byNormalizedId = new LinkedHashMap<>();
         for (CurrencyDefinition definition : definitions) {
+            if (!VALID_CURRENCY_ID.matcher(definition.id()).matches()) {
+                throw new IllegalArgumentException("Currency id '" + definition.id()
+                        + "' is invalid: use 1-32 characters from letters, digits, '_' or '-'");
+            }
             String normalizedId = normalize(definition.id());
             CurrencyDefinition existing = byNormalizedId.putIfAbsent(normalizedId, definition);
             if (existing != null) {

@@ -142,8 +142,10 @@ public class JdbcAccountRepository implements AccountRepository {
                     """);
                 ensureColumn(conn, stmt, "transactions", "source", "VARCHAR(64)");
                 ensureColumn(conn, stmt, "transactions", "note", "VARCHAR(255)");
-                ensureColumn(conn, stmt, "transactions", "currency_id",
-                        "VARCHAR(32) NOT NULL DEFAULT '" + sqlLiteral(defaultCurrencyId) + "'");
+                // Nullable on purpose: the default is applied by the parameterized backfill
+                // below, so a config-derived value never becomes part of the DDL text (which
+                // would allow quote/backslash escapes to break the statement).
+                ensureColumn(conn, stmt, "transactions", "currency_id", "VARCHAR(32)");
                 ensureColumn(conn, stmt, "accounts", "frozen", "BOOLEAN NOT NULL DEFAULT FALSE");
                 ensureColumn(conn, stmt, "accounts", "normalized_name", "VARCHAR(16)");
                 stmt.executeUpdate("UPDATE accounts SET normalized_name=LOWER(TRIM(name)) "
@@ -736,8 +738,15 @@ public class JdbcAccountRepository implements AccountRepository {
     }
 
     public List<TransactionEntry> loadTransactions(int limit, long offset) throws SQLException {
+        // Paginated migration reads need a deterministic total order. ORDER BY ts alone is not
+        // stable when rows share a timestamp, which lets a row appear on two pages or none.
+        // Identical rows are interchangeable, so the full row is a safe tiebreaker.
         String sql = "SELECT type,counterpart_id,target_id,amount,balance_before,balance_after,ts,source,note,currency_id "
-                + "FROM transactions ORDER BY ts ASC LIMIT ? OFFSET ?";
+                + "FROM transactions "
+                + "ORDER BY ts ASC, type ASC, target_id ASC, amount ASC, balance_before ASC, balance_after ASC,"
+                + " COALESCE(counterpart_id, '') ASC, COALESCE(currency_id, '') ASC,"
+                + " COALESCE(source, '') ASC, COALESCE(note, '') ASC "
+                + "LIMIT ? OFFSET ?";
         List<TransactionEntry> result = new ArrayList<>();
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -756,8 +765,9 @@ public class JdbcAccountRepository implements AccountRepository {
         if (entries.isEmpty()) {
             return;
         }
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
+        try (Connection conn = dataSource.getConnection()) {
+            conn.setAutoCommit(false);
+            try (PreparedStatement ps = conn.prepareStatement(
                      "INSERT INTO transactions(type,counterpart_id,target_id,amount,balance_before,balance_after,ts,source,note,currency_id) "
                              + "VALUES(?,?,?,?,?,?,?,?,?,?)")) {
             for (TransactionEntry entry : entries) {
@@ -787,6 +797,13 @@ public class JdbcAccountRepository implements AccountRepository {
                 ps.addBatch();
             }
             ps.executeBatch();
+            conn.commit();
+        } catch (SQLException e) {
+            conn.rollback();
+            throw e;
+        } finally {
+            conn.setAutoCommit(true);
+        }
         }
     }
 
@@ -795,34 +812,63 @@ public class JdbcAccountRepository implements AccountRepository {
     @Override
     public synchronized void insertTransaction(TransactionEntry entry) throws SQLException {
         try (Connection conn = dataSource.getConnection()) {
-            long persistedTimestamp = resolvePersistedTimestamp(conn, entry.getTargetId(), entry.getTimestamp());
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "INSERT INTO transactions(type,counterpart_id,target_id,amount,balance_before,balance_after,ts,source,note,currency_id) "
-                  + "VALUES(?,?,?,?,?,?,?,?,?,?)")) {
-            ps.setString(1, entry.getType().name());
-            if (entry.getCounterpartId() != null) {
-                ps.setString(2, entry.getCounterpartId().toString());
-            } else {
-                ps.setNull(2, Types.VARCHAR);
+            conn.setAutoCommit(false);
+            try {
+                // Serialize the MAX(ts) read-modify-write against every other writer, including
+                // other backend servers sharing the same remote database. Without the row lock
+                // two servers can compute the same timestamp and write non-monotonic history.
+                lockAccountForHistoryWrite(conn, entry.getTargetId());
+                long persistedTimestamp = resolvePersistedTimestamp(conn, entry.getTargetId(), entry.getTimestamp());
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "INSERT INTO transactions(type,counterpart_id,target_id,amount,balance_before,balance_after,ts,source,note,currency_id) "
+                      + "VALUES(?,?,?,?,?,?,?,?,?,?)")) {
+                    ps.setString(1, entry.getType().name());
+                    if (entry.getCounterpartId() != null) {
+                        ps.setString(2, entry.getCounterpartId().toString());
+                    } else {
+                        ps.setNull(2, Types.VARCHAR);
+                    }
+                    ps.setString(3, entry.getTargetId().toString());
+                    ps.setBigDecimal(4, entry.getAmount());
+                    ps.setBigDecimal(5, entry.getBalanceBefore());
+                    ps.setBigDecimal(6, entry.getBalanceAfter());
+                    ps.setLong(7, persistedTimestamp);
+                    if (entry.getSource() != null) {
+                        ps.setString(8, entry.getSource());
+                    } else {
+                        ps.setNull(8, Types.VARCHAR);
+                    }
+                    if (entry.getNote() != null) {
+                        ps.setString(9, entry.getNote());
+                    } else {
+                        ps.setNull(9, Types.VARCHAR);
+                    }
+                    ps.setString(10, normalizePersistedCurrencyId(
+                            entry.getCurrencyId() != null ? entry.getCurrencyId() : defaultCurrencyId));
+                    ps.executeUpdate();
+                }
+                conn.commit();
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(true);
             }
-            ps.setString(3, entry.getTargetId().toString());
-            ps.setBigDecimal(4, entry.getAmount());
-            ps.setBigDecimal(5, entry.getBalanceBefore());
-            ps.setBigDecimal(6, entry.getBalanceAfter());
-            ps.setLong(7, persistedTimestamp);
-            if (entry.getSource() != null) {
-                ps.setString(8, entry.getSource());
-            } else {
-                ps.setNull(8, Types.VARCHAR);
-            }
-            if (entry.getNote() != null) {
-                ps.setString(9, entry.getNote());
-            } else {
-                ps.setNull(9, Types.VARCHAR);
-            }
-                ps.setString(10, normalizePersistedCurrencyId(
-                        entry.getCurrencyId() != null ? entry.getCurrencyId() : defaultCurrencyId));
-                ps.executeUpdate();
+        }
+    }
+
+    /**
+     * Takes a row lock on the account so concurrent history writers serialize their timestamp
+     * computation. SQLite has no {@code FOR UPDATE} and already serializes writers itself.
+     */
+    private void lockAccountForHistoryWrite(Connection conn, UUID targetId) throws SQLException {
+        if (!dialect.supportsSelectForUpdate()) {
+            return;
+        }
+        try (PreparedStatement ps = conn.prepareStatement("SELECT id FROM accounts WHERE id=? FOR UPDATE")) {
+            ps.setString(1, targetId.toString());
+            try (ResultSet rs = ps.executeQuery()) {
+                // Empty result: the account row does not exist, so there is nothing to lock.
             }
         }
     }
@@ -1032,7 +1078,4 @@ public class JdbcAccountRepository implements AccountRepository {
 
     private record PersistedBalanceRow(String currencyId, BigDecimal balance, long updatedAt) {}
 
-    private static String sqlLiteral(String value) {
-        return value.replace("'", "''");
-    }
 }

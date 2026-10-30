@@ -18,6 +18,7 @@ package dev.alexisbinh.openeco.proxy;
 
 import com.velocitypowered.api.event.EventTask;
 import com.velocitypowered.api.event.connection.DisconnectEvent;
+import com.velocitypowered.api.event.connection.PluginMessageEvent;
 import com.velocitypowered.api.event.player.ServerPreConnectEvent;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ServerConnection;
@@ -43,8 +44,10 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -84,10 +87,13 @@ class PlayerServerSwitchListenerTest {
         lenient().when(currentServerInfo.getName()).thenReturn("survival");
     }
 
+    private static FlushAckTracker.PendingFlush pendingFlush(long token, FlushAckTracker.FlushOutcome outcome) {
+        return new FlushAckTracker.PendingFlush(token, CompletableFuture.completedFuture(outcome));
+    }
+
     @Test
     void preConnectAllowedWithCurrentServerRegistersFlushAndSuspendsEvent() {
-        when(flushAckTracker.register(playerId)).thenReturn(
-                CompletableFuture.completedFuture(FlushAckTracker.FlushOutcome.ACKNOWLEDGED));
+        when(flushAckTracker.register(playerId)).thenReturn(pendingFlush(7L, FlushAckTracker.FlushOutcome.ACKNOWLEDGED));
 
         ServerPreConnectEvent event = new ServerPreConnectEvent(player, originalServer);
 
@@ -98,14 +104,13 @@ class PlayerServerSwitchListenerTest {
 
         ArgumentCaptor<byte[]> payload = ArgumentCaptor.forClass(byte[].class);
         verify(currentConnection).sendPluginMessage(eq(PlayerServerSwitchListener.CHANNEL), payload.capture());
-        assertEquals("flush " + playerId, new String(payload.getValue(), StandardCharsets.UTF_8));
+        assertEquals("flush " + playerId + " 7", new String(payload.getValue(), StandardCharsets.UTF_8));
         verify(logger).debug("Sent flush to {} for player {} — waiting for ack", "survival", playerId);
     }
 
     @Test
     void preConnectTimeoutCancelsSwitchAndSendsErrorMessage() {
-        when(flushAckTracker.register(playerId)).thenReturn(
-                CompletableFuture.completedFuture(FlushAckTracker.FlushOutcome.TIMED_OUT));
+        when(flushAckTracker.register(playerId)).thenReturn(pendingFlush(8L, FlushAckTracker.FlushOutcome.TIMED_OUT));
 
         ServerPreConnectEvent event = new ServerPreConnectEvent(player, originalServer);
 
@@ -118,6 +123,33 @@ class PlayerServerSwitchListenerTest {
         assertEquals(ServerPreConnectEvent.ServerResult.denied(), event.getResult());
         verify(player).sendMessage(Component.text(
                 "Failed to save your economy data in time. Please try switching servers again.",
+                NamedTextColor.RED));
+    }
+
+    /**
+     * If the origin connection is already dead the flush can never happen. The switch must be
+     * denied instead of proceeding and letting the destination load a stale balance.
+     */
+    @Test
+    void preConnectDeniesSwitchWhenFlushCannotBeSent() {
+        CompletableFuture<FlushAckTracker.FlushOutcome> pending = new CompletableFuture<>();
+        when(flushAckTracker.register(playerId)).thenReturn(new FlushAckTracker.PendingFlush(9L, pending));
+        doAnswer(invocation -> {
+            pending.complete(FlushAckTracker.FlushOutcome.FLUSH_FAILED);
+            return null;
+        }).when(flushAckTracker).reportFailure(playerId, 9L);
+        doThrow(new IllegalStateException("Not connected to server!"))
+                .when(currentConnection).sendPluginMessage(eq(PlayerServerSwitchListener.CHANNEL), any(byte[].class));
+
+        ServerPreConnectEvent event = new ServerPreConnectEvent(player, originalServer);
+
+        EventTask task = listener.onServerPreConnect(event);
+
+        assertNull(task, "the event must not be suspended once the flush failed to send");
+        verify(flushAckTracker).reportFailure(playerId, 9L);
+        assertEquals(ServerPreConnectEvent.ServerResult.denied(), event.getResult());
+        verify(player).sendMessage(Component.text(
+                "Your balance could not be saved right now, so the server switch was cancelled. Please try again.",
                 NamedTextColor.RED));
     }
 
@@ -143,6 +175,58 @@ class PlayerServerSwitchListenerTest {
         assertNull(task);
         verify(flushAckTracker, never()).register(playerId);
         verify(currentConnection, never()).sendPluginMessage(eq(PlayerServerSwitchListener.CHANNEL), any(byte[].class));
+    }
+
+    // --- onPluginMessage tests ---
+
+    @Test
+    void tokenizedFlushAckIsForwardedToTracker() {
+        PluginMessageEvent event = mock(PluginMessageEvent.class);
+        when(event.getIdentifier()).thenReturn(PlayerServerSwitchListener.CHANNEL);
+        when(event.getSource()).thenReturn(currentConnection);
+        when(event.getData()).thenReturn(("flushed " + playerId + " 42").getBytes(StandardCharsets.UTF_8));
+
+        listener.onPluginMessage(event);
+
+        verify(event).setResult(PluginMessageEvent.ForwardResult.handled());
+        verify(flushAckTracker).acknowledge(playerId, 42L);
+    }
+
+    @Test
+    void tokenizedFlushFailureIsForwardedToTracker() {
+        PluginMessageEvent event = mock(PluginMessageEvent.class);
+        when(event.getIdentifier()).thenReturn(PlayerServerSwitchListener.CHANNEL);
+        when(event.getSource()).thenReturn(currentConnection);
+        when(event.getData()).thenReturn(("flushfailed " + playerId + " 43").getBytes(StandardCharsets.UTF_8));
+
+        listener.onPluginMessage(event);
+
+        verify(flushAckTracker).reportFailure(playerId, 43L);
+    }
+
+    @Test
+    void tokenlessAckFromAnOlderBackendIsStillAccepted() {
+        PluginMessageEvent event = mock(PluginMessageEvent.class);
+        when(event.getIdentifier()).thenReturn(PlayerServerSwitchListener.CHANNEL);
+        when(event.getSource()).thenReturn(currentConnection);
+        when(event.getData()).thenReturn(("flushed " + playerId).getBytes(StandardCharsets.UTF_8));
+
+        listener.onPluginMessage(event);
+
+        verify(flushAckTracker).acknowledge(playerId);
+    }
+
+    @Test
+    void malformedAckIsIgnored() {
+        PluginMessageEvent event = mock(PluginMessageEvent.class);
+        when(event.getIdentifier()).thenReturn(PlayerServerSwitchListener.CHANNEL);
+        when(event.getSource()).thenReturn(currentConnection);
+        when(event.getData()).thenReturn("flushed not-a-uuid 42".getBytes(StandardCharsets.UTF_8));
+
+        listener.onPluginMessage(event);
+
+        verify(flushAckTracker, never()).acknowledge(any(UUID.class), org.mockito.ArgumentMatchers.anyLong());
+        verify(flushAckTracker, never()).acknowledge(any(UUID.class));
     }
 
     // --- onDisconnect tests ---

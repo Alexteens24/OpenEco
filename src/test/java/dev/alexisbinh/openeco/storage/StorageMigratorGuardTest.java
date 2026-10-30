@@ -16,15 +16,24 @@
 
 package dev.alexisbinh.openeco.storage;
 
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -119,6 +128,86 @@ class StorageMigratorGuardTest {
             source.close();
             target.close();
         }
+    }
+
+    /**
+     * The regression: an empty source (a typo'd {@code storage.migration.source-file} creates a
+     * brand-new empty database) combined with {@code --overwrite} used to clear a populated
+     * target, copy zero rows, and report a clean success.
+     */
+    @Test
+    void refusesToClearAPopulatedTargetWhenTheSourceIsEmpty() throws Exception {
+        JdbcAccountRepository source = open("empty-source");
+        JdbcAccountRepository target = open("protected-target");
+        try {
+            seed(target, "Existing", "42.00");
+
+            StorageMigrationReport report = StorageMigrator.migrate(
+                    source, target, DatabaseDialect.H2, false, true);
+
+            assertFalse(succeeded(report), () -> "errors=" + report.errors());
+            assertTrue(report.errors().stream().anyMatch(e -> e.contains("no accounts")),
+                    () -> "errors=" + report.errors());
+            assertEquals(1, StorageMigrator.scan(target).accounts(), "the target must be untouched");
+        } finally {
+            source.close();
+            target.close();
+        }
+    }
+
+    /**
+     * A failure halfway through the copy must not leave a half-migrated target: missing
+     * accounts silently read as zero. The target is cleared so a re-run starts from a
+     * known state.
+     */
+    @Test
+    void failedCopyClearsThePartiallyMigratedTarget() throws Exception {
+        JdbcAccountRepository source = open("large-source");
+        AtomicInteger writes = new AtomicInteger();
+        JdbcAccountRepository target = new JdbcAccountRepository(DatabaseDialect.H2, tempDir.toString(), "fail-target") {
+            @Override
+            public void upsertBatch(Collection<dev.alexisbinh.openeco.model.AccountRecord> records) throws SQLException {
+                if (writes.incrementAndGet() == 3) {
+                    throw new SQLException("simulated copy failure");
+                }
+                super.upsertBatch(records);
+            }
+        };
+        try {
+            seed(target, "Existing", "42.00"); // target write #1
+
+            List<dev.alexisbinh.openeco.model.AccountRecord> bulk = new ArrayList<>();
+            for (int i = 0; i < 150; i++) {
+                bulk.add(new dev.alexisbinh.openeco.model.AccountRecord(
+                        UUID.randomUUID(), "P" + i, "openeco",
+                        new HashMap<>(Map.of("openeco", new BigDecimal("1.00"))), 1L, 1L));
+            }
+            source.upsertBatch(bulk);
+            // During migrate: target write #2 is the first 100 accounts, write #3 is the second
+            // batch, which fails and must trigger the cleanup.
+
+            assertThrows(SQLException.class, () -> StorageMigrator.migrate(
+                    source, target, DatabaseDialect.H2, false, true));
+
+            assertEquals(0, StorageMigrator.scan(target).accounts(),
+                    "the partially migrated target must be cleared so a re-run is safe");
+        } finally {
+            source.close();
+            target.close();
+        }
+    }
+
+    /** A configured source file that does not exist must fail before SQLite/H2 creates it. */
+    @Test
+    void openLocalSourceRejectsAMissingConfiguredFile() {
+        YamlConfiguration config = new YamlConfiguration();
+        config.set("storage.migration.source-type", "sqlite");
+        config.set("storage.migration.source-file", "does-not-exist.db");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> StorageMigrator.openLocalSource(config, tempDir.toFile(), "openeco"));
+        assertTrue(error.getMessage().contains("does-not-exist.db"),
+                () -> "message=" + error.getMessage());
     }
 
     /** Without --overwrite an existing target is refused, never silently merged or wiped. */

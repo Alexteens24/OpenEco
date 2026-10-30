@@ -19,7 +19,6 @@ package dev.alexisbinh.openeco.enhancements.interest;
 import dev.alexisbinh.openeco.api.BalanceChangeResult;
 import dev.alexisbinh.openeco.api.CurrencyInfo;
 import dev.alexisbinh.openeco.api.OpenEcoApi;
-import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -31,7 +30,11 @@ import java.util.logging.Logger;
 
 /**
  * Iterates all accounts and credits interest based on the configured rate and interval.
- * Runs on Folia/Paper's async scheduler.
+ *
+ * <p>Runs on Folia/Paper's async scheduler (the plugin schedules it there): iterating the
+ * account map and reading balances can hit blocking JDBC reads in lazy mode, so it must never
+ * run on the primary thread. Balance mutations marshal back to the primary thread inside the
+ * API, so account locks are never acquired off-thread here.
  */
 public class InterestTask implements Runnable {
 
@@ -47,10 +50,10 @@ public class InterestTask implements Runnable {
 
     @Override
     public void run() {
-        plugin.getServer().getGlobalRegionScheduler().run(plugin, this::runInterestCycle);
+        runInterestCycle();
     }
 
-    private void runInterestCycle(ScheduledTask task) {
+    private void runInterestCycle() {
         FileConfiguration config = plugin.getConfig();
         double rate = config.getDouble("interest.rate", 5.0);
         long intervalSeconds = config.getLong("interest.interval-seconds", 3600);
@@ -63,6 +66,10 @@ public class InterestTask implements Runnable {
             return;
         }
         int fractionalDigits = currency.fractionalDigits();
+        String source = config.getString("interest.source", "interest");
+        if (source != null && source.isBlank()) {
+            source = null;
+        }
         BigDecimal minBalance = BigDecimal.valueOf(config.getDouble("interest.min-balance", 0))
             .setScale(fractionalDigits, RoundingMode.HALF_UP);
         BigDecimal maxPerInterval = BigDecimal.valueOf(config.getDouble("interest.max-per-interval", 0))
@@ -80,7 +87,7 @@ public class InterestTask implements Runnable {
         Map<UUID, String> accounts = api.getUUIDNameMap();
         for (UUID id : accounts.keySet()) {
             try {
-                credited += processAccount(id, currencyId, explicitCurrency, factor, minBalance, maxPerInterval, fractionalDigits) ? 1 : 0;
+                credited += processAccount(id, currencyId, factor, minBalance, maxPerInterval, fractionalDigits, source) ? 1 : 0;
             } catch (Exception e) {
                 log.warning("[Interest] Error processing account " + id + ": " + e.getMessage());
                 skipped++;
@@ -89,9 +96,9 @@ public class InterestTask implements Runnable {
         log.info("[Interest] Cycle complete — credited: " + credited + ", skipped/error: " + skipped);
     }
 
-    private boolean processAccount(UUID id, String currencyId, boolean explicitCurrency, BigDecimal factor, BigDecimal minBalance,
-                                   BigDecimal maxPerInterval, int fractionalDigits) {
-        BigDecimal balance = explicitCurrency ? api.getBalance(id, currencyId) : api.getBalance(id);
+    private boolean processAccount(UUID id, String currencyId, BigDecimal factor, BigDecimal minBalance,
+                                   BigDecimal maxPerInterval, int fractionalDigits, String source) {
+        BigDecimal balance = api.getBalance(id, currencyId);
         if (balance.compareTo(minBalance) < 0) return false;
 
         BigDecimal interest = balance.multiply(factor)
@@ -103,7 +110,7 @@ public class InterestTask implements Runnable {
             interest = maxPerInterval;
         }
 
-        BalanceChangeResult result = explicitCurrency ? api.deposit(id, currencyId, interest) : api.deposit(id, interest);
+        BalanceChangeResult result = api.deposit(id, currencyId, interest, source);
         return result.isSuccess();
     }
 }

@@ -74,32 +74,60 @@ public class EcoSyncCommand implements SimpleCommand {
                     "Syncing " + player.getUsername() + " on " + serverName + "...",
                     NamedTextColor.GRAY));
 
-            java.util.concurrent.CompletableFuture<FlushAckTracker.FlushOutcome> ackFuture = flushAckTracker.register(uuid);
-            conn.sendPluginMessage(PlayerServerSwitchListener.CHANNEL,
-                    PlayerServerSwitchListener.encode("flush " + uuid));
+            FlushAckTracker.PendingFlush pendingFlush = flushAckTracker.register(uuid);
+            try {
+                conn.sendPluginMessage(PlayerServerSwitchListener.CHANNEL,
+                        PlayerServerSwitchListener.encode("flush " + uuid + " " + pendingFlush.token()));
+            } catch (RuntimeException error) {
+                logger.error("Manual sync for {} ({}) could not reach {}: {}",
+                        player.getUsername(), uuid, serverName, error.getMessage());
+                flushAckTracker.reportFailure(uuid, pendingFlush.token());
+                source.sendMessage(Component.text(
+                        "Could not reach " + serverName + " to save " + player.getUsername()
+                        + "'s balance. Nothing was refreshed.",
+                        NamedTextColor.RED));
+                return;
+            }
 
-            ackFuture.thenAccept(outcome -> {
-                if (outcome == FlushAckTracker.FlushOutcome.TIMED_OUT) {
-                    source.sendMessage(Component.text(
-                            "Timed out waiting for a flush acknowledgement from " + serverName
-                            + ". No automatic refresh was sent.",
-                            NamedTextColor.YELLOW));
-                    logger.warn("Manual sync for {} ({}) timed out waiting for backend ack from {}",
-                            player.getUsername(), uuid, serverName);
-                    return;
+            pendingFlush.future().thenAccept(outcome -> {
+                switch (outcome) {
+                    case TIMED_OUT -> {
+                        source.sendMessage(Component.text(
+                                "Timed out waiting for a flush acknowledgement from " + serverName
+                                + ". No automatic refresh was sent.",
+                                NamedTextColor.YELLOW));
+                        logger.warn("Manual sync for {} ({}) timed out waiting for backend ack from {}",
+                                player.getUsername(), uuid, serverName);
+                    }
+                    case FLUSH_FAILED -> {
+                        source.sendMessage(Component.text(
+                                "The backend reported that it could not save " + player.getUsername()
+                                + "'s balance. Nothing was refreshed; check the backend logs.",
+                                NamedTextColor.RED));
+                        logger.error("Manual sync for {} ({}) failed on {}: backend reported a failed flush",
+                                player.getUsername(), uuid, serverName);
+                    }
+                    case SUPERSEDED -> {
+                        source.sendMessage(Component.text(
+                                "A newer sync replaced this one, so no refresh was sent.",
+                                NamedTextColor.YELLOW));
+                        logger.warn("Manual sync for {} ({}) was superseded by a newer sync",
+                                player.getUsername(), uuid);
+                    }
+                    case ACKNOWLEDGED -> {
+                        // Re-read current server — player could have moved during flush
+                        player.getCurrentServer().ifPresent(liveConn -> {
+                            liveConn.sendPluginMessage(PlayerServerSwitchListener.CHANNEL,
+                                    PlayerServerSwitchListener.encode("refresh " + uuid));
+                            source.sendMessage(Component.text(
+                                    "Synced " + player.getUsername() + " on "
+                                    + liveConn.getServerInfo().getName() + ".",
+                                    NamedTextColor.GREEN));
+                            logger.info("Manual sync for {} ({}) completed on {}",
+                                    player.getUsername(), uuid, liveConn.getServerInfo().getName());
+                        });
+                    }
                 }
-
-                // Re-read current server — player could have moved during flush
-                player.getCurrentServer().ifPresent(liveConn -> {
-                    liveConn.sendPluginMessage(PlayerServerSwitchListener.CHANNEL,
-                            PlayerServerSwitchListener.encode("refresh " + uuid));
-                    source.sendMessage(Component.text(
-                            "Synced " + player.getUsername() + " on "
-                            + liveConn.getServerInfo().getName() + ".",
-                            NamedTextColor.GREEN));
-                    logger.info("Manual sync for {} ({}) completed on {}",
-                            player.getUsername(), uuid, liveConn.getServerInfo().getName());
-                });
             });
         }, () -> source.sendMessage(Component.text(
                 player.getUsername() + " is not connected to any backend server.",

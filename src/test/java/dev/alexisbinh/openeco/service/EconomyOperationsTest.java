@@ -96,6 +96,7 @@ class EconomyOperationsTest {
         EconomyOperationResponse resp = ops.deposit(aliceId, new BigDecimal("3.00"));
 
         assertFalse(resp.transactionSuccess());
+        assertEquals(EconomyOperationResponse.FailureReason.CANCELLED, resp.failureReason());
         assertEquals(0, new BigDecimal("10.00").compareTo(registry.getLiveRecord(aliceId).getBalance()));
         assertTrue(logged.isEmpty());
         assertEquals(List.of(BalanceChangeEvent.class), dispatchedEvents.stream().map(Event::getClass).toList());
@@ -109,6 +110,7 @@ class EconomyOperationsTest {
         EconomyOperationResponse resp = ops.deposit(aliceId, new BigDecimal("5.00"));
 
         assertFalse(resp.transactionSuccess());
+        assertEquals(EconomyOperationResponse.FailureReason.BALANCE_LIMIT, resp.failureReason());
         assertEquals(0, new BigDecimal("10.00").compareTo(registry.getLiveRecord(aliceId).getBalance()));
         assertTrue(logged.isEmpty());
     }
@@ -118,6 +120,7 @@ class EconomyOperationsTest {
         EconomyOperationResponse resp = ops.deposit(aliceId, BigDecimal.ZERO);
 
         assertFalse(resp.transactionSuccess());
+        assertEquals(EconomyOperationResponse.FailureReason.INVALID_AMOUNT, resp.failureReason());
         assertTrue(logged.isEmpty());
     }
 
@@ -560,6 +563,27 @@ class EconomyOperationsTest {
         assertEquals(0, new BigDecimal("5.05").compareTo(registry.getLiveRecord(bobId).getBalance()));
         assertEquals(2, logged.size());
         assertTrue(dispatchedEvents.stream().noneMatch(PayEvent.class::isInstance));
+    }
+
+    /**
+     * Vault/API transfers previously dispatched only post-hoc events, so a listener such as the
+     * perm-cap enhancement could not veto them. The recipient-side pre-event must be cancellable.
+     */
+    @Test
+    void directTransfer_cancelledRecipientEvent_doesNotMoveMoney() {
+        ops = buildOps(event -> {
+            if (event instanceof BalanceChangeEvent change
+                    && change.getReason() == BalanceChangeEvent.Reason.PAY_RECEIVED) {
+                change.setCancelled(true);
+            }
+        });
+
+        DirectTransferResult result = ops.directTransfer(aliceId, bobId, new BigDecimal("1.00"));
+
+        assertEquals(DirectTransferResult.Status.CANCELLED, result.status());
+        assertEquals(0, new BigDecimal("10.00").compareTo(registry.getLiveRecord(aliceId).getBalance()));
+        assertEquals(0, new BigDecimal("5.00").compareTo(registry.getLiveRecord(bobId).getBalance()));
+        assertTrue(logged.isEmpty());
     }
 
     // ── canDeposit / canWithdraw ───────────────────────────────────────────────

@@ -175,10 +175,16 @@ public final class OpenEcoApiImpl implements OpenEcoApi {
 
     @Override
     public BalanceChangeResult deposit(UUID accountId, String currencyId, BigDecimal amount) {
+        return deposit(accountId, currencyId, amount, null);
+    }
+
+    @Override
+    public BalanceChangeResult deposit(UUID accountId, String currencyId, BigDecimal amount, String source) {
         UUID validatedId = requireAccountId(accountId);
         String validatedCurrencyId = requireKnownCurrency(currencyId);
         BigDecimal validatedAmount = requireAmount(amount);
-        return applyBalanceChange(validatedId, validatedCurrencyId, validatedAmount, service::deposit);
+        return applyBalanceChange(validatedId, validatedCurrencyId, validatedAmount,
+                (id, currency, value) -> service.deposit(id, currency, value, source));
     }
 
     @Override
@@ -531,7 +537,15 @@ public final class OpenEcoApiImpl implements OpenEcoApi {
 
     @Override
     public CurrencyInfo getCurrencyInfo(String currencyId) {
-        String validatedCurrencyId = requireKnownCurrency(currencyId);
+        // Returns null for an unknown currency instead of throwing: consumers such as the
+        // interest task and the perm-cap listener explicitly null-check this lookup.
+        if (currencyId == null || currencyId.isBlank()) {
+            return null;
+        }
+        String validatedCurrencyId = service.getCanonicalCurrencyId(currencyId);
+        if (validatedCurrencyId == null) {
+            return null;
+        }
         return new CurrencyInfo(
                 validatedCurrencyId,
                 service.getCurrencySingular(validatedCurrencyId),
@@ -703,15 +717,18 @@ public final class OpenEcoApiImpl implements OpenEcoApi {
         if (response.transactionSuccess()) {
             return BalanceChangeResult.Status.SUCCESS;
         }
-        return switch (response.errorMessage()) {
-            case "Unknown currency" -> BalanceChangeResult.Status.UNKNOWN_CURRENCY;
-            case "Account not found" -> BalanceChangeResult.Status.ACCOUNT_NOT_FOUND;
-            case "Amount must be positive", "Amount cannot be negative" -> BalanceChangeResult.Status.INVALID_AMOUNT;
-            case "Insufficient funds" -> BalanceChangeResult.Status.INSUFFICIENT_FUNDS;
-            case "Balance limit reached" -> BalanceChangeResult.Status.BALANCE_LIMIT;
-            case "Account is frozen" -> BalanceChangeResult.Status.FROZEN;
-            case "Cancelled by plugin" -> BalanceChangeResult.Status.CANCELLED;
-            default -> throw new OpenEcoApiException("Unexpected balance change failure: " + response.errorMessage());
+        // Machine-readable classification: matching on error text silently broke whenever the
+        // wording changed.
+        return switch (response.failureReason()) {
+            case UNKNOWN_CURRENCY -> BalanceChangeResult.Status.UNKNOWN_CURRENCY;
+            case ACCOUNT_NOT_FOUND -> BalanceChangeResult.Status.ACCOUNT_NOT_FOUND;
+            case INVALID_AMOUNT -> BalanceChangeResult.Status.INVALID_AMOUNT;
+            case INSUFFICIENT_FUNDS -> BalanceChangeResult.Status.INSUFFICIENT_FUNDS;
+            case BALANCE_LIMIT -> BalanceChangeResult.Status.BALANCE_LIMIT;
+            case FROZEN -> BalanceChangeResult.Status.FROZEN;
+            case CANCELLED -> BalanceChangeResult.Status.CANCELLED;
+            case NONE -> throw new OpenEcoApiException(
+                    "Unexpected balance change failure: " + response.errorMessage());
         };
     }
 
