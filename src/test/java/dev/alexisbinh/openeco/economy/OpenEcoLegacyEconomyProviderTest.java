@@ -98,6 +98,7 @@ class OpenEcoLegacyEconomyProviderTest {
             new BigDecimal("5.00"),
             new BigDecimal("17.50"),
             EconomyOperationResponse.ResponseType.SUCCESS,
+            EconomyOperationResponse.FailureReason.NONE,
                 "");
 
         when(service.findByName("Alice")).thenReturn(Optional.of(account));

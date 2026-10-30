@@ -40,6 +40,10 @@ public final class Messages {
         sender.sendMessage(get(key, resolvers));
     }
 
+    public void sendOrDefault(CommandSender sender, String key, String defaultRaw, TagResolver... resolvers) {
+        sender.sendMessage(getOrDefault(key, defaultRaw, resolvers));
+    }
+
     public Component get(String key, TagResolver... resolvers) {
         return getOrDefault(key, "<red>(missing message: " + key + ")", resolvers);
     }

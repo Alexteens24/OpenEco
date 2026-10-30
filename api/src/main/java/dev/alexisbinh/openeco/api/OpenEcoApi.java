@@ -78,6 +78,16 @@ public interface OpenEcoApi {
 
     BalanceChangeResult deposit(UUID accountId, String currencyId, BigDecimal amount);
 
+    /**
+     * Deposits {@code amount} and records {@code source} on the resulting transaction entry,
+     * so integrations such as interest can be recognised in player history.
+     *
+     * <p>The default ignores the tag for implementations that predate it.
+     */
+    default BalanceChangeResult deposit(UUID accountId, String currencyId, BigDecimal amount, String source) {
+        return deposit(accountId, currencyId, amount);
+    }
+
     BalanceChangeResult withdraw(UUID accountId, BigDecimal amount);
 
     BalanceChangeResult withdraw(UUID accountId, String currencyId, BigDecimal amount);
@@ -198,6 +208,9 @@ public interface OpenEcoApi {
 
     CurrencyInfo getCurrencyInfo();
 
+    /**
+     * Returns the currency with the given id, or {@code null} when no such currency exists.
+     */
     CurrencyInfo getCurrencyInfo(String currencyId);
 
     List<CurrencyInfo> getCurrencies();

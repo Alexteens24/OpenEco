@@ -48,7 +48,9 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command,
                              @NotNull String label, @NotNull String[] args) {
         if (args.length == 0) {
-            sender.sendMessage("§cUsage: /" + command.getName() + " <give|take|set|reset|delete|freeze|unfreeze|rename|reload> <player> [amount] [currency]");
+            messages.sendOrDefault(sender, "eco-usage",
+                    "<red>Usage: /<command> <give|take|set|reset|delete|freeze|unfreeze|rename|reload> <player> [amount] [currency]",
+                    Placeholder.unparsed("command", command.getName()));
             return true;
         }
 
@@ -81,7 +83,9 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
                 return true;
             }
             if (args.length < 2) {
-                sender.sendMessage("§cUsage: /" + command.getName() + " delete <player>");
+                messages.sendOrDefault(sender, "eco-delete-usage",
+                        "<red>Usage: /<command> delete <player>",
+                        Placeholder.unparsed("command", command.getName()));
                 return true;
             }
             var optTarget = service.findByName(args[1]);
@@ -107,7 +111,9 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
                 return true;
             }
             if (args.length < 2) {
-                sender.sendMessage("§cUsage: /" + command.getName() + " freeze <player>");
+                messages.sendOrDefault(sender, "eco-freeze-usage",
+                        "<red>Usage: /<command> freeze <player>",
+                        Placeholder.unparsed("command", command.getName()));
                 return true;
             }
             var optTarget = service.findByName(args[1]);
@@ -132,7 +138,9 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
                 return true;
             }
             if (args.length < 2) {
-                sender.sendMessage("§cUsage: /" + command.getName() + " unfreeze <player>");
+                messages.sendOrDefault(sender, "eco-unfreeze-usage",
+                        "<red>Usage: /<command> unfreeze <player>",
+                        Placeholder.unparsed("command", command.getName()));
                 return true;
             }
             var optTarget = service.findByName(args[1]);
@@ -158,7 +166,9 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
                 return true;
             }
             if (args.length < 3) {
-                sender.sendMessage("§cUsage: /" + command.getName() + " rename <player> <newname>");
+                messages.sendOrDefault(sender, "eco-rename-usage",
+                        "<red>Usage: /<command> rename <player> <newname>",
+                        Placeholder.unparsed("command", command.getName()));
                 return true;
             }
             var optTarget = service.findByName(args[1]);
@@ -189,7 +199,9 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
                 return true;
             }
             if (args.length < 2 || args.length > 3) {
-                sender.sendMessage("§cUsage: /" + command.getName() + " reset <player> [currency]");
+                messages.sendOrDefault(sender, "eco-reset-usage",
+                        "<red>Usage: /<command> reset <player> [currency]",
+                        Placeholder.unparsed("command", command.getName()));
                 return true;
             }
             var optTarget = service.findByName(args[1]);
@@ -205,7 +217,9 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
             }
             var res = service.reset(target.getId(), currencyId);
             if (!res.transactionSuccess()) {
-                sender.sendMessage("§cFailed: " + res.errorMessage());
+                messages.sendOrDefault(sender, "eco-failed",
+                        "<red>Failed: <gray><reason>",
+                        Placeholder.unparsed("reason", res.errorMessage() != null ? res.errorMessage() : "Unknown error"));
                 return true;
             }
             messages.send(sender, "eco-reset",
@@ -216,7 +230,10 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
 
         // give / take / set require <player> <amount>
         if (args.length < 3 || args.length > 4) {
-            sender.sendMessage("§cUsage: /" + command.getName() + " " + sub + " <player> <amount> [currency]");
+            messages.sendOrDefault(sender, "eco-amount-usage",
+                    "<red>Usage: /<command> <subcommand> <player> <amount> [currency]",
+                    Placeholder.unparsed("command", command.getName()),
+                    Placeholder.unparsed("subcommand", sub));
             return true;
         }
 
@@ -227,7 +244,8 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
             default     -> null;
         };
         if (perm == null) {
-            sender.sendMessage("§cUnknown subcommand. Use: give, take, set, reset, delete, freeze, unfreeze, rename, reload.");
+            messages.sendOrDefault(sender, "eco-unknown-subcommand",
+                    "<red>Unknown subcommand. Use: give, take, set, reset, delete, freeze, unfreeze, rename, reload.");
             return true;
         }
         if (!sender.hasPermission(perm)) {
@@ -261,7 +279,7 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
                 EconomyOperationResponse res = service.deposit(target.getId(), currencyId, amount);
                 if (!res.transactionSuccess()) {
                     String limit = service.getFormattedMaxBalance(currencyId);
-                    if (limit != null && res.errorMessage().contains("limit")) {
+                    if (limit != null && res.failureReason() == EconomyOperationResponse.FailureReason.BALANCE_LIMIT) {
                         messages.send(sender, "eco-balance-limit",
                                 Placeholder.unparsed("player", target.getLastKnownName()),
                                 Placeholder.unparsed("limit", limit));
@@ -292,7 +310,7 @@ public class EcoCommand implements CommandExecutor, TabCompleter {
                 EconomyOperationResponse res = service.set(target.getId(), currencyId, amount);
                 if (!res.transactionSuccess()) {
                     String limit = service.getFormattedMaxBalance(currencyId);
-                    if (limit != null && res.errorMessage().contains("limit")) {
+                    if (limit != null && res.failureReason() == EconomyOperationResponse.FailureReason.BALANCE_LIMIT) {
                         messages.send(sender, "eco-balance-limit",
                                 Placeholder.unparsed("player", target.getLastKnownName()),
                                 Placeholder.unparsed("limit", limit));

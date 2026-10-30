@@ -50,22 +50,29 @@ public class PlayerConnectionListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST)
     public void onPreLogin(AsyncPlayerPreLoginEvent event) {
         UUID id = event.getUniqueId();
-        AccountService.PreparedLoginAccount previous = loginPins.remove(id);
-        if (previous != null) previous.close();
+        AccountService.PreparedLoginAccount prepared;
         try {
-            AccountService.PreparedLoginAccount prepared = service.prepareLoginAccount(id, event.getName());
-            loginPins.put(id, prepared);
-            if (plugin != null) {
-                plugin.getServer().getAsyncScheduler().runDelayed(plugin, ignored -> {
-                    if (loginPins.remove(id, prepared)) prepared.close();
-                }, 30L, TimeUnit.SECONDS);
-            }
+            // Prepared before touching the map: a failed attempt must not remove or close a pin
+            // that belongs to a concurrent login attempt for the same UUID.
+            prepared = service.prepareLoginAccount(id, event.getName());
         } catch (RuntimeException error) {
-            AccountService.PreparedLoginAccount prepared = loginPins.remove(id);
-            if (prepared != null) prepared.close();
             log.severe("Denying login for " + event.getName() + " (" + id
                     + ") because the economy account could not be prepared: " + error.getMessage());
             event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER, messages.get("login-storage-error"));
+            return;
+        }
+
+        // Replaces any earlier pin atomically; the displaced pin belongs to a concurrent
+        // pre-login for the same UUID and must be released here or it leaks its lease and
+        // permanently blocks cross-server refreshes for this account.
+        AccountService.PreparedLoginAccount previous = loginPins.put(id, prepared);
+        if (previous != null) {
+            previous.close();
+        }
+        if (plugin != null) {
+            plugin.getServer().getAsyncScheduler().runDelayed(plugin, ignored -> {
+                if (loginPins.remove(id, prepared)) prepared.close();
+            }, 30L, TimeUnit.SECONDS);
         }
     }
 

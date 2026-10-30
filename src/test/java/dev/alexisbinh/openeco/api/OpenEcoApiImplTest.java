@@ -38,6 +38,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -193,6 +194,7 @@ class OpenEcoApiImplTest {
             amount,
             account.getBalance(),
             EconomyOperationResponse.ResponseType.FAILURE,
+            EconomyOperationResponse.FailureReason.UNKNOWN_CURRENCY,
                 "Unknown currency"));
 
         BalanceChangeResult result = api.deposit(accountId, amount);
@@ -200,6 +202,18 @@ class OpenEcoApiImplTest {
         assertEquals(BalanceChangeResult.Status.UNKNOWN_CURRENCY, result.status());
         assertEquals(account.getBalance(), result.previousBalance());
         assertEquals(account.getBalance(), result.newBalance());
+    }
+
+    /**
+     * Consumers (interest task, perm-cap listener) null-check this lookup, so an unknown
+     * currency must resolve to null instead of an exception.
+     */
+    @Test
+    void getCurrencyInfoReturnsNullForUnknownCurrency() {
+        when(service.getCanonicalCurrencyId("nope")).thenReturn(null);
+
+        assertNull(api.getCurrencyInfo("nope"));
+        assertNull(api.getCurrencyInfo(null));
     }
 
     @Test

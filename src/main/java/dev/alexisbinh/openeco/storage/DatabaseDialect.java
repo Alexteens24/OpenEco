@@ -163,6 +163,14 @@ public enum DatabaseDialect {
     }
 
     /**
+     * True when the backend supports {@code SELECT ... FOR UPDATE} row locks. SQLite has no
+     * such syntax and serializes writers itself, so it is the only dialect that returns false.
+     */
+    public boolean supportsSelectForUpdate() {
+        return this != SQLITE;
+    }
+
+    /**
      * Returns the JDBC URL for local file-based backends (SQLite, H2).
      * Not supported for remote backends.
      */

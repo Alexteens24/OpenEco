@@ -201,14 +201,25 @@ messages:
   invalid-amount: "<red>Invalid amount. <gray><reason>"
   negative-amount: "<red>Amount must be greater than zero. <gray><reason>"
 
+  balance-usage: "<red>Usage: /<command> [player] [currency]"
   balance-self: "<green>Your balance: <yellow><balance>"
   balance-other: "<green><player>'s balance: <yellow><balance>"
 
+  pay-usage: "<red>Usage: /<command> <player> <amount> [currency]"
   pay-sent: "<green>You paid <yellow><player> <green><amount>."
   pay-tax: "<gray>(Tax deducted: <yellow><tax><gray>)"
   pay-received: "<green>You received <yellow><amount> <green>from <yellow><player><green>."
   pay-cooldown: "<red>Please wait <yellow><seconds>s <red>before paying again."
 
+  eco-usage: "<red>Usage: /<command> <give|take|set|reset|delete|freeze|unfreeze|rename|reload> <player> [amount] [currency]"
+  eco-delete-usage: "<red>Usage: /<command> delete <player>"
+  eco-freeze-usage: "<red>Usage: /<command> freeze <player>"
+  eco-unfreeze-usage: "<red>Usage: /<command> unfreeze <player>"
+  eco-rename-usage: "<red>Usage: /<command> rename <player> <newname>"
+  eco-reset-usage: "<red>Usage: /<command> reset <player> [currency]"
+  eco-amount-usage: "<red>Usage: /<command> <subcommand> <player> <amount> [currency]"
+  eco-unknown-subcommand: "<red>Unknown subcommand. Use: give, take, set, reset, delete, freeze, unfreeze, rename, reload."
+  eco-failed: "<red>Failed: <gray><reason>"
   eco-give: "<green>Gave <yellow><amount> <green>to <yellow><player><green>. New balance: <yellow><balance>"
   eco-give-failed: "<red>Failed to give money to <yellow><player><red>."
   eco-take: "<green>Took <yellow><amount> <green>from <yellow><player><green>. New balance: <yellow><balance>"
@@ -231,9 +242,11 @@ messages:
   eco-rename-invalid: "<red>Invalid name: <yellow><new_name><red>."
   eco-rename-failed: "<red>Failed to rename <yellow><player><red>'s account."
 
+  baltop-usage: "<red>Usage: /<command> [page] [currency]"
   baltop-header: "<gold><bold>--- Balance Top (page <page>/<total>) ---</bold></gold>"
   baltop-entry: "<yellow>#<rank> <green><player><gray>: <yellow><balance>"
 
+  history-usage: "<red>Usage: /<command> [self|player] [page] [currency]"
   history-header: "<gold><bold>--- <player>'s History (page <page>/<total>) ---</bold></gold>"
   history-empty: "<gray>No transactions found."
   history-error: "<red>Failed to load transaction history. Please try again later."

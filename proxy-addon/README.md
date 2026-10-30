@@ -27,9 +27,18 @@ It is meant for networks where backend Paper or Folia servers share one remote M
 ## Operational Notes
 
 - The pre-switch flush waits up to about 2 seconds for an acknowledgement from the source backend.
-- If that acknowledgement times out, the switch still proceeds and the destination refresh becomes best-effort.
-- `/ecosync <player>` does not send an automatic refresh if the flush acknowledgement times out.
+- If that acknowledgement times out, or the backend reports a failed flush, the switch is
+  **cancelled** (fail-closed) so the destination can never load a stale balance. The player is
+  asked to try again.
+- Flush requests carry a per-attempt token that the backend echoes back. An acknowledgement for
+  an older attempt is ignored, so a late reply cannot satisfy a newer flush.
+- `/ecosync <player>` reports exactly what happened: timeout, backend failure, or a newer sync
+  superseding it. No refresh is sent unless the flush was acknowledged.
 - This addon assumes normal player handoff: one active backend session per player account.
+- **The proxy addon and the OpenEco plugin must be updated together.** A proxy that sends
+  tokenized flushes to an older backend gets no acknowledgement (the backend cannot parse the
+  request), so every switch is denied until the backend is updated. Updating the proxy first is
+  safe; updating only the backends is not.
 
 ## Command
 

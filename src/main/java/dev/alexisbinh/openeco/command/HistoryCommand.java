@@ -62,7 +62,9 @@ public class HistoryCommand implements CommandExecutor, TabCompleter {
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command,
                              @NotNull String label, @NotNull String[] args) {
         if (args.length > 3) {
-            sender.sendMessage("§cUsage: /" + command.getName() + " [self|player] [page] [currency]");
+            messages.sendOrDefault(sender, "history-usage",
+                    "<red>Usage: /<command> [self|player] [page] [currency]",
+                    Placeholder.unparsed("command", command.getName()));
             return true;
         }
 

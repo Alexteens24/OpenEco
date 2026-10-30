@@ -143,6 +143,7 @@ class OpenEcoEconomyProviderTest {
             new BigDecimal("5.00"),
             new BigDecimal("17.50"),
             EconomyOperationResponse.ResponseType.SUCCESS,
+            EconomyOperationResponse.FailureReason.NONE,
                 ""));
 
         EconomyResponse response = provider.deposit("shop", accountId, amount);
@@ -160,6 +161,7 @@ class OpenEcoEconomyProviderTest {
             BigDecimal.ZERO,
             BigDecimal.ZERO,
             EconomyOperationResponse.ResponseType.NOT_IMPLEMENTED,
+            EconomyOperationResponse.FailureReason.NONE,
                 "Not supported"));
 
         EconomyResponse response = provider.deposit("shop", accountId, amount);

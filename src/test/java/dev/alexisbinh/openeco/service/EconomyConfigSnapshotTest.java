@@ -114,6 +114,23 @@ class EconomyConfigSnapshotTest {
         assertTrue(error.getMessage().contains("currencies.default"));
     }
 
+    /**
+     * Currency ids end up in DDL defaults and YAML paths, so characters that could break either
+     * must be rejected at startup instead of corrupting the schema or the config.
+     */
+    @Test
+    void currencyIdsWithUnsupportedCharactersAreRejected() {
+        YamlConfiguration config = new YamlConfiguration();
+        config.set("currencies.default", "bad id");
+        config.set("currencies.definitions.bad id.name-singular", "Bad");
+        config.set("currencies.definitions.bad id.name-plural", "Bads");
+        config.set("currencies.definitions.bad id.decimal-digits", 2);
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> EconomyConfigSnapshot.from(config));
+        assertTrue(error.getMessage().contains("bad id"), () -> "message=" + error.getMessage());
+    }
+
     @Test
     void duplicateCurrencyIdsIgnoringCaseAreRejected() {
         YamlConfiguration config = new YamlConfiguration();

@@ -22,6 +22,7 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class FlushAckTrackerTest {
 
@@ -30,10 +31,10 @@ class FlushAckTrackerTest {
         FlushAckTracker tracker = new FlushAckTracker(250);
         UUID accountId = UUID.randomUUID();
 
-        var future = tracker.register(accountId);
+        var pending = tracker.register(accountId);
         tracker.acknowledge(accountId);
 
-        assertEquals(FlushAckTracker.FlushOutcome.ACKNOWLEDGED, future.get(200, TimeUnit.MILLISECONDS));
+        assertEquals(FlushAckTracker.FlushOutcome.ACKNOWLEDGED, pending.future().get(200, TimeUnit.MILLISECONDS));
         assertEquals(0, tracker.pendingCount());
     }
 
@@ -42,9 +43,9 @@ class FlushAckTrackerTest {
         FlushAckTracker tracker = new FlushAckTracker(25);
         UUID accountId = UUID.randomUUID();
 
-        var future = tracker.register(accountId);
+        var pending = tracker.register(accountId);
 
-        assertEquals(FlushAckTracker.FlushOutcome.TIMED_OUT, future.get(500, TimeUnit.MILLISECONDS));
+        assertEquals(FlushAckTracker.FlushOutcome.TIMED_OUT, pending.future().get(500, TimeUnit.MILLISECONDS));
         assertEquals(0, tracker.pendingCount());
     }
 
@@ -57,10 +58,10 @@ class FlushAckTrackerTest {
         FlushAckTracker tracker = new FlushAckTracker(2_000);
         UUID accountId = UUID.randomUUID();
 
-        var future = tracker.register(accountId);
+        var pending = tracker.register(accountId);
         tracker.reportFailure(accountId);
 
-        assertEquals(FlushAckTracker.FlushOutcome.FLUSH_FAILED, future.get(200, TimeUnit.MILLISECONDS));
+        assertEquals(FlushAckTracker.FlushOutcome.FLUSH_FAILED, pending.future().get(200, TimeUnit.MILLISECONDS));
         assertEquals(0, tracker.pendingCount());
     }
 
@@ -77,22 +78,55 @@ class FlushAckTrackerTest {
         var first = tracker.register(accountId);
         var second = tracker.register(accountId);
 
-        assertEquals(FlushAckTracker.FlushOutcome.SUPERSEDED, first.get(200, TimeUnit.MILLISECONDS));
+        assertEquals(FlushAckTracker.FlushOutcome.SUPERSEDED, first.future().get(200, TimeUnit.MILLISECONDS));
 
-        tracker.acknowledge(accountId);
-        assertEquals(FlushAckTracker.FlushOutcome.ACKNOWLEDGED, second.get(200, TimeUnit.MILLISECONDS));
+        tracker.acknowledge(accountId, second.token());
+        assertEquals(FlushAckTracker.FlushOutcome.ACKNOWLEDGED, second.future().get(200, TimeUnit.MILLISECONDS));
         assertEquals(0, tracker.pendingCount());
+    }
+
+    /**
+     * A late ack for a flush that was already superseded must not resolve the newer wait: the
+     * newer flush may not have committed yet, so letting it through would load a stale balance.
+     */
+    @Test
+    void staleTokenAckDoesNotCompleteANewerWait() throws Exception {
+        FlushAckTracker tracker = new FlushAckTracker(5_000);
+        UUID accountId = UUID.randomUUID();
+
+        var first = tracker.register(accountId);
+        var second = tracker.register(accountId);
+
+        tracker.acknowledge(accountId, first.token());
+        tracker.reportFailure(accountId, first.token());
+
+        assertFalse(second.future().isDone(), "a stale ack must not complete the newer wait");
+
+        tracker.acknowledge(accountId, second.token());
+        assertEquals(FlushAckTracker.FlushOutcome.ACKNOWLEDGED, second.future().get(200, TimeUnit.MILLISECONDS));
+    }
+
+    /** Older backends do not echo the token; their acks must keep working. */
+    @Test
+    void tokenlessAckStillCompletesTheCurrentWait() throws Exception {
+        FlushAckTracker tracker = new FlushAckTracker(5_000);
+        UUID accountId = UUID.randomUUID();
+
+        var pending = tracker.register(accountId);
+        tracker.acknowledge(accountId);
+
+        assertEquals(FlushAckTracker.FlushOutcome.ACKNOWLEDGED, pending.future().get(200, TimeUnit.MILLISECONDS));
     }
 
     @Test
     void unknownAckIsIgnored() throws Exception {
         FlushAckTracker tracker = new FlushAckTracker(25);
         UUID accountId = UUID.randomUUID();
-        var future = tracker.register(accountId);
+        var pending = tracker.register(accountId);
 
         tracker.acknowledge(UUID.randomUUID());
         tracker.reportFailure(UUID.randomUUID());
 
-        assertEquals(FlushAckTracker.FlushOutcome.TIMED_OUT, future.get(500, TimeUnit.MILLISECONDS));
+        assertEquals(FlushAckTracker.FlushOutcome.TIMED_OUT, pending.future().get(500, TimeUnit.MILLISECONDS));
     }
 }

@@ -98,6 +98,44 @@ class CrossServerMessengerTest {
         assertEquals("flushed " + playerId, new String(payload.getValue(), StandardCharsets.UTF_8));
     }
 
+    /** The proxy token must be echoed verbatim so a late ack can be discarded proxy-side. */
+    @Test
+    void flushEchoesTheProxyTokenInTheAck() {
+        UUID playerId = UUID.randomUUID();
+        when(player.getUniqueId()).thenReturn(playerId);
+        when(server.getPlayer(playerId)).thenReturn(player);
+        when(player.isOnline()).thenReturn(true);
+        when(service.flushAccount(playerId)).thenReturn(true);
+
+        messenger.onPluginMessageReceived(
+                CrossServerMessenger.CHANNEL,
+                player,
+                ("flush " + playerId + " 98765").getBytes(StandardCharsets.UTF_8));
+
+        ArgumentCaptor<byte[]> payload = ArgumentCaptor.forClass(byte[].class);
+        verify(player).sendPluginMessage(eq(plugin), eq(CrossServerMessenger.CHANNEL), payload.capture());
+        assertEquals("flushed " + playerId + " 98765", new String(payload.getValue(), StandardCharsets.UTF_8));
+    }
+
+    /** A malformed token must not be echoed back to the proxy. */
+    @Test
+    void malformedTokenIsNotEchoed() {
+        UUID playerId = UUID.randomUUID();
+        when(player.getUniqueId()).thenReturn(playerId);
+        when(server.getPlayer(playerId)).thenReturn(player);
+        when(player.isOnline()).thenReturn(true);
+        when(service.flushAccount(playerId)).thenReturn(true);
+
+        messenger.onPluginMessageReceived(
+                CrossServerMessenger.CHANNEL,
+                player,
+                ("flush " + playerId + " not-a-token").getBytes(StandardCharsets.UTF_8));
+
+        ArgumentCaptor<byte[]> payload = ArgumentCaptor.forClass(byte[].class);
+        verify(player).sendPluginMessage(eq(plugin), eq(CrossServerMessenger.CHANNEL), payload.capture());
+        assertEquals("flushed " + playerId, new String(payload.getValue(), StandardCharsets.UTF_8));
+    }
+
     /**
      * A failed flush must never be acknowledged as success. Reporting success makes the
      * destination server load the last persisted balance, silently rolling the player back.
